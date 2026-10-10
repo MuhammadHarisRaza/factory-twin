@@ -507,7 +507,8 @@ function rateSeries(s: SimState, id: string, from: number, to: number): Evidence
   }
   const ideal = OPS_BY_ID[id]?.idealRatePerHour ?? CONVEYOR_BY_ID[id]?.capacityPerHour ?? null;
   return {
-    id: `${id}.rate`,
+    // Conveyors count tiles at a photo-eye; machines report a rate.
+    id: CONVEYOR_BY_ID[id] ? `${id}.tile_count` : `${id}.rate`,
     label: `${id} output`,
     unit: 'tiles/h',
     t,
@@ -621,7 +622,7 @@ function refreshOnClear(s: SimState, ev: OpEvent, t: number) {
   // Extend the frozen output series to the recovery so the report shows the whole episode.
   for (const x of evidenceOf(s, ev)) {
     if (x.kind === 'counter-series' && x.series?.[0]) {
-      const id = x.series[0].id.replace(/\.rate$/, '');
+      const id = x.series[0].id.replace(/\.(rate|tile_count)$/, '');
       x.series = [rateSeries(s, id, ev.start - 30, t)];
       x.capturedAt = t;
     }
@@ -808,7 +809,10 @@ function openStopEvent(s: SimState, t: number, d: DowntimeEvent) {
     const into = conv.blocksInputOf.map((x) => STAGE_BY_ID[x].name.toLowerCase());
     const outOf = conv.blocksOutputOf.map((x) => STAGE_BY_ID[x].name.toLowerCase());
     if (into.length) facts.push(`While it is stopped, ${into.join(' and ')} receive${into.length > 1 ? '' : 's'} no tiles.`);
-    if (outOf.length) facts.push(`${outOf.join(' and ')} cannot discharge onto it.`);
+    if (outOf.length) {
+      const who = outOf.join(' and ');
+      facts.push(`${who.charAt(0).toUpperCase()}${who.slice(1)} cannot discharge onto it.`);
+    }
   }
   const causes: EventCause[] = [
     d.source === 'scenario'
@@ -977,12 +981,17 @@ function flowRules(s: SimState, t: number) {
       if (!open && heldNow && run && run.n >= n) {
         const root = traceCause(s, id, kind, t);
         if (!isConstraint && !root.rootEventId) continue;
+        // A stage that was already held up before the root event began is ordinary line balancing
+        // (upstream surplus waiting on a full buffer), not a consequence of it.
+        const rootEv = root.rootEventId ? eventById(s, root.rootEventId) : undefined;
+        if (!isConstraint && rootEv && run.first < rootEv.start) continue;
         const who = st.machines.length > 1 ? `${st.name} (${st.machines.join(', ')})` : nameOf(id);
         raise(s, t, {
           key,
           category: 'production',
           type: kind === 'starved' ? 'starvation' : 'blockage',
-          severity: isConstraint ? 'serious' : 'warning',
+          // Knock-on effects on other stages are informational: their root event carries the alarm.
+          severity: isConstraint ? 'serious' : rootEv ? 'info' : 'warning',
           title: `${who} ${kind === 'starved' ? 'starved of material' : 'blocked — cannot discharge'}`,
           summary: `${st.name} has been ${kind} since ${clock(run.first)}.${isConstraint ? ' This is the line constraint: line output is being lost.' : ''} ${root.summary}`,
           asset: { equipmentId: id, stage: st.id, zone: st.zone },

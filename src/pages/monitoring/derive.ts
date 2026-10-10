@@ -9,12 +9,12 @@
  * (`consequenceOf`) — never guessed here.
  */
 import { EQUIPMENT_BY_ID } from '../../data/equipment';
+import { eventInMonitoredStage } from '../../sim/events';
 import {
   BUFFERS,
   CONDITION_MONITORED,
   CONVEYOR_BY_ID,
   DOCKS,
-  INSPECTION_STATIONS,
   LINE,
   M2_PER_TILE,
   MONITORED_STAGES,
@@ -131,24 +131,13 @@ export const worstFirst = (xs: AssetView[]) =>
 // ── Events of a stage ─────────────────────────────────────────────────────────
 
 /** Assets whose events also belong to a stage although they are not in its equipment list (detection points). */
-const EXTRA_EVENT_ASSETS: Partial<Record<MonitoredStageId, string[]>> = {
-  SORT: INSPECTION_STATIONS.map((x) => x.equipmentId),
-  WH: ['K-FLT'],
-};
 
 /**
  * Whether an event belongs to a monitored stage: its asset is one of the stage's machines or
  * conveyors, or its stage is one of the stage's process stages (quality events carry the defect's
  * origin stage). Conveyor events match only the stages that list the conveyor.
  */
-export function eventInStage(ms: MonitoredStage, e: OpEvent): boolean {
-  const eq = e.asset.equipmentId;
-  if (eq && isConveyor(eq)) return ms.conveyors.includes(eq);
-  if (eq && (ms.equipment.includes(eq) || EXTRA_EVENT_ASSETS[ms.id]?.includes(eq))) return true;
-  const st = e.asset.stage;
-  if (st && (st === ms.id || (SUB_STAGES[ms.id] as string[]).includes(st))) return true;
-  return ms.id === 'WH' && (e.asset.dockId != null || e.asset.zone === 'K');
-}
+export const eventInStage = (ms: MonitoredStage, e: OpEvent): boolean => eventInMonitoredStage(ms, e);
 
 /** Events of a stage overlapping [from, to] (all when omitted), newest first. */
 export function stageEvents(s: SimState, ms: MonitoredStage, from?: number, to?: number): OpEvent[] {

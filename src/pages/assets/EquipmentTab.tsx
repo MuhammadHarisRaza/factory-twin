@@ -99,7 +99,7 @@ export function EquipmentTab({ onShowSignals }: { onShowSignals: (equipmentId: s
     { key: 'src', header: 'Data source', render: (o) => <SourceBadge status={SOURCE_BY_ID[o.sourceId]?.status ?? 'disconnected'} />, sort: (o) => o.sourceId },
     {
       key: 'state',
-      header: 'Live state',
+      header: 'Current state (simulated)',
       render: (o) => (states[o.id] ? <MachineStatus state={states[o.id]} /> : <span className="muted">—</span>),
       sort: (o) => states[o.id] ?? null,
     },

@@ -27,6 +27,7 @@ import {
   INSPECTION_STATIONS,
   LINE,
   M2_PER_TILE,
+  MONITORED_STAGES,
   OPS_BY_ID,
   PROCESS_MACHINES,
   REASON_BY_CODE,
@@ -47,6 +48,8 @@ import type {
   Evidence,
   EvidenceSeries,
   MachineState,
+  MonitoredStage,
+  MonitoredStageId,
   OpEvent,
   RecordSource,
   StageId,
@@ -355,7 +358,8 @@ function clearKey(s: SimState, t: number, key: string, text: string) {
   ev.history.push({ t, action: 'cleared', by: 'system', text });
   if (ev.status === 'active') {
     ev.status = 'resolved';
-    ev.resolution = { t, by: 'system', reason: `Auto-resolved: ${text.charAt(0).toLowerCase()}${text.slice(1)} (not acknowledged)` };
+    const lead = /^[A-Z]{1,3}-|^[A-Z0-9]{2,}\b/.test(text) ? text : `${text.charAt(0).toLowerCase()}${text.slice(1)}`;
+    ev.resolution = { t, by: 'system', reason: `Auto-resolved: ${lead} (not acknowledged)` };
     ev.history.push({ t, action: 'resolved', by: 'system', text: 'Auto-resolved — the condition cleared before anyone acknowledged it' });
   } else {
     ev.history.push({ t, action: 'updated', by: 'system', text: 'Condition cleared — awaiting resolution by the owner' });
@@ -1130,8 +1134,10 @@ function conditionRules(s: SimState, t: number) {
     s.internal.ev.levels[a.id] = lvl;
     const key = `cond:${a.id}`;
     const abnormal = lvl === 'watch' || lvl === 'warning' || lvl === 'alarm';
-    if (abnormal && !isOpen(s, key)) {
+    if (abnormal && !isOpen(s, key) && s.machines[a.id] && s.machines[a.id].state !== 'down' && s.machines[a.id].state !== 'planned') {
       const h = assess(s, a.id);
+      // Readings must come from a running asset (a stopped machine reads near zero vibration).
+      if (!h.reading.running) continue;
       // Only the scenario log is used here — the hidden degradation state is never read.
       const scen = s.scenarios.find((sc) => sc.kind === 'degradation' && sc.equipmentId === a.id && sc.start <= t && (sc.end == null || sc.end > t))?.id;
       raise(s, t, {
@@ -1436,7 +1442,12 @@ function inspectionRecordRules(s: SimState, t: number) {
             kind: 'model',
             ruleId: 'Q-CRIT',
             description: 'Reject record classified critical (simulated classification)',
-            observed: [{ label: 'Record', value: r.id }, { label: 'Class', value: DEFECTS[r.defect].label }, { label: 'Confidence (simulated)', value: r.confidence != null ? `${Math.round(r.confidence * 100)} %` : '—' }],
+            observed: [
+              { label: 'Record', value: r.id },
+              { label: 'Class', value: DEFECTS[r.defect].label },
+              ...(r.stationId === 'ST-VIS' && r.confidence != null ? [{ label: 'Confidence (simulated)', value: `${Math.round(r.confidence * 100)} %` }] : []),
+              ...(r.measurement ? [{ label: 'Measurement', value: r.measurement }] : []),
+            ],
           },
           facts: [`${clock(r.time)}: ${r.id} — ${DEFECTS[r.defect].label} (critical), batch ${r.batchId}${r.measurement ? `, ${r.measurement}` : ''}.`],
           causes: qualityCauses(s, t, r.defect, activeQualityScenario(s, t)),
@@ -1747,6 +1758,30 @@ function ioRule(s: SimState, t: number) {
 }
 
 // ── Queries for the UI ────────────────────────────────────────────────────────
+
+/** Process stages fully contained in a monitored stage (GLAZE = glazing + decoration, PACK = packing + palletising). */
+const SUB_STAGES: Record<string, StageId[]> = Object.fromEntries(
+  MONITORED_STAGES.map((ms) => [ms.id, STAGES.filter((st) => st.machines.every((m) => ms.equipment.includes(m))).map((st) => st.id)]),
+);
+const EXTRA_EVENT_ASSETS: Partial<Record<MonitoredStageId, string[]>> = {
+  SORT: INSPECTION_STATIONS.map((x) => x.equipmentId),
+  WH: ['K-FLT'],
+};
+
+/**
+ * Whether an event belongs to a monitored stage: its asset is one of the stage's machines or conveyors,
+ * or its stage is one of the stage's process stages (quality events carry the defect's origin stage).
+ * Conveyor events match only the stages that list the conveyor. Used by the monitoring views and the
+ * stage shift PDF so both count the same events.
+ */
+export function eventInMonitoredStage(ms: MonitoredStage, e: OpEvent): boolean {
+  const eq = e.asset.equipmentId;
+  if (eq && CONVEYOR_BY_ID[eq]) return ms.conveyors.includes(eq);
+  if (eq && (ms.equipment.includes(eq) || EXTRA_EVENT_ASSETS[ms.id]?.includes(eq))) return true;
+  const st = e.asset.stage;
+  if (st && (st === ms.id || (SUB_STAGES[ms.id] ?? []).includes(st as StageId))) return true;
+  return ms.id === 'WH' && (e.asset.dockId != null || e.asset.zone === 'K');
+}
 
 export const activeEvents = (s: SimState) => s.events.filter((e) => e.end == null);
 export const openEvents = (s: SimState) => s.events.filter((e) => e.status !== 'resolved');

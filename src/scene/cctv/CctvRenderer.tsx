@@ -160,6 +160,14 @@ function createCctv(get: () => RootState) {
     if (state.frameloop === 'never') stepAnimations(state);
     const plantMinute = simClock.t;
     const prev = gl.getRenderTarget();
+    // Interface overlays (event focus ring, conveyor status edges) are not part of a camera view.
+    const hidden: { o: { visible: boolean } }[] = [];
+    state.scene.traverse((o) => {
+      if (o.userData?.twinOverlay && o.visible) {
+        hidden.push({ o });
+        o.visible = false;
+      }
+    });
     try {
       gl.setRenderTarget(t.hdr);
       gl.clear();
@@ -167,6 +175,7 @@ function createCctv(get: () => RootState) {
       output.render(gl, t.ldr, t.hdr, 0, false);
     } finally {
       gl.setRenderTarget(prev);
+      for (const h of hidden) h.o.visible = true;
     }
     await readPixels(gl, t, w, h);
     if (disposed) return null;

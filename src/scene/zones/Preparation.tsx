@@ -1,3 +1,4 @@
+import { machineAnimationRate } from '../status/shared';
 import { useRef } from 'react';
 import { useFrame } from '@react-three/fiber';
 import type { Group } from 'three';
@@ -185,10 +186,11 @@ const FEED_MAIN: Vec3[] = [
  * under a guard, pinion + gearbox + motor drive train, feed hopper/spout at the west end and a
  * discharge trommel over a slip sump at the east end.
  */
-function BallMill({ z }: { z: number }) {
+function BallMill({ z, id }: { z: number; id: string }) {
   const drum = useRef<Group>(null);
   useFrame((_, delta) => {
-    if (drum.current) drum.current.rotation.x += delta * 0.3;
+    // The drum turns only while the mill is producing (stops when down, starved, blocked or paused).
+    if (drum.current) drum.current.rotation.x += delta * 0.3 * machineAnimationRate(id).rate;
   });
   return (
     <group position={[0, 0, z]}>
@@ -279,7 +281,7 @@ export function Preparation() {
       </Selectable>
       {MILL_Z.map((z, i) => (
         <Selectable key={z} id={`C-BM${i + 1}`}>
-          <BallMill z={z} />
+          <BallMill z={z} id={`C-BM${i + 1}`} />
         </Selectable>
       ))}
 

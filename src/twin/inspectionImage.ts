@@ -7,7 +7,7 @@
  */
 import type { QualityInspection } from '../model/types';
 
-export type InspectionImageOpts = { annotated: boolean; size?: number };
+export type InspectionImageOpts = { annotated: boolean; size?: number; /** Crop around the defect box. */ crop?: boolean };
 export type InspectionRasteriser = (rec: QualityInspection, opts: InspectionImageOpts) => Promise<string | null>;
 
 let rasteriser: InspectionRasteriser | null = null;

@@ -3,9 +3,10 @@
  * Reports — unacknowledged first) and the next actions they call for, with the lifecycle step
  * (acknowledge / start investigating) taken from here on the shared record.
  */
+import { focusEventInTwin } from '../../scene/events/focus';
 import { useState } from 'react';
 import { ArrowRight, Check, ClipboardList, ListChecks, Locate, Search } from 'lucide-react';
-import { openEvent, openEventInTwin, useApp } from '../../app/store';
+import { openEvent, useApp } from '../../app/store';
 import { EVENT_CATEGORY_LABEL } from '../../sim/events';
 import { useSim, useSimValue } from '../../sim/store';
 import { formatClock, formatDuration } from '../../sim/time';
@@ -145,7 +146,7 @@ export function EventActions() {
                   <ClipboardList size={12} aria-hidden />
                   {next === 'resolve' ? 'Resolve…' : 'Report'}
                 </button>
-                <button type="button" className="btn sm ghost icon" onClick={() => openEventInTwin(ev)} title="Show in the Factory Twin" aria-label={`Show ${ev.id} in the Factory Twin`}>
+                <button type="button" className="btn sm ghost icon" onClick={() => focusEventInTwin(ev)} title="Show in the Factory Twin" aria-label={`Show ${ev.id} in the Factory Twin`}>
                   <Locate size={12} />
                 </button>
               </div>

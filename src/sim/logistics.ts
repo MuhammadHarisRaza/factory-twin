@@ -53,7 +53,8 @@ const LOADER_LOOP: Vec2[] = [
 const DOCK_PREP_MIN = 8;
 const PAPERWORK_MIN = 12;
 /** Driver check-in before a waiting truck may be called to a dock. */
-const CHECKIN_MIN = 6;
+/** Driver check-in time at the gate before a truck may take a dock (min). */
+export const CHECKIN_MIN = 6;
 
 const CARRIERS = ['Indus Freight', 'Ravi Haulage', 'Northline Logistics', 'Margalla Transport', 'Crescent Carriers'];
 const RAW_MATERIALS = ['Ball clay', 'Feldspar', 'Silica sand', 'Kaolin'];

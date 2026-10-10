@@ -3,10 +3,11 @@
  * use. Open events with status, rule and counts; the focused event with its evidence frames,
  * lifecycle quick actions, "Show in 3D", "Open report" and an in-page preview of the report.
  */
+import { focusEventInTwin } from '../../scene/events/focus';
 import { useState } from 'react';
 import { Box, CircleCheck, CircleX, Eye, FileText, MessageSquareText, Search } from 'lucide-react';
 import type { OpEvent } from '../../model/types';
-import { openEvent, openEventInTwin, useApp } from '../../app/store';
+import { openEvent, useApp } from '../../app/store';
 import { EVENT_TYPE_LABEL, eventById, evidenceOf } from '../../sim/events';
 import { useSim, useSimValue } from '../../sim/store';
 import { formatClock, formatDateTime, formatDuration } from '../../sim/time';
@@ -255,7 +256,7 @@ function EventFocus({ id, auto, impact: given, onPinRecord }: { id: string; auto
         <button className="btn sm primary" onClick={() => openEvent(ev.id)}>
           <FileText size={13} /> Open report
         </button>
-        <button className="btn sm" onClick={() => openEventInTwin(ev)} title="Show the inspection station in the Factory Twin">
+        <button className="btn sm" onClick={() => focusEventInTwin(ev)} title="Show the inspection station in the Factory Twin">
           <Box size={13} /> Show in 3D
         </button>
         <button className="btn sm" onClick={() => act('ack')} disabled={!canAck} title={canAck ? 'Acknowledge this event' : `Event is ${d.status}`}>

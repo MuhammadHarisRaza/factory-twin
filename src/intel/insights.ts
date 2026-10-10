@@ -360,7 +360,7 @@ function logisticsRule(s: SimState): Insight[] {
       recommendation: 'Release docks faster (pre-stage pallets, add a loading forklift) or re-sequence arrivals with carriers.',
       links: [
         { kind: 'equipment', id: 'A-HOLD', label: 'Locate holding area' },
-        { kind: 'workspace', id: 'fleet', label: 'Fleet & Logistics' },
+        { kind: 'workspace', id: 'fleet', label: 'Vehicle Monitoring' },
       ],
       weight: RANK[fm.waiting >= 5 ? 'serious' : 'warning'] + fm.waiting,
     });
@@ -377,7 +377,7 @@ function logisticsRule(s: SimState): Insight[] {
       recommendation: 'Check paperwork / loading status with the dock supervisor and release the dock.',
       links: [
         { kind: 'vehicle', id: v.id, label: `Follow ${v.label}` },
-        { kind: 'workspace', id: 'fleet', label: 'Fleet & Logistics' },
+        { kind: 'workspace', id: 'fleet', label: 'Vehicle Monitoring' },
       ],
       weight: RANK.warning + (s.minute - d.since) / 10,
     });

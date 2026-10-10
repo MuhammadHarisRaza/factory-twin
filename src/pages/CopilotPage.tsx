@@ -5,9 +5,10 @@
  * investigated and a picker of active events that sets that context.
  * Nothing here is a language model: answers are assembled from the one simulation state.
  */
+import { focusEventInTwin } from '../scene/events/focus';
 import { useEffect, useState } from 'react';
 import { Box, CircleCheck, ClipboardList, Clock, Crosshair, FlaskConical, OctagonX, TriangleAlert, X, type LucideIcon } from 'lucide-react';
-import { openEquipment, openEvent, openEventInTwin, openStage, useApp } from '../app/store';
+import { openEquipment, openEvent, openStage, useApp } from '../app/store';
 import { TARGET, MONITORED_STAGE_BY_ID } from '../model/plant';
 import type { EventCategory, OpEvent } from '../model/types';
 import { copilotEventReport, monitoredStage } from '../intel/copilot';
@@ -284,7 +285,7 @@ function EventContextPanel() {
           <ClipboardList size={12} aria-hidden />
           Open report
         </button>
-        <button type="button" className="btn sm" onClick={() => openEventInTwin(ev)} title="Show the affected asset, station, vehicle or zone in the Factory Twin">
+        <button type="button" className="btn sm" onClick={() => focusEventInTwin(ev)} title="Show the affected asset, station, vehicle or zone in the Factory Twin">
           <Box size={12} aria-hidden />
           Show in twin
         </button>

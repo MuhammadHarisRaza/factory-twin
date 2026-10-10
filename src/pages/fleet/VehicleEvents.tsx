@@ -7,7 +7,8 @@
  */
 import { useState } from 'react';
 import { Box, CircleCheck, CircleX, Eye, FileText, MessageSquareText, Search } from 'lucide-react';
-import { openEvent, openEventInTwin, useApp } from '../../app/store';
+import { openEvent, useApp } from '../../app/store';
+import { focusEventInTwin } from '../../scene/events/focus';
 import { GEOFENCES } from '../../model/plant';
 import type { Evidence, OpEvent } from '../../model/types';
 import { eventImpact } from '../../intel/report';
@@ -35,8 +36,10 @@ const placeOf = (e: OpEvent) =>
  * geofence equipment or the zone (a departed truck can no longer be followed).
  */
 export function showEventInTwin(ev: OpEvent, onSite: boolean) {
-  if (ev.asset.vehicleId && !onSite) return openEventInTwin({ asset: { ...ev.asset, vehicleId: undefined } });
-  openEventInTwin(ev);
+  // focusEventInTwin follows the vehicle while it is on site, otherwise frames the dock / geofence,
+  // and adds the focus ring + pin.
+  void onSite;
+  focusEventInTwin(ev);
 }
 
 export function VehicleEvents({

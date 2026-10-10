@@ -5,7 +5,7 @@ import { useSim } from '../../sim/store';
 
 /**
  * Follows an insight / copilot link: equipment → Factory Twin with the asset selected,
- * vehicle → Factory Twin following it (Fleet & Logistics if it has left the site),
+ * vehicle → Factory Twin following it (Vehicle Monitoring if it has left the site),
  * workspace → that workspace.
  */
 export function followLink(link: InsightLink) {

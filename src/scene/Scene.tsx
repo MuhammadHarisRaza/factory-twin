@@ -385,13 +385,15 @@ export default function Scene({ active = true }: { active?: boolean }) {
         gl.toneMappingExposure = 1.05;
       }}
     >
-      <PerformanceMonitor
-        onDecline={() => {
-          setHighQuality(false);
-          setDpr(1);
-        }}
-        flipflops={1}
-      />
+      {active && (
+        <PerformanceMonitor
+          onDecline={() => {
+            setHighQuality(false);
+            setDpr(1);
+          }}
+          flipflops={1}
+        />
+      )}
       <color attach="background" args={['#d9e0e6']} />
       <fog attach="fog" args={['#d9e0e6', 380, 900]} />
       <Lights />

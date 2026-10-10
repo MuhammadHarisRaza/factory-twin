@@ -1,7 +1,7 @@
 /**
  * Shared operational data model.
  *
- * Every workspace (Factory Twin, Production & OEE, Quality, Fleet & Logistics,
+ * Every workspace (Factory Twin, Production Monitoring, OEE & Loss, AI Defect Monitoring, Vehicle Monitoring,
  * Assets & Data) reads these entities from one simulation state — nothing in the UI
  * keeps its own copy of machine, counter or vehicle values.
  *

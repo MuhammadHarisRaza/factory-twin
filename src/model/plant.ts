@@ -200,10 +200,10 @@ export const INSPECTION_STATIONS: InspectionStation[] = [
 
 export const DEFECTS: Record<DefectCategory, { label: string; weight: number; origin: StageId; station: string }> = {
   crack: { label: 'Crack', weight: 0.18, origin: 'PRESS', station: 'ST-VIS' },
-  chip: { label: 'Chip / edge damage', weight: 0.16, origin: 'KILN', station: 'ST-VIS' },
+  chip: { label: 'Chip & edge damage', weight: 0.16, origin: 'KILN', station: 'ST-VIS' },
   surface: { label: 'Surface blemish', weight: 0.2, origin: 'GLAZE', station: 'ST-VIS' },
   glaze: { label: 'Glaze inconsistency', weight: 0.16, origin: 'GLAZE', station: 'ST-VIS' },
-  shade: { label: 'Colour / shade variation', weight: 0.14, origin: 'DECOR', station: 'ST-VIS' },
+  shade: { label: 'Colour (shade) variation', weight: 0.14, origin: 'DECOR', station: 'ST-VIS' },
   planarity: { label: 'Planarity deviation', weight: 0.1, origin: 'KILN', station: 'ST-GAUGE' },
   dimension: { label: 'Dimensional (caliber)', weight: 0.06, origin: 'PRESS', station: 'ST-GAUGE' },
 };

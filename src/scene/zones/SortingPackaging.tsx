@@ -1,3 +1,4 @@
+import { machineAnimationRate } from '../status/shared';
 import { useRef } from 'react';
 import { useFrame } from '@react-three/fiber';
 import { Euler, Quaternion, Vector3, type Group, type Material } from 'three';
@@ -754,8 +755,11 @@ const STAGING = (() => {
 /** Palletising robot on its pedestal; the turret swings between the pick table and the two pallets. */
 function PalletisingRobot() {
   const arm = useRef<Group>(null);
-  useFrame(({ clock }) => {
-    if (arm.current) arm.current.rotation.y = (Math.PI / 2) * Math.sin(clock.elapsedTime * 0.4);
+  const phase = useRef(0);
+  useFrame((_, delta) => {
+    // Phase advances only while J-PAL is producing, so a stopped cell holds its pose.
+    phase.current += delta * machineAnimationRate('J-PAL').rate;
+    if (arm.current) arm.current.rotation.y = (Math.PI / 2) * Math.sin(phase.current * 0.4);
   });
   return (
     <group position={[-63.5, 0, LINE_Z]}>
@@ -772,9 +776,13 @@ function PalletisingRobot() {
 function StretchWrapper() {
   const table = useRef<Group>(null);
   const carriage = useRef<Group>(null);
-  useFrame(({ clock }, delta) => {
-    if (table.current) table.current.rotation.y += delta * 0.6;
-    if (carriage.current) carriage.current.position.y = 1.5 + 0.7 * Math.sin(clock.elapsedTime * 0.35);
+  const phase = useRef(0);
+  useFrame((_, delta) => {
+    // The wrapper runs with the palletiser it serves.
+    const r = machineAnimationRate('J-PAL').rate;
+    phase.current += delta * r;
+    if (table.current) table.current.rotation.y += delta * 0.6 * r;
+    if (carriage.current) carriage.current.position.y = 1.5 + 0.7 * Math.sin(phase.current * 0.35);
   });
   return (
     <group position={[-71, 0, 20]}>

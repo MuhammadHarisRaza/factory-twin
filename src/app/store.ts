@@ -154,7 +154,8 @@ export const useApp = create<AppState>((set, get) => ({
       saveCameras(next);
       return { cameraSources: next };
     }),
-  openCopilot: (prompt, ctx) => set({ copilotOpen: true, copilotPrompt: prompt ?? null, copilotEventId: ctx?.eventId ?? null }),
+  openCopilot: (prompt, ctx) =>
+    set((s) => ({ copilotOpen: true, copilotPrompt: prompt ?? null, copilotEventId: ctx ? (ctx.eventId ?? null) : prompt ? null : s.copilotEventId })),
   closeCopilot: () => set({ copilotOpen: false, copilotPrompt: null }),
   go: (workspace) => {
     set({ workspace });
@@ -179,7 +180,12 @@ export const useApp = create<AppState>((set, get) => ({
 if (typeof window !== 'undefined')
   window.addEventListener('hashchange', () => {
     const r = parseHash();
-    useApp.setState({ workspace: r.workspace, ...(r.eventId ? { selectedEventId: r.eventId } : {}), ...(r.stage ? { monitoringStage: r.stage } : {}) });
+    useApp.setState({
+      workspace: r.workspace,
+      ...(r.eventId ? { selectedEventId: r.eventId } : {}),
+      // #/monitoring without a stage is the overview — clear the stage so Back does not strand it.
+      ...(r.workspace === 'monitoring' ? { monitoringStage: r.stage } : {}),
+    });
   });
 
 /** Open the Factory Twin with an equipment item selected and framed. */

@@ -4,6 +4,7 @@
  * of the shared event engine. Pure functions over the one simulation state — a truck's stage is
  * read from its visit phase, current leg activity and visit timestamps; nothing is stored here.
  */
+import { CHECKIN_MIN } from '../../sim/logistics';
 import type { Vec2 } from '../../data/types';
 import { DATA_SOURCES, DEFAULT_EVENT_RULES, GEOFENCES } from '../../model/plant';
 import type { EventRules, EventType, Evidence, Geofence, OpEvent, RestrictedZoneEvent, Vehicle, VehicleLeg } from '../../model/types';
@@ -18,7 +19,7 @@ import { DOCK_NAME, externalRows, internalRows, type ExtRow, type IntRow } from 
  * Driver check-in at the gatehouse after parking in the holding area, before a truck can be called
  * to a dock. Mirrors CHECKIN_MIN in src/sim/logistics.ts (not exported there).
  */
-export const DRIVER_CHECKIN_MIN = 6;
+export const DRIVER_CHECKIN_MIN = CHECKIN_MIN;
 
 // ── Stages ────────────────────────────────────────────────────────────────────
 

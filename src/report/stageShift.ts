@@ -6,6 +6,7 @@
  * report their loss under the root event, so nothing is counted twice).
  */
 import { EQUIPMENT_BY_ID } from '../data/equipment';
+import { eventInMonitoredStage } from '../sim/events';
 import { eventImpact } from '../intel/report';
 import { CAMERA_BY_ID, CONVEYOR_BY_ID, M2_PER_TILE, MONITORED_STAGE_BY_ID, PROCESS_MACHINES, REASON_BY_CODE } from '../model/plant';
 import type { MonitoredStageId, OpEvent, StageId } from '../model/types';
@@ -38,10 +39,7 @@ export const STAGE_PARTS: Record<MonitoredStageId, StageId[]> = {
 /** Whether an event belongs to a monitored stage (by its stage or by an asset of the stage). */
 export function eventInStage(ev: OpEvent, stageId: MonitoredStageId) {
   const st = MONITORED_STAGE_BY_ID[stageId];
-  if (!st) return false;
-  if (ev.asset.stage && (ev.asset.stage === stageId || STAGE_PARTS[stageId]?.includes(ev.asset.stage as StageId))) return true;
-  const id = ev.asset.equipmentId;
-  return !!id && (st.equipment.includes(id) || st.conveyors.includes(id));
+  return !!st && eventInMonitoredStage(st, ev);
 }
 
 /** Events of a stage overlapping a period, newest first. */

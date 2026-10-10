@@ -903,10 +903,13 @@ function pushInspection(s: SimState, t: number, stationId: string, batchIdValue:
     severity: sev,
     measurement: MEASURE[defect](r),
     tiles: TILES_PER_RECORD,
-    ...detection(s.internal.cvRng, defect),
+    ...visionFields(stationId, detection(s.internal.cvRng, defect)),
     source: activeScenarios(s, t).some((sc) => sc.kind === 'quality-deterioration') ? 'scenario' : 'simulation',
   });
 }
+
+/** Gauge results are laser measurements: they keep the measured location but carry no classification confidence. */
+const visionFields = (stationId: string, d: Pick<QualityInspection, 'confidence' | 'box'>) => (stationId === 'ST-VIS' ? d : { confidence: null, box: d.box });
 
 /** Illustrative defect box (tile coordinates 0–1) and classification confidence for a record. */
 function detection(r: Rng, defect: DefectCategory): Pick<QualityInspection, 'confidence' | 'box'> {

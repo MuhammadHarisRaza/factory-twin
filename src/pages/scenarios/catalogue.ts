@@ -360,14 +360,18 @@ export function scenarioStatus(s: SimState, sc: ScenarioActivation): ScenarioSta
   }
   if (sc.kind === 'maintenance') {
     const end = sc.end ?? now;
-    return end > now ? { key: 'active', label: 'In progress', at: sc.start, note: `Planned stop until ${formatClock(end)}` } : { key: 'completed', label: 'Completed', at: end, note: null };
+    if (end > now) return { key: 'active', label: 'In progress', at: sc.start, note: `Planned stop until ${formatClock(end)}` };
+    // Cleared before its planned duration: the stop ended early and the fault was not removed.
+    if (end < sc.start + (sc.count ?? 45)) return { key: 'ended', label: 'Cancelled', at: end, note: 'Stopped early — the fault was not removed' };
+    return { key: 'completed', label: 'Completed', at: end, note: null };
   }
   const ended = sc.end != null && sc.end <= now;
   if (sc.kind === 'degradation') {
     const trip = tripOf(s, sc);
-    if (trip && (!ended || trip.start < sc.end!)) return { key: ended ? 'ended' : 'resolved', label: ended ? 'Ended' : 'Broke down', at: trip.start, note: `Unplanned breakdown at ${formatClock(trip.start)}` };
-    const fix = maintenanceFor(s, sc).find((m) => m.end != null && m.end <= now);
-    if (fix && (!ended || fix.end! <= sc.end!)) return { key: ended ? 'ended' : 'resolved', label: ended ? 'Ended' : 'Fault removed', at: fix.end, note: `Removed by maintenance at ${formatClock(fix.end!)}` };
+    // The engine closes a developing-fault scenario when its fault trips the machine or is repaired.
+    if (trip && (!ended || trip.start <= sc.end!)) return { key: 'resolved', label: 'Broke down', at: trip.start, note: `Unplanned breakdown at ${formatClock(trip.start)}` };
+    const fix = maintenanceFor(s, sc).find((m) => m.end != null && m.end <= now && m.end >= m.start + (m.count ?? 45));
+    if (fix && (!ended || fix.end! <= sc.end!)) return { key: 'resolved', label: 'Fault removed', at: fix.end, note: `Removed by maintenance at ${formatClock(fix.end!)}` };
   }
   if (ended) return { key: 'ended', label: 'Ended', at: sc.end, note: null };
   return { key: 'active', label: 'Active', at: sc.start, note: sc.end != null ? `Until ${formatClock(sc.end)}` : null };

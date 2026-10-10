@@ -421,7 +421,10 @@ export type ScenarioKind =
   | 'prolonged-dock-stay'
   | 'energy-anomaly'
   | 'degradation'
-  | 'maintenance';
+  | 'maintenance'
+  | 'conveyor-stop'
+  | 'signal-loss'
+  | 'restricted-entry';
 
 export type ScenarioActivation = {
   id: string;
@@ -435,6 +438,312 @@ export type ScenarioActivation = {
   /** Rate / capacity factor (0–1) or reject multiplier. */
   factor?: number;
   dockId?: string;
+  /** Vehicle the scenario acts on (restricted-zone entry). */
+  vehicleId?: string;
   count?: number;
   label: string;
+};
+
+// ── Data-source transparency ──────────────────────────────────────────────────
+
+/**
+ * Freshness of one feed as the product shows it. 'live' only ever appears for a source that is
+ * actually connected and delivering (e.g. a configured camera stream that is playing).
+ */
+export type FeedStatus = 'simulated' | 'live' | 'stale' | 'disconnected' | 'unavailable';
+
+/** Per-asset data-feed health inside the simulation (a simulated PLC/gateway link). */
+export type FeedRuntime = {
+  status: 'ok' | 'stale';
+  since: number;
+  scenarioId?: string;
+  /** Last values received before the feed went stale (what a real gateway would still show). */
+  lastState?: MachineState;
+  lastCount?: number;
+  lastRate?: number;
+};
+
+/**
+ * State shown for an asset, derived only from signal logic or scenarios:
+ * a planned stop is not a fault, starvation/blockage are caused elsewhere, and an asset whose
+ * data feed is stale is 'unknown' rather than assumed to be running.
+ */
+export type OperationalState =
+  | 'running'
+  | 'reduced'
+  | 'idle'
+  | 'stopped'
+  | 'fault'
+  | 'starved'
+  | 'blocked'
+  | 'planned'
+  | 'disconnected'
+  | 'unknown';
+
+// ── Conveyors ─────────────────────────────────────────────────────────────────
+
+/**
+ * A conveyor carrying tiles between stages. While it is stopped, the stages in `blocksInputOf`
+ * receive nothing and the stages in `blocksOutputOf` cannot discharge — starvation and blocking
+ * then follow through the buffers as on the real line.
+ */
+export type ConveyorDef = {
+  id: string;
+  name: string;
+  zone: ZoneId;
+  kind: 'belt' | 'roller';
+  /** Stage feeding the conveyor and stage it delivers to (null = outside the line). */
+  from: StageId | null;
+  to: StageId | null;
+  /** WIP buffer carried on / fed by the conveyor, if any. */
+  bufferId: string | null;
+  blocksInputOf: StageId[];
+  blocksOutputOf: StageId[];
+  /** Nominal transport capacity, tiles per hour. */
+  capacityPerHour: number;
+  /** Nominal belt / roller speed, m/min (signal value while running). */
+  speedMpm: number;
+  reliability: { mtbf: number; repairMin: number; repairMax: number; reasons: string[] };
+};
+
+// ── Cameras ───────────────────────────────────────────────────────────────────
+
+/**
+ * A camera position in the plant. Every camera has a simulated feed rendered from the digital twin;
+ * a real stream is only used when one is configured and actually plays (see src/ui/feeds).
+ */
+export type CameraDef = {
+  id: string;
+  name: string;
+  zone: ZoneId;
+  stage: StageId | 'WH' | 'YARD' | null;
+  /** Equipment / geofence ids visible in this camera's field of view. */
+  covers: string[];
+  purpose: string;
+};
+
+// ── Production monitoring registry ────────────────────────────────────────────
+
+/** A counting point: where and how a quantity is measured (or why it is not). */
+export type CountingPoint = {
+  label: string;
+  unit: string;
+  /** Signal providing it, or null when not measured at this stage. */
+  signalId: string | null;
+  measured: boolean;
+  note?: string;
+};
+
+export type MonitoredStageId = StageId | 'WH';
+
+/** Configurable monitored stage (the process stages plus warehouse transfer). */
+export type MonitoredStage = {
+  id: MonitoredStageId;
+  name: string;
+  step: number;
+  zone: ZoneId;
+  equipment: string[];
+  conveyors: string[];
+  cameras: string[];
+  input: CountingPoint;
+  output: CountingPoint;
+  good: CountingPoint | null;
+  rejected: CountingPoint | null;
+  /** Buffer whose level is this stage's work in progress at its input. */
+  wipBufferId: string | null;
+  /** Whether a standalone OEE is meaningful for the stage. */
+  oeeMeaningful: boolean;
+  /** Unit of the stage's own counts (tiles, or pallets for warehouse transfer). */
+  unit: 'tiles' | 'pallets';
+};
+
+// ── Events & evidence ─────────────────────────────────────────────────────────
+
+export type EventCategory = 'production' | 'quality' | 'logistics' | 'equipment' | 'energy' | 'data';
+
+export type EventType =
+  | 'machine-fault'
+  | 'machine-stop'
+  | 'conveyor-stop'
+  | 'below-rate'
+  | 'starvation'
+  | 'blockage'
+  | 'counter-inactive'
+  | 'condition-abnormal'
+  | 'io-imbalance'
+  | 'defect-rate'
+  | 'defect-count'
+  | 'defect-repeat'
+  | 'defect-deterioration'
+  | 'critical-defect'
+  | 'truck-waiting'
+  | 'dock-overstay'
+  | 'yard-congestion'
+  | 'turnaround-exceeded'
+  | 'restricted-entry'
+  | 'energy-deviation';
+
+/** Lifecycle: Detected → Active → Acknowledged → Investigating → Resolved. */
+export type EventStatus = 'active' | 'acknowledged' | 'investigating' | 'resolved';
+
+export type EventValue = { label: string; value: number | string; unit?: string };
+
+export type EventTrigger = {
+  kind: 'signal' | 'rule' | 'model' | 'scenario';
+  ruleId: string;
+  /** Human description of the rule that fired. */
+  description: string;
+  signalId?: string;
+  observed: EventValue[];
+  threshold?: EventValue;
+};
+
+export type EventCause = {
+  text: string;
+  /** confirmed = directly observed; likely / possible = inference from correlated evidence. */
+  confidence: 'confirmed' | 'likely' | 'possible';
+  basis: string;
+  relatedEventId?: string;
+};
+
+export type EventHistoryEntry = {
+  t: number;
+  action: 'detected' | 'updated' | 'escalated' | 'cleared' | 'reopened' | 'acknowledged' | 'owner' | 'investigating' | 'note' | 'resolved' | 'report';
+  by: 'system' | 'user';
+  text: string;
+};
+
+export type OpEvent = {
+  id: string;
+  category: EventCategory;
+  type: EventType;
+  severity: AlertSeverity;
+  status: EventStatus;
+  title: string;
+  summary: string;
+  /** Condition start; `end` is when the condition cleared (recovery), null while it persists. */
+  start: number;
+  end: number | null;
+  lastUpdate: number;
+  asset: {
+    equipmentId?: string;
+    stage?: MonitoredStageId;
+    zone?: ZoneId;
+    stationId?: string;
+    vehicleId?: string;
+    dockId?: string;
+    geofenceId?: string;
+  };
+  trigger: EventTrigger;
+  /** Observed facts captured when the event was detected and updated. */
+  facts: string[];
+  /** Suspected causes — inferences, never presented as confirmed unless observed. */
+  causes: EventCause[];
+  related: string[];
+  evidence: string[];
+  refs: { downtimeId?: string; scenarioId?: string; inspectionIds?: string[]; restrictedEventId?: string; defect?: DefectCategory };
+  recommendations: string[];
+  owner: string | null;
+  notes: { t: number; by: string; text: string }[];
+  resolution: { t: number; by: 'system' | 'user'; reason: string; action?: string } | null;
+  history: EventHistoryEntry[];
+  /** Reports exported from this record (plant minute + wall-clock ISO time). */
+  reports: { t: number; at: string; format: 'pdf' }[];
+  dedupeKey: string;
+  source: RecordSource;
+  /** Detected during the pre-rolled history (before this demo session began). */
+  historical: boolean;
+  /** Set when this event is a consequence of another (e.g. kiln starved because a conveyor stopped). */
+  consequenceOf?: string;
+  /**
+   * Impact accumulated minute by minute while the condition is active (see src/sim/impact.ts):
+   * asset-level losses, minutes the line constraint was held up because of this event, and the
+   * quality / logistics quantities of the event window.
+   */
+  acc: EventAccumulators;
+};
+
+export type EventAccumulators = {
+  minutes: number;
+  /** Tiles the affected asset did not make vs its typical rate. */
+  assetLostTiles: number;
+  /** Minutes the kiln (line constraint) was down / starved / blocked because of this event. */
+  constraintMin: number;
+  /** Kiln output lost in those minutes vs its typical rate (tiles) — the line-level production loss. */
+  constraintLostTiles: number;
+  /** Kiln typical rate (tiles/min) used for the line-level loss, frozen at detection. */
+  kilnTypicalRate: number;
+  inspected: number;
+  rejects: number;
+  /** Reject rate of the 24 h before detection (reference for excess rejects). */
+  referenceRejectRate: number | null;
+  waitMin: number;
+};
+
+export type EvidenceKind =
+  | 'state-transition'
+  | 'signal-series'
+  | 'counter-series'
+  | 'camera-snapshot'
+  | 'video-ref'
+  | 'inspection-image'
+  | 'vehicle-timeline'
+  | 'metrics'
+  | 'related-events';
+
+export type EvidenceSeries = {
+  id: string;
+  label: string;
+  unit: string;
+  /** Plant minutes. */
+  t: number[];
+  v: (number | null)[];
+  expected?: (number | null)[];
+  limit?: { label: string; value: number };
+};
+
+export type Evidence = {
+  id: string;
+  eventId: string;
+  kind: EvidenceKind;
+  title: string;
+  /** Plant minute the evidence was captured / frozen. */
+  capturedAt: number;
+  provenance: {
+    origin: 'simulation' | 'scenario' | 'digital-twin-render' | 'live-camera' | 'user';
+    sourceId: string;
+    label: string;
+  };
+  status: 'available' | 'pending' | 'unavailable';
+  unavailableReason?: string;
+  series?: EvidenceSeries[];
+  transitions?: { t: number; from: string; to: string; note?: string }[];
+  image?: { key: string; width: number; height: number; frameTime: number; annotated?: boolean };
+  /** Camera responsible for a snapshot / video reference. */
+  cameraId?: string;
+  inspectionId?: string;
+  milestones?: { label: string; t: number | null; note?: string }[];
+  metrics?: EventValue[];
+  eventIds?: string[];
+  /** Video reference window (plant minutes) for 'video-ref' evidence. */
+  window?: { from: number; to: number | null };
+};
+
+/** Thresholds of the detection rules (editable; take effect from the next simulated minute). */
+export type EventRules = {
+  belowRateFactor: number;
+  belowRateMinutes: number;
+  starvedMinutesConstraint: number;
+  starvedMinutes: number;
+  counterInactiveMinutes: number;
+  rejectRateMax: number;
+  defectCount30Max: number;
+  defectRepeatRecords: number;
+  deteriorationRatio: number;
+  truckWaitMax: number;
+  dockStayMax: number;
+  yardQueueMax: number;
+  turnaroundMax: number;
+  energyDeviationMax: number;
+  ioImbalanceMax: number;
 };

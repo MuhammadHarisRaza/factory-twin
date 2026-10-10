@@ -13,7 +13,7 @@ import { EQUIPMENT_BY_ID } from '../data/equipment';
 import { OPS_BY_ID, REASON_BY_CODE } from '../model/plant';
 import type { AlertSeverity, RecordSource } from '../model/types';
 import type { SimState } from './engine';
-import { nextId, openDowntime, raiseAlert } from './engine';
+import { minuteAt, nextId, openDowntime, raiseAlert } from './engine';
 import { lerpRange, noise01, streamFor } from './rng';
 import { MIN_PER_DAY } from './time';
 
@@ -134,7 +134,7 @@ export type MaintenanceRecord = {
 };
 
 export type HealthLevel = 'normal' | 'watch' | 'warning' | 'alarm' | 'offline';
-const LEVEL_RANK: Record<HealthLevel, number> = { offline: 0, normal: 1, watch: 2, warning: 3, alarm: 4 };
+export const LEVEL_RANK: Record<HealthLevel, number> = { offline: 0, normal: 1, watch: 2, warning: 3, alarm: 4 };
 
 export type HealthState = {
   episodes: DegradationEpisode[];
@@ -200,6 +200,15 @@ export function loadAt(s: SimState, id: string, t: number) {
   if (t >= s.minute - 1) {
     const m = s.machines[id];
     return m.state === 'down' || m.state === 'planned' ? 0 : Math.min(1, m.ratePerHour / ideal);
+  }
+  // Minute-accurate while the minute log still holds t: a stopped minute is a stopped minute.
+  const x = minuteAt(s, id, t);
+  if (x) return x.state === 'down' || x.state === 'planned' ? 0 : Math.min(1, (x.rate * 60) / ideal);
+  // Older: the machine was not running if one of its own stop records covers t.
+  for (let i = s.downtime.length - 1; i >= 0; i--) {
+    const d = s.downtime[i];
+    if (d.equipmentId === id && d.start <= t && (d.end ?? s.minute) > t && (d.category !== 'Starved' && d.category !== 'Blocked')) return 0;
+    if (d.end != null && d.end < t - 600) break;
   }
   const h = Math.floor(t / 60);
   const b = s.hours[id]?.get(h);
@@ -351,10 +360,24 @@ function endScenarioOf(s: SimState, scenarioId: string | undefined, t: number) {
 
 export function stepHealth(s: SimState, t: number) {
   const h = s.health;
-  // Failures when a degradation reaches the end of its life.
+  // Condition-based maintenance completing — before the trip check, so a repair that finishes this
+  // minute removes the fault instead of racing it.
+  for (const [id, fix] of Object.entries(h.fixAt)) {
+    if (t < fix.at) continue;
+    for (const e of h.episodes)
+      if (e.equipmentId === id && e.end == null && e.start <= t) {
+        e.end = t;
+        e.endReason = 'maintenance';
+        endScenarioOf(s, e.scenarioId, t);
+      }
+    delete h.fixAt[id];
+  }
+  // Failures when a degradation reaches the end of its life (each episode on its own severity).
   for (const e of h.episodes) {
     if (e.end != null || e.start > t) continue;
-    const sev = severityAt(s, e.equipmentId, t);
+    // Progression pauses while the asset is stopped for condition-based maintenance.
+    if (h.fixAt[e.equipmentId]) continue;
+    const sev = Math.min(1.05, e.startSeverity + e.ratePerMin * (t - e.start));
     if (sev < 1) continue;
     const m = s.machines[e.equipmentId];
     if (m.state === 'down' || m.state === 'planned') continue;
@@ -363,9 +386,13 @@ export function stepHealth(s: SimState, t: number) {
     const duration = Math.round(lerpRange(r(), a.repair[0], a.repair[1]));
     if (m.activeDowntimeId) continue;
     openDowntime(s, e.equipmentId, a.failureReason, t, t + duration, e.source, e.scenarioId);
-    e.end = t;
-    e.endReason = 'trip';
-    endScenarioOf(s, e.scenarioId, t);
+    // The failed component is replaced in the repair: every open episode of the asset ends here.
+    for (const o of h.episodes)
+      if (o.equipmentId === e.equipmentId && o.end == null && o.start <= t) {
+        o.end = t;
+        o.endReason = 'trip';
+        endScenarioOf(s, o.scenarioId, t);
+      }
     h.maintenance.push({
       id: nextId(s, 'MR'),
       equipmentId: e.equipmentId,
@@ -376,16 +403,6 @@ export function stepHealth(s: SimState, t: number) {
       source: e.source,
     });
     raiseAlert(s, t, 'critical', `${e.equipmentId} failed: ${a.component}`, 'Unplanned stop after a developing fault reached its trip limit', { equipmentId: e.equipmentId }, e.source);
-  }
-  // Condition-based maintenance completing.
-  for (const [id, fix] of Object.entries(h.fixAt)) {
-    if (t < fix.at) continue;
-    for (const e of h.episodes) if (e.equipmentId === id && e.end == null && e.start <= t) {
-      e.end = t;
-      e.endReason = 'maintenance';
-      endScenarioOf(s, e.scenarioId, t);
-    }
-    delete h.fixAt[id];
   }
   // Escalation alerts every 10 minutes.
   if (t % 10 === 0 && t > 0) {

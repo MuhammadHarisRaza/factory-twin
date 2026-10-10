@@ -16,13 +16,15 @@ export const DEFAULT_START = 7 * MIN_PER_DAY + 4 * 60 + 30;
 export const toMs = (minute: number) => SIM_EPOCH + minute * 60_000;
 export const toIso = (minute: number) => new Date(toMs(minute)).toISOString().replace('.000Z', '');
 
-const fmt = (minute: number, opts: Intl.DateTimeFormatOptions) =>
-  new Intl.DateTimeFormat('en-GB', { timeZone: 'UTC', ...opts }).format(new Date(toMs(minute)));
+// Formatters are built once: constructing an Intl.DateTimeFormat per call costs ~50 µs and these run
+// thousands of times per simulated minute across the workspaces and the event engine.
+const CLOCK = new Intl.DateTimeFormat('en-GB', { timeZone: 'UTC', hour: '2-digit', minute: '2-digit', hour12: false });
+const CLOCK_SEC = new Intl.DateTimeFormat('en-GB', { timeZone: 'UTC', hour: '2-digit', minute: '2-digit', second: '2-digit', hour12: false });
+const DAY = new Intl.DateTimeFormat('en-GB', { timeZone: 'UTC', weekday: 'short', day: 'numeric', month: 'short' });
 
-export const formatClock = (minute: number) => fmt(minute, { hour: '2-digit', minute: '2-digit', hour12: false });
-export const formatClockSec = (minute: number) =>
-  fmt(minute, { hour: '2-digit', minute: '2-digit', second: '2-digit', hour12: false });
-export const formatDay = (minute: number) => fmt(minute, { weekday: 'short', day: 'numeric', month: 'short' });
+export const formatClock = (minute: number) => CLOCK.format(toMs(minute));
+export const formatClockSec = (minute: number) => CLOCK_SEC.format(toMs(minute));
+export const formatDay = (minute: number) => DAY.format(toMs(minute));
 export const formatDateTime = (minute: number) => `${formatDay(minute)} ${formatClock(minute)}`;
 export const formatDate = (minute: number) => new Date(toMs(minute)).toISOString().slice(0, 10);
 

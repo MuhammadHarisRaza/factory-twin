@@ -16,6 +16,10 @@ import {
   BASE_REJECT_RATE,
   BUFFERS,
   CHANGEOVER_EVERY_MIN,
+  CONVEYORS,
+  CONVEYOR_BY_ID,
+  CONVEYOR_IDS,
+  DEFAULT_EVENT_RULES,
   DEFECTS,
   DEFECT_ORDER,
   INSPECTION_STATIONS,
@@ -36,6 +40,10 @@ import type {
   DefectCategory,
   DowntimeEvent,
   EquipmentRuntime,
+  EventRules,
+  Evidence,
+  FeedRuntime,
+  OpEvent,
   HourBucket,
   MachineState,
   ProductionBatch,
@@ -48,7 +56,8 @@ import { createLogistics, stepLogistics, applyLogisticsScenario, type LogisticsS
 import { CONSUMERS, stepEnergy, type EnergyBucket } from './energy';
 import { createHealth, degradationLoad, startMaintenance, stepHealth, type HealthState } from './health';
 import { expBounded, lerpRange, noise01, streamFor, weighted, type Rng } from './rng';
-import { DEFAULT_START, SHIFT_MIN, formatDate } from './time';
+import { DEFAULT_START, MIN_PER_DAY, SHIFT_MIN, formatDate } from './time';
+import { createEventInternal, stepEvents, type EventInternal } from './events';
 
 export const DEFAULT_SEED = 20261012;
 
@@ -75,6 +84,23 @@ export type SimState = {
   /** Consumer id → hour → energy (kWh). */
   energy: Record<string, Map<number, EnergyBucket>>;
   health: HealthState;
+  /** Simulated data-feed health per process machine and conveyor (PLC / gateway link). */
+  feeds: Record<string, FeedRuntime>;
+  /** Per-minute history of the last LOG_MIN minutes (rate and state) for evidence and signal trends. */
+  minuteLog: Record<string, MinuteLog>;
+  /** Per-minute inspection counts (last LOG_MIN minutes) for minute-accurate quality rules. */
+  qualityLog: QualityLog;
+  /** Per-minute buffer levels (tiles, last LOG_MIN minutes). */
+  bufferLog: Record<string, { level: Float32Array; t: Int32Array }>;
+  /** Unified operational events (all use cases) and their evidence — see src/sim/events.ts. */
+  events: OpEvent[];
+  evidence: Evidence[];
+  /** Detection-rule thresholds currently in force. */
+  rules: EventRules;
+  /** Whether the event engine runs (off for the baseline twin). */
+  eventsOn: boolean;
+  /** Minute this demo session started; events before it are pre-rolled history. */
+  liveFrom: number;
   /** Internal bookkeeping (not for display). */
   internal: Internal;
   /** Incremented on every change; UI memoisation key. */
@@ -97,7 +123,24 @@ type Internal = {
   seq: number;
   /** Last minute an alert of a given key fired (de-duplication). */
   alertAt: Record<string, number>;
+  /** Event-engine state (open conditions, rule timers); separate id sequence so other ids are unchanged. */
+  ev: EventInternal;
 };
+
+/** Ring buffer: tiles moved per minute and a state code, indexed by minute % LOG_MIN. */
+export type MinuteLog = {
+  rate: Float32Array;
+  state: Uint8Array;
+  /** 0 = own pace, 1 = limited by input, 2 = limited by output (held by a neighbour). */
+  lim: Uint8Array;
+  t: Int32Array;
+};
+export const LOG_MIN = 240;
+export type QualityLog = { t: Int32Array; inspected: Float32Array; rejected: Float32Array; defect: Record<DefectCategory, Float32Array> };
+export const STATE_CODE: Record<MachineState, number> = { running: 0, reduced: 1, starved: 2, blocked: 3, down: 4, planned: 5 };
+export const CODE_STATE: MachineState[] = ['running', 'reduced', 'starved', 'blocked', 'down', 'planned'];
+/** Assets with stop/failure accounting: process machines and conveyors. */
+export const TRACKED_ASSETS = [...PROCESS_MACHINES, ...CONVEYOR_IDS];
 
 const BUFFER_CAP = Object.fromEntries(BUFFERS.map((b) => [b.id, b.capacity]));
 /** Tiles per illustrative inspection record. */
@@ -120,7 +163,7 @@ export const nextId = (s: SimState, prefix: string) => `${prefix}-${String(++s.i
 
 // ── Creation & stepping ───────────────────────────────────────────────────────
 
-export function createSim(seed = DEFAULT_SEED, startMinute = DEFAULT_START): SimState {
+export function createSim(seed = DEFAULT_SEED, startMinute = DEFAULT_START, opts: { events?: boolean } = {}): SimState {
   const s: SimState = {
     seed,
     minute: 0,
@@ -138,6 +181,20 @@ export function createSim(seed = DEFAULT_SEED, startMinute = DEFAULT_START): Sim
     logistics: createLogistics(seed),
     energy: {},
     health: createHealth(seed),
+    feeds: {},
+    minuteLog: {},
+    qualityLog: {
+      t: new Int32Array(LOG_MIN).fill(-1),
+      inspected: new Float32Array(LOG_MIN),
+      rejected: new Float32Array(LOG_MIN),
+      defect: Object.fromEntries(DEFECT_ORDER.map((d) => [d, new Float32Array(LOG_MIN)])) as Record<DefectCategory, Float32Array>,
+    },
+    bufferLog: Object.fromEntries(BUFFERS.map((b) => [b.id, { level: new Float32Array(LOG_MIN), t: new Int32Array(LOG_MIN).fill(-1) }])),
+    events: [],
+    evidence: [],
+    rules: { ...DEFAULT_EVENT_RULES },
+    eventsOn: opts.events ?? true,
+    liveFrom: startMinute,
     internal: {
       failRng: {},
       nextFailure: {},
@@ -149,10 +206,11 @@ export function createSim(seed = DEFAULT_SEED, startMinute = DEFAULT_START): Sim
       palletAcc: 0,
       seq: 0,
       alertAt: {},
+      ev: createEventInternal(),
     },
     version: 0,
   };
-  for (const id of PROCESS_MACHINES) {
+  for (const id of TRACKED_ASSETS) {
     s.machines[id] = {
       id,
       state: 'running',
@@ -164,9 +222,11 @@ export function createSim(seed = DEFAULT_SEED, startMinute = DEFAULT_START): Sim
       activeDowntimeId: null,
     };
     s.hours[id] = new Map();
+    s.feeds[id] = { status: 'ok', since: 0 };
+    s.minuteLog[id] = { rate: new Float32Array(LOG_MIN), state: new Uint8Array(LOG_MIN), lim: new Uint8Array(LOG_MIN), t: new Int32Array(LOG_MIN).fill(-1) };
     const rng = streamFor(seed, `fail:${id}`);
     s.internal.failRng[id] = rng;
-    const rel = OPS_BY_ID[id].reliability!;
+    const rel = reliabilityOf(id);
     s.internal.nextFailure[id] = Math.round(expBounded(rng(), rel.mtbf, 20, rel.mtbf * 3));
     s.internal.spell[id] = null;
   }
@@ -183,18 +243,80 @@ export function advance(s: SimState, toMinute: number) {
 
 function stepMinute(s: SimState) {
   const t = s.minute;
-  scheduleCalendarStops(s, t);
-  startDueStops(s, t);
-  startFailures(s, t);
-  applyScenarioStops(s, t);
-  endFinishedDowntime(s, t);
-  produce(s, t);
-  const active = activeScenarios(s, t);
-  stepEnergy(s, t, active, degradationLoad(s, t));
-  if (t % 15 === 0) energyAlerts(s, t);
-  stepHealth(s, t);
-  stepLogistics(s, t);
-  s.minute = t + 1;
+  try {
+    scheduleCalendarStops(s, t);
+    startDueStops(s, t);
+    startFailures(s, t);
+    applyScenarioStops(s, t);
+    applyScenarioFeeds(s, t);
+    endFinishedDowntime(s, t);
+    logMinute(s, t, produce(s, t));
+    const active = activeScenarios(s, t);
+    stepEnergy(s, t, active, degradationLoad(s, t));
+    if (t % 15 === 0) energyAlerts(s, t);
+    stepHealth(s, t);
+    stepLogistics(s, t);
+    if (s.eventsOn) stepEvents(s, t);
+    if (t % 60 === 0) pruneHistory(s, t);
+  } finally {
+    // A failing subsystem must never re-run a minute (that would double-count the buckets).
+    s.minute = t + 1;
+  }
+}
+
+const reliabilityOf = (id: string) => CONVEYOR_BY_ID[id]?.reliability ?? OPS_BY_ID[id].reliability!;
+
+/** Records the minute's output and state of every tracked asset in its ring buffer. */
+function logMinute(s: SimState, t: number, limits: Partial<Record<StageId, 'input' | 'output' | null>>) {
+  const i = t % LOG_MIN;
+  for (const id of TRACKED_ASSETS) {
+    const m = s.machines[id];
+    const log = s.minuteLog[id];
+    log.rate[i] = m.ratePerHour / 60;
+    log.state[i] = STATE_CODE[m.state];
+    const st = OPS_BY_ID[id]?.stage;
+    const l = st ? limits[st] : null;
+    log.lim[i] = l === 'input' ? 1 : l === 'output' ? 2 : 0;
+    log.t[i] = t;
+  }
+}
+
+/** Output (tiles/min) and state of an asset at minute t, if still in the ring buffer. */
+export function minuteAt(s: SimState, id: string, t: number): { rate: number; state: MachineState; limited: boolean } | null {
+  const log = s.minuteLog[id];
+  if (!log || t < 0) return null;
+  const i = t % LOG_MIN;
+  if (log.t[i] !== t) return null;
+  return { rate: log.rate[i], state: CODE_STATE[log.state[i]], limited: log.lim[i] !== 0 };
+}
+
+/** Drops closed records older than eight days (open ones and anything a 7-day view can touch stay). */
+function pruneHistory(s: SimState, t: number) {
+  const cutoff = t - 8 * MIN_PER_DAY;
+  if (s.downtime.length && s.downtime[0].end != null && s.downtime[0].end < cutoff)
+    s.downtime = s.downtime.filter((d) => d.end == null || d.end >= cutoff);
+  if (s.events.length && s.events[0].end != null && s.events[0].end < cutoff) {
+    const keep = s.events.filter((e) => e.end == null || e.end >= cutoff || e.status !== 'resolved');
+    const ids = new Set(keep.map((e) => e.id));
+    s.events = keep;
+    s.internal.ev.index = new Map(keep.map((e) => [e.id, e]));
+    s.evidence = s.evidence.filter((x) => ids.has(x.eventId));
+  }
+}
+
+/** Simulated data-feed loss: the asset keeps producing, but its signals stop updating. */
+function applyScenarioFeeds(s: SimState, t: number) {
+  const lost = new Map<string, string>();
+  for (const sc of activeScenarios(s, t)) if (sc.kind === 'signal-loss' && sc.equipmentId) lost.set(sc.equipmentId, sc.id);
+  for (const id of TRACKED_ASSETS) {
+    const f = s.feeds[id];
+    const scn = lost.get(id);
+    if (scn && f.status === 'ok') {
+      const m = s.machines[id];
+      s.feeds[id] = { status: 'stale', since: t, scenarioId: scn, lastState: m.state, lastCount: m.countTotal, lastRate: m.ratePerHour };
+    }
+    else if (!scn && f.status === 'stale') s.feeds[id] = { status: 'ok', since: t };
+  }
 }
 
 // ── Calendar: planned cleaning, product changeovers, batches ────────────────
@@ -233,10 +355,10 @@ function startDueStops(s: SimState, t: number) {
 }
 
 function startFailures(s: SimState, t: number) {
-  for (const id of PROCESS_MACHINES) {
+  for (const id of TRACKED_ASSETS) {
     if (s.internal.nextFailure[id] > t) continue;
     const m = s.machines[id];
-    const rel = OPS_BY_ID[id].reliability!;
+    const rel = reliabilityOf(id);
     const rng = s.internal.failRng[id];
     if (!m.activeDowntimeId) {
       const reason = weighted(rng(), rel.reasons.map((r, i): [string, number] => [r, 3 - i]));
@@ -280,7 +402,7 @@ export function openDowntime(
   m.activeDowntimeId = ev.id;
   setState(m, reason.planned ? 'planned' : 'down', start);
   if (!reason.planned) {
-    const severity: AlertSeverity = equipmentId === 'H-KILN' ? 'critical' : OPS_BY_ID[equipmentId].stage === 'PRESS' ? 'serious' : 'warning';
+    const severity: AlertSeverity = equipmentId === 'H-KILN' ? 'critical' : OPS_BY_ID[equipmentId]?.stage === 'PRESS' ? 'serious' : 'warning';
     raiseAlert(s, start, severity, `${equipmentId} stopped`, reason.label, { equipmentId }, source);
   }
   return ev;
@@ -296,7 +418,7 @@ function closeDowntime(s: SimState, ev: DowntimeEvent, t: number) {
 }
 
 function endFinishedDowntime(s: SimState, t: number) {
-  for (const id of PROCESS_MACHINES) {
+  for (const id of TRACKED_ASSETS) {
     const m = s.machines[id];
     if (!m.activeDowntimeId) continue;
     const ev = findDowntime(s, m.activeDowntimeId);
@@ -323,12 +445,13 @@ const activeScenarios = (s: SimState, t: number) => s.scenarios.filter((sc) => s
 
 function applyScenarioStops(s: SimState, t: number) {
   for (const sc of activeScenarios(s, t)) {
-    if (sc.kind !== 'machine-stop' || !sc.equipmentId) continue;
+    if ((sc.kind !== 'machine-stop' && sc.kind !== 'conveyor-stop') || !sc.equipmentId) continue;
     const m = s.machines[sc.equipmentId];
+    if (!m) continue;
     const current = m.activeDowntimeId ? findDowntime(s, m.activeDowntimeId) : undefined;
     if (current?.scenarioId === sc.id) continue;
     if (current) closeDowntime(s, current, t);
-    openDowntime(s, sc.equipmentId, 'SCN_STOP', t, sc.end, 'scenario', sc.id);
+    openDowntime(s, sc.equipmentId, sc.kind === 'conveyor-stop' ? 'SCN_CNV_STOP' : 'SCN_STOP', t, sc.end, 'scenario', sc.id);
   }
 }
 
@@ -365,9 +488,11 @@ export function activateScenario(s: SimState, def: Omit<ScenarioActivation, 'id'
     sc.end = sc.start + duration;
   }
   // One-off logistics injections are applied at once; they are logged, not left "active".
-  if (sc.kind === 'truck-arrival' || sc.kind === 'yard-congestion' || sc.kind === 'prolonged-dock-stay') sc.end = sc.start + 1;
+  if (sc.kind === 'truck-arrival' || sc.kind === 'yard-congestion' || sc.kind === 'prolonged-dock-stay' || sc.kind === 'restricted-entry')
+    sc.end = sc.start + 1;
   s.scenarios.push(sc);
-  if (sc.kind === 'machine-stop') applyScenarioStops(s, s.minute);
+  if (sc.kind === 'machine-stop' || sc.kind === 'conveyor-stop') applyScenarioStops(s, s.minute);
+  if (sc.kind === 'signal-loss') applyScenarioFeeds(s, s.minute);
   applyLogisticsScenario(s, sc);
   raiseAlert(s, sc.start, 'info', `Scenario started: ${sc.label}`, 'Simulated scenario input', { equipmentId: sc.equipmentId }, 'scenario');
   s.version++;
@@ -378,11 +503,12 @@ export function clearScenario(s: SimState, id: string) {
   const sc = s.scenarios.find((x) => x.id === id);
   if (!sc || (sc.end != null && sc.end <= s.minute)) return;
   sc.end = s.minute;
-  if (sc.kind === 'machine-stop' && sc.equipmentId) {
+  if ((sc.kind === 'machine-stop' || sc.kind === 'conveyor-stop') && sc.equipmentId) {
     const m = s.machines[sc.equipmentId];
     const ev = m.activeDowntimeId ? findDowntime(s, m.activeDowntimeId) : undefined;
     if (ev?.scenarioId === sc.id) closeDowntime(s, ev, s.minute);
   }
+  if (sc.kind === 'signal-loss') applyScenarioFeeds(s, s.minute);
   if (sc.kind === 'degradation')
     for (const e of s.health.episodes)
       if (e.scenarioId === sc.id && e.end == null) {
@@ -443,6 +569,16 @@ function produce(s: SimState, t: number) {
   const hour = Math.floor(t / 60);
   /** Was the constraint (kiln) held up by input/output this minute? */
   let constraintStalled = false;
+  // A stopped conveyor cuts the transfer it carries: no input for the stages it feeds, no discharge for the ones feeding it.
+  const inputCut = new Set<StageId>();
+  const outputCut = new Set<StageId>();
+  for (const c of CONVEYORS)
+    if (s.machines[c.id].activeDowntimeId) {
+      c.blocksInputOf.forEach((x) => inputCut.add(x));
+      c.blocksOutputOf.forEach((x) => outputCut.add(x));
+    }
+  const producedBy: Partial<Record<StageId, number>> = {};
+  const limitOf: Partial<Record<StageId, 'input' | 'output' | null>> = {};
 
   for (let si = STAGES.length - 1; si >= 0; si--) {
     const stage = STAGES[si];
@@ -457,11 +593,13 @@ function produce(s: SimState, t: number) {
       return ideal * scn * performanceNoise(s.seed, id, t);
     });
     const capTotal = caps.reduce((a, b) => a + b, 0);
-    const available = inBuf ? s.buffers[inBuf] : Infinity;
-    const space = outBuf ? BUFFER_CAP[outBuf] - s.buffers[outBuf] : Infinity;
+    const available = inputCut.has(stage.id) ? 0 : inBuf ? s.buffers[inBuf] : Infinity;
+    const space = outputCut.has(stage.id) ? 0 : outBuf ? BUFFER_CAP[outBuf] - s.buffers[outBuf] : Infinity;
     const produced = Math.max(0, Math.min(capTotal, available, space));
     const limitedBy: 'input' | 'output' | null =
       produced < capTotal * 0.999 ? (available <= space ? 'input' : 'output') : null;
+    producedBy[stage.id] = produced;
+    limitOf[stage.id] = limitedBy;
 
     if (inBuf) s.buffers[inBuf] -= produced;
     if (outBuf) s.buffers[outBuf] += produced;
@@ -516,9 +654,15 @@ function produce(s: SimState, t: number) {
     }
   }
 
+  conveyorAccounting(s, t, hour, producedBy, limitOf);
+  bufferAndImpact(s, t, hour, constraintStalled);
+  return limitOf;
+}
+
+function bufferAndImpact(s: SimState, t: number, hour: number, constraintStalled: boolean) {
   // Operational impact: every open unplanned event accrues constraint-stall minutes.
   if (constraintStalled)
-    for (const id of PROCESS_MACHINES) {
+    for (const id of TRACKED_ASSETS) {
       const m = s.machines[id];
       if (!m.activeDowntimeId) continue;
       const ev = findDowntime(s, m.activeDowntimeId)!;
@@ -534,7 +678,51 @@ function produce(s: SimState, t: number) {
     const map = s.bufferHours[b.id];
     const minuteInHour = t % 60;
     const level = s.buffers[b.id] / b.capacity;
+    const log = s.bufferLog[b.id];
+    log.level[t % LOG_MIN] = s.buffers[b.id];
+    log.t[t % LOG_MIN] = t;
     map.set(hour, ((map.get(hour) ?? 0) * minuteInHour + level) / (minuteInHour + 1));
+  }
+}
+
+/**
+ * Conveyor runtime: a conveyor moves what the stage it feeds takes in. It is 'down' while stopped,
+ * 'starved' (running empty) when there is nothing to carry and 'blocked' (accumulating) when the
+ * receiving stage cannot take tiles.
+ */
+function conveyorAccounting(
+  s: SimState,
+  t: number,
+  hour: number,
+  producedBy: Partial<Record<StageId, number>>,
+  limitOf: Partial<Record<StageId, 'input' | 'output' | null>>,
+) {
+  for (const c of CONVEYORS) {
+    const m = s.machines[c.id];
+    const b = bucket(s, c.id, hour);
+    const fed = c.blocksInputOf[0] ?? c.to;
+    const flow = m.activeDowntimeId ? 0 : (fed ? (producedBy[fed] ?? 0) : 0);
+    m.countTotal += flow;
+    m.ratePerHour = flow * 60;
+    b.count += flow;
+    b.planned++;
+    if (m.activeDowntimeId) {
+      b.down++;
+      continue;
+    }
+    const cap = c.capacityPerHour / 60;
+    b.operating += flow > 0 ? 1 : 0;
+    const receiver = fed ? s.machines[STAGE_BY_ID[fed].machines[0]] : null;
+    const receiverHeld = receiver != null && (receiver.state === 'down' || receiver.state === 'planned' || receiver.state === 'blocked');
+    if (flow < cap * 0.05) {
+      if (receiverHeld || (fed && limitOf[fed] === 'output')) {
+        b.blocked++;
+        setState(m, 'blocked', t);
+      } else {
+        b.starved++;
+        setState(m, 'starved', t);
+      }
+    } else setState(m, 'running', t);
   }
 }
 
@@ -596,6 +784,11 @@ function inspect(s: SimState, t: number, hour: number, inspected: number) {
   const { rate, weights, totalWeight } = rejectRate(s, t);
   const rejected = Math.min(inspected, inspected * rate);
   const good = inspected - rejected;
+  const ql = s.qualityLog;
+  const qi = t % LOG_MIN;
+  ql.t[qi] = t;
+  ql.inspected[qi] = inspected;
+  ql.rejected[qi] = rejected;
   s.lineGood.set(hour, (s.lineGood.get(hour) ?? 0) + good);
   const sortBucket = bucket(s, 'I-SORT', hour);
   void sortBucket;
@@ -611,6 +804,7 @@ function inspect(s: SimState, t: number, hour: number, inspected: number) {
   const batch = batchAt(s, t - 180);
   for (const [defect, w] of weights) {
     const n = rejected * (w / totalWeight);
+    ql.defect[defect][qi] = n;
     const def = DEFECTS[defect];
     const st = qh[def.station];
     st.rejected += n;
@@ -627,7 +821,7 @@ function inspect(s: SimState, t: number, hour: number, inspected: number) {
   if (t % 60 === 30) {
     const rng = s.internal.qualityRng;
     const pass = rng() > 0.05;
-    const wa = (0.32 + rng() * (pass ? 0.12 : 0.3)).toFixed(2);
+    const wa = (pass ? 0.32 + rng() * 0.12 : 0.51 + rng() * 0.11).toFixed(2);
     const mor = (34 + rng() * 8).toFixed(1);
     pushRecord(s, {
       id: nextId(s, 'INS'),
@@ -637,7 +831,7 @@ function inspect(s: SimState, t: number, hour: number, inspected: number) {
       result: pass ? 'pass' : 'reject',
       defect: null,
       severity: pass ? null : 'minor',
-      measurement: `Water absorption ${wa} % · MOR ${mor} N/mm²${pass ? '' : ' · retest requested'}`,
+      measurement: `Water absorption ${wa} % (limit 0.50) · MOR ${mor} N/mm²${pass ? '' : ' · retest requested'}`,
       tiles: 5,
       confidence: null,
       box: null,
@@ -661,7 +855,15 @@ function recentRejectRate(s: SimState, t: number) {
 /** Reject tiles are charged to the machines of the stage where the defect originated. */
 function attributeRejects(s: SimState, stage: StageId, hour: number, n: number) {
   const machines = STAGE_BY_ID[stage].machines;
-  const counts = machines.map((id) => s.hours[id].get(hour)?.count ?? 0);
+  // Shares follow this hour's output; when the origin stage made nothing this hour (e.g. stopped),
+  // the tiles now being rejected passed it earlier — charge them to that earlier hour instead.
+  let h = hour;
+  let counts = machines.map((id) => s.hours[id].get(h)?.count ?? 0);
+  for (let back = 1; back <= 6 && counts.every((c) => c <= 0); back++) {
+    h = hour - back;
+    counts = machines.map((id) => s.hours[id].get(h)?.count ?? 0);
+  }
+  hour = h;
   const total = counts.reduce((a, b) => a + b, 0);
   machines.forEach((id, i) => {
     const share = total > 0 ? counts[i] / total : 1 / machines.length;
@@ -677,7 +879,11 @@ const MEASURE: Record<DefectCategory, (r: Rng) => string> = {
   glaze: (r) => `Glaze weight deviation ${(r() > 0.5 ? '+' : '−')}${(4 + r() * 9).toFixed(1)} %`,
   shade: (r) => `ΔE ${(1.1 + r() * 1.6).toFixed(1)} vs master`,
   planarity: (r) => `Centre deviation ${(r() > 0.4 ? '+' : '−')}${(0.42 + r() * 0.5).toFixed(2)} mm (limit ±0.40)`,
-  dimension: (r) => `Caliber ${(600 + (r() - 0.5) * 2.4).toFixed(1)} mm (600 ± 0.6)`,
+  dimension: (r) => {
+    const u = r() - 0.5;
+    const dev = Math.sign(u || 1) * (0.7 + Math.abs(u) * 1.0);
+    return `Caliber ${(600 + dev).toFixed(1)} mm (600 ± 0.6)`;
+  },
 };
 
 function pushInspection(s: SimState, t: number, stationId: string, batchIdValue: string, defect: DefectCategory) {

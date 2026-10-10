@@ -9,6 +9,7 @@
 import { EQUIPMENT_BY_ID } from '../data/equipment';
 import {
   BUFFERS,
+  CONVEYOR_BY_ID,
   DEFECTS,
   DEFECT_ORDER,
   DOCKS,
@@ -20,9 +21,12 @@ import {
   REASON_BY_CODE,
   STAGES,
   TARGET,
+  TILES_PER_PALLET,
+  MONITORED_STAGE_BY_ID,
 } from '../model/plant';
-import type { DefectCategory, DowntimeCategory, DowntimeEvent, HourBucket, ShiftId, StageId, Vehicle } from '../model/types';
+import type { DefectCategory, DowntimeCategory, DowntimeEvent, HourBucket, MonitoredStageId, OperationalState, ShiftId, StageId, Vehicle } from '../model/types';
 import type { SimState } from './engine';
+import { LOG_MIN, findDowntime, minuteAt } from './engine';
 import type { TruckRuntime } from './logistics';
 import { combineOee, computeOee, lossTree, quality, type OeeResult } from './oee';
 import { CONSUMERS, CONSUMER_BY_ID, DEFAULT_TARIFFS, type Tariffs } from './energy';
@@ -100,7 +104,8 @@ export function machineMetrics(s: SimState, id: string, p: Period): MachineMetri
     operatingMin: t.operating,
     idealCycleMin: 60 / ideal,
     totalCount: t.count,
-    goodCount: t.count - t.rejects,
+    // Nothing produced → quality is unavailable (rejects detected later belong to earlier output).
+    goodCount: t.count > 0 ? t.count - t.rejects : 0,
     periodMin: periodMinutes(p),
   });
   return { id, name: EQUIPMENT_BY_ID[id].name, stage: ops.stage!, totals: t, oee, idealRatePerHour: ideal };
@@ -259,6 +264,8 @@ export type StageMetrics = {
   output: number;
   /** Share of planned time the stage was working or down on its own (not waiting on neighbours). */
   activeShare: number;
+  /** Share of planned time the stage was actually producing at its own pace (active minus its own downtime). */
+  workingShare: number;
   starvedShare: number;
   blockedShare: number;
   downShare: number;
@@ -277,6 +284,7 @@ export function stageMetrics(s: SimState, p: Period): StageMetrics[] {
       machines: ms,
       output: sum('count'),
       activeShare: planned > 0 ? (planned - sum('starved') - sum('blocked')) / planned : 0,
+      workingShare: planned > 0 ? Math.max(0, planned - sum('starved') - sum('blocked') - sum('down')) / planned : 0,
       starvedShare: planned > 0 ? sum('starved') / planned : 0,
       blockedShare: planned > 0 ? sum('blocked') / planned : 0,
       downShare: planned > 0 ? sum('down') / planned : 0,
@@ -300,7 +308,8 @@ export type BottleneckCause = 'constraint' | 'starving' | 'blocking';
  */
 export function bottleneck(s: SimState, windowMin = 120) {
   const p: Period = { from: Math.max(0, s.minute - windowMin), to: s.minute, label: `Last ${windowMin} min` };
-  const stages = stageMetrics(s, p);
+  // Shares from the per-minute log: exactly the last `windowMin` minutes, whatever the minute of the hour.
+  const stages = stageMetrics(s, p).map((st) => ({ ...st, ...logShares(s, st.stage, p.from, p.to) }));
   const ci = stages.findIndex((st) => st.stage === LINE.designConstraint);
   const c = stages[ci];
   let i = ci;
@@ -316,6 +325,33 @@ export function bottleneck(s: SimState, windowMin = 120) {
   const ranked = [current, ...stages.filter((st) => st !== current).sort((a, b) => b.activeShare - a.activeShare)];
   return { period: p, current, cause, constraint: c, stages, ranked, shifted: current.stage !== LINE.designConstraint };
 }
+
+/** Minute-accurate state shares of a stage over [from, to) from the minute log (planned stops excluded). */
+function logShares(s: SimState, stage: StageId, from: number, to: number) {
+  let planned = 0;
+  let starved = 0;
+  let blocked = 0;
+  let down = 0;
+  for (const id of STAGE_BY_ID_LOCAL[stage]) {
+    for (let m = Math.max(from, to - LOG_MIN); m < to; m++) {
+      const x = minuteAt(s, id, m);
+      if (!x || x.state === 'planned') continue;
+      planned++;
+      if (x.state === 'starved') starved++;
+      else if (x.state === 'blocked') blocked++;
+      else if (x.state === 'down') down++;
+    }
+  }
+  if (!planned) return {};
+  return {
+    activeShare: (planned - starved - blocked) / planned,
+    workingShare: (planned - starved - blocked - down) / planned,
+    starvedShare: starved / planned,
+    blockedShare: blocked / planned,
+    downShare: down / planned,
+  };
+}
+const STAGE_BY_ID_LOCAL = Object.fromEntries(STAGES.map((st) => [st.id, st.machines])) as Record<StageId, string[]>;
 
 // ── Trends & shifts ───────────────────────────────────────────────────────────
 
@@ -358,7 +394,7 @@ export const SHIFT_LENGTH = SHIFT_MIN;
 export function defectTrend(s: SimState, p: Period, bucketMin = 60) {
   const out: { start: number; inspected: number; byDefect: Record<DefectCategory, number> }[] = [];
   for (let from = Math.floor(p.from / bucketMin) * bucketMin; from < p.to; from += bucketMin) {
-    const q = qualityIn(s, { from, to: Math.min(p.to, from + bucketMin), label: '' });
+    const q = qualityIn(s, { from: Math.max(p.from, from), to: Math.min(p.to, from + bucketMin), label: '' });
     out.push({ start: from, inspected: q.inspected, byDefect: q.byDefect });
   }
   return out;
@@ -614,4 +650,183 @@ export function defectShift(s: SimState, recentMin = 120, referenceMin = 1440) {
     const rateRef = ref.inspected > 0 ? ref.byDefect[d] / ref.inspected : null;
     return { defect: d, label: DEFECTS[d].label, rateRecent, rateRef, ratio: rateRecent != null && rateRef ? rateRecent / rateRef : null };
   }).sort((x, y) => (y.ratio ?? 0) - (x.ratio ?? 0));
+}
+
+
+// ── Operational state (what the product shows for an asset) ──────────────────
+
+/**
+ * State shown for an asset, from signal logic only: a stale data feed makes it 'unknown';
+ * a stop is a 'fault' when its alarm code is a mechanical / electrical fault and 'stopped' otherwise;
+ * planned stops and changeovers are 'planned'; a conveyor running empty is 'idle'.
+ */
+export function operationalState(s: SimState, id: string): OperationalState {
+  const f = s.feeds[id];
+  if (f && f.status === 'stale') return 'unknown';
+  const m = s.machines[id];
+  if (!m) return 'unknown';
+  if (m.state === 'down') {
+    const d = m.activeDowntimeId ? findDowntime(s, m.activeDowntimeId) : undefined;
+    const r = d ? REASON_BY_CODE[d.reasonCode] : undefined;
+    if (r?.planned || d?.reasonCode === 'CHG_PRODUCT') return 'planned';
+    return r && (r.category === 'Mechanical' || r.category === 'Electrical & control') && d!.reasonCode !== 'SCN_STOP' && d!.reasonCode !== 'SCN_CNV_STOP' ? 'fault' : 'stopped';
+  }
+  if (m.state === 'planned') return 'planned';
+  if (CONVEYOR_BY_ID[id]) return m.state === 'starved' ? 'idle' : m.state === 'blocked' ? 'blocked' : 'running';
+  return m.state;
+}
+
+export const OPERATIONAL_STATE_LABEL: Record<OperationalState, string> = {
+  running: 'Running',
+  reduced: 'Running below rate',
+  idle: 'Idle (no material)',
+  stopped: 'Stopped',
+  fault: 'Fault',
+  starved: 'Starved',
+  blocked: 'Blocked',
+  planned: 'Planned stop',
+  disconnected: 'Disconnected',
+  unknown: 'Unknown (data stale)',
+};
+
+// ── Conveyors ─────────────────────────────────────────────────────────────────
+
+export function conveyorMetrics(s: SimState, id: string, p: Period) {
+  const c = CONVEYOR_BY_ID[id];
+  const t = sumBuckets(s, id, p);
+  const stops = s.downtime.filter((d) => d.equipmentId === id && d.start < p.to && (d.end ?? s.minute) > p.from);
+  return {
+    id,
+    name: c.name,
+    totals: t,
+    /** Running (not stopped) share of the period — OEE is not meaningful for a conveyor. */
+    availability: t.planned > 0 ? (t.planned - t.down) / t.planned : null,
+    /** Transported tiles vs nominal capacity over the planned time. */
+    utilisation: t.planned > 0 ? t.count / ((c.capacityPerHour / 60) * t.planned) : null,
+    stops: stops.length,
+    downMin: stops.reduce((a, d) => a + clippedDuration(d, p, s.minute), 0),
+  };
+}
+
+// ── Stage input / output (production monitoring) ──────────────────────────────
+
+export type StageIO = {
+  stage: MonitoredStageId;
+  unit: 'tiles' | 'pallets';
+  input: number | null;
+  output: number | null;
+  good: number | null;
+  rejected: number | null;
+  /** Work in progress at the stage input (buffer level now), null if not measured. */
+  wip: number | null;
+  wipCapacity: number | null;
+  /** Actual output per hour over the period vs the expected (ideal × planned time) rate. */
+  ratePerHour: number | null;
+  expectedPerHour: number | null;
+  /** Minutes the stage was down / starved / blocked (sum over its machines ÷ machines). */
+  downMin: number;
+  starvedMin: number;
+  blockedMin: number;
+};
+
+/** Counts at a monitored stage for a period, from its configured counting points. */
+export function stageIO(s: SimState, id: MonitoredStageId, p: Period): StageIO {
+  void MONITORED_STAGE_BY_ID[id];
+  const hrs = Math.max(1 / 60, (p.to - p.from) / 60);
+  if (id === 'WH') {
+    const pallets = (from: number, to: number) => {
+      let n = 0;
+      for (const h of hoursIn({ from, to, label: '' })) n += (s.hours['J-PAL']?.get(h)?.count ?? 0) / TILES_PER_PALLET;
+      return n;
+    };
+    const dispatched = s.logistics.dockEvents.filter((e) => e.kind === 'loading-complete' && e.time >= p.from && e.time < p.to)
+      .reduce((a, e) => a + (s.logistics.vehicles[e.vehicleId]?.visit?.load ?? 0), 0);
+    return {
+      stage: id,
+      unit: 'pallets',
+      input: pallets(p.from, p.to),
+      output: dispatched,
+      good: null,
+      rejected: null,
+      wip: s.logistics.stockPallets,
+      wipCapacity: null,
+      ratePerHour: dispatched / hrs,
+      expectedPerHour: null,
+      downMin: 0,
+      starvedMin: 0,
+      blockedMin: 0,
+    };
+  }
+  const stageIds: StageId[] = id === 'GLAZE' ? ['GLAZE', 'DECOR'] : id === 'PACK' ? ['PACK', 'PAL'] : [id];
+  const first = STAGES.find((x) => x.id === stageIds[0])!;
+  const last = STAGES.find((x) => x.id === stageIds[stageIds.length - 1])!;
+  const count = (st: (typeof STAGES)[number]) => st.machines.reduce((a, m) => a + sumBuckets(s, m, p).count, 0);
+  const input = count(first);
+  const output = count(last);
+  const q = id === 'SORT' ? qualityIn(s, p) : null;
+  const buf = first.inputBuffer ? BUFFERS.find((b) => b.id === first.inputBuffer)! : null;
+  const ideal = last.machines.reduce((a, m) => a + (OPS_BY_ID[m].idealRatePerHour ?? 0), 0);
+  const tot = (k: keyof HourBucket) => stageIds.flatMap((x) => STAGES.find((y) => y.id === x)!.machines).reduce((a, m) => a + sumBuckets(s, m, p)[k], 0);
+  const nMach = stageIds.flatMap((x) => STAGES.find((y) => y.id === x)!.machines).length;
+  const planned = last.machines.reduce((a, m) => a + sumBuckets(s, m, p).planned, 0) / last.machines.length;
+  return {
+    stage: id,
+    unit: 'tiles',
+    input,
+    output,
+    good: q ? q.inspected - q.rejected : null,
+    rejected: q ? q.rejected : null,
+    wip: buf ? s.buffers[buf.id] : null,
+    wipCapacity: buf ? buf.capacity : null,
+    ratePerHour: output / hrs,
+    expectedPerHour: planned > 0 ? (ideal * planned) / 60 / hrs : null,
+    downMin: tot('down') / nMach,
+    starvedMin: tot('starved') / nMach,
+    blockedMin: tot('blocked') / nMach,
+  };
+}
+
+// ── Capacity: theoretical → planned → actual → good ──────────────────────────
+
+/**
+ * Capacity comparison at the line constraint (kiln), all in m² of tile for the period:
+ * theoretical = design rate × calendar time; planned = the production plan (target);
+ * actual = tiles fired; good = first-quality tiles accepted at sorting. The gap is split into
+ * planned stops, availability, speed and quality losses at the constraint — each lost unit is
+ * counted once, at the constraint, never per machine.
+ */
+export function capacityBreakdown(s: SimState, p: Period) {
+  const lm = lineMetrics(s, p);
+  const k = lm.constraint;
+  const ideal = k.idealRatePerHour / 60;
+  const calendar = Math.max(0, Math.min(p.to, s.minute) - p.from);
+  const m2 = (tiles: number) => tiles * M2_PER_TILE;
+  const theoretical = m2(ideal * calendar);
+  const plannedStopLoss = m2(ideal * k.totals.plannedStop);
+  const availabilityLoss = m2(ideal * (k.totals.planned - k.totals.operating));
+  const speedLoss = m2(ideal * k.totals.operating - k.totals.count);
+  const fired = m2(k.totals.count);
+  const good = m2(lm.good);
+  const qualityLoss = Math.max(0, fired - good);
+  return {
+    period: p,
+    calendarMin: calendar,
+    theoreticalM2: theoretical,
+    plannedM2: lm.targetM2,
+    actualM2: fired,
+    goodM2: good,
+    capacityGapM2: theoretical - good,
+    planGapM2: lm.targetM2 - good,
+    losses: [
+      { key: 'planned', label: 'Planned stops', m2: plannedStopLoss, basis: `${Math.round(k.totals.plannedStop)} min of planned stops at the kiln × design rate` },
+      { key: 'availability', label: 'Downtime (availability)', m2: availabilityLoss, basis: `${Math.round(k.totals.planned - k.totals.operating)} min the kiln was down, starved or blocked × design rate` },
+      { key: 'speed', label: 'Speed (performance)', m2: Math.max(0, speedLoss), basis: 'Kiln running below its design rate' },
+      { key: 'quality', label: 'Quality (rejects)', m2: qualityLoss, basis: 'Fired tiles rejected at sorting (first pass)' },
+    ],
+    assumptions: [
+      `Design rate of the line constraint H-KILN: ${k.idealRatePerHour} tiles/h (${(k.idealRatePerHour * M2_PER_TILE).toFixed(0)} m²/h).`,
+      `Plan: ${TARGET.goodPerHour} good tiles per planned hour (OEE target ${Math.round(TARGET.oeeTarget * 100)} %).`,
+      'Losses are valued at the constraint only; time lost elsewhere costs output only if it holds up the kiln.',
+    ],
+  };
 }

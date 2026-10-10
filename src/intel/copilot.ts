@@ -42,10 +42,18 @@ export type CopilotIntent =
   | 'machine'
   | 'help';
 
+/** A tagged part of an answer: what the data shows, what is inferred, what is estimated, how. */
+export type CopilotSection = { kind: 'observed' | 'inferred' | 'estimate' | 'method'; text: string };
+
+/** Context the question is asked in (event-specific investigation, assumptions for estimates). */
+export type CopilotContext = { eventId?: string | null; finance?: import('../sim/finance').FinanceAssumptions };
+
 export type CopilotAnswer = {
   intent: CopilotIntent;
   /** Plain-language answer, one or more short paragraphs. */
   text: string[];
+  /** The same answer split into observed facts, inferences and estimates (preferred for display). */
+  sections?: CopilotSection[];
   /** Facts the answer used (label → value). */
   facts: { label: string; value: string }[];
   links: InsightLink[];
@@ -116,7 +124,8 @@ function periodFor(q: string): PeriodKey {
 /** A period label inside a sentence: "Today" → "today", "Shift A · 06:00–14:00" → "shift A · 06:00–14:00". */
 const inPeriod = (label: string) => label.charAt(0).toLowerCase() + label.slice(1);
 
-export function ask(s: SimState, question: string, tariffs: Tariffs = DEFAULT_TARIFFS): CopilotAnswer {
+export function ask(s: SimState, question: string, tariffs: Tariffs = DEFAULT_TARIFFS, ctx: CopilotContext = {}): CopilotAnswer {
+  void ctx;
   const q = question.toLowerCase().trim();
   const p = resolvePeriod(periodFor(q), s.minute);
   const machine = findMachine(q);

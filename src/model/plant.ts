@@ -7,6 +7,8 @@
 import { EQUIPMENT } from '../data/equipment';
 import type {
   BufferDef,
+  CameraDef,
+  ConveyorDef,
   DataSource,
   DefectCategory,
   Dock,
@@ -16,7 +18,9 @@ import type {
   Factory,
   Geofence,
   InspectionStation,
+  EventRules,
   MaterialFlowConnection,
+  MonitoredStage,
   ProcessStage,
   Product,
   ProductionLine,
@@ -97,6 +101,9 @@ export const SCENARIO_KIND_LABELS: Record<ScenarioKind, string> = {
   'energy-anomaly': 'Energy anomaly',
   degradation: 'Developing machine fault',
   maintenance: 'Condition-based maintenance',
+  'conveyor-stop': 'Conveyor stoppage',
+  'signal-loss': 'Data feed loss (PLC link)',
+  'restricted-entry': 'Restricted-zone entry',
 };
 
 export const DOWNTIME_REASONS: DowntimeReason[] = [
@@ -124,6 +131,11 @@ export const DOWNTIME_REASONS: DowntimeReason[] = [
   { code: 'PLN_CLEAN', label: 'Planned cleaning', category: 'Planned', planned: true },
   { code: 'PLN_MAINT', label: 'Condition-based maintenance', category: 'Planned', planned: true },
   { code: 'SCN_STOP', label: 'Simulated breakdown (scenario)', category: 'Mechanical', planned: false },
+  { code: 'CNV_JAM', label: 'Tile jam at transfer', category: 'Mechanical', planned: false },
+  { code: 'CNV_TRACK', label: 'Belt tracking / slip fault', category: 'Mechanical', planned: false },
+  { code: 'CNV_DRIVE', label: 'Conveyor drive trip', category: 'Electrical & control', planned: false },
+  { code: 'CNV_PULLCORD', label: 'Safety pull-cord stop', category: 'Electrical & control', planned: false },
+  { code: 'SCN_CNV_STOP', label: 'Simulated conveyor stop (scenario)', category: 'Mechanical', planned: false },
 ];
 export const REASON_BY_CODE = Object.fromEntries(DOWNTIME_REASONS.map((r) => [r.code, r]));
 
@@ -323,7 +335,7 @@ const categoryFor = (id: string, zone: ZoneId): EquipmentCategory => {
   if (PROCESS[id]) return 'process';
   if (BUFFERS.some((b) => b.equipmentId === id)) return 'buffer';
   if (INSPECTION_STATIONS.some((s) => s.equipmentId === id)) return 'inspection';
-  if (['B-LOAD', 'K-FLT', 'D-BELT', 'B-FEED', 'C-CRS', 'J-CNT', 'J-WRAP', 'I-BUF'].includes(id)) return 'material-handling';
+  if (['B-LOAD', 'K-FLT', 'D-BELT', 'B-FEED', 'C-CRS', 'J-CNT', 'J-WRAP', 'I-BUF'].includes(id) || id.startsWith('CV-')) return 'material-handling';
   if (['B-BAYS', 'B-SILO', 'K-RACK', 'G-PREP'].includes(id)) return 'storage';
   if (['A-GATE', 'A-HOLD', 'B-RCV', 'K-STG', 'K-DOCK'].includes(id)) return 'logistics';
   if (zone === 'A' || ['D-HAG', 'D-CYC'].includes(id)) return 'utility';
@@ -347,6 +359,167 @@ const ANALOG: Record<string, [string, string][]> = {
   'A-SUB': [['active_power', 'kW']],
   'A-GAS': [['gas_flow', 'Nm³/h']],
   'A-WTR': [['tank_level', '%']],
+};
+
+const cr = (mtbf: number, repairMin: number, repairMax: number, reasons: string[]) => ({ mtbf, repairMin, repairMax, reasons });
+
+/**
+ * Conveyors that carry tiles between stages. D-BELT and E-COL were already selectable assets;
+ * the CV-* ids name conveyor runs of the 3D model that now carry operational state.
+ */
+export const CONVEYORS: ConveyorDef[] = [
+  {
+    id: 'D-BELT', name: 'Powder feed conveyor', zone: 'D', kind: 'belt', from: 'SPRAY', to: 'PRESS', bufferId: 'BUF-SILO',
+    blocksInputOf: ['PRESS'], blocksOutputOf: [], capacityPerHour: 1700, speedMpm: 42,
+    reliability: cr(3600, 4, 14, ['CNV_TRACK', 'CNV_DRIVE', 'CNV_PULLCORD']),
+  },
+  {
+    id: 'E-COL', name: 'Green-tile collector conveyor', zone: 'E', kind: 'roller', from: 'PRESS', to: 'DRY', bufferId: 'BUF-COL',
+    blocksInputOf: ['DRY'], blocksOutputOf: ['PRESS'], capacityPerHour: 1650, speedMpm: 18,
+    reliability: cr(3000, 3, 12, ['CNV_JAM', 'CNV_DRIVE', 'CNV_PULLCORD']),
+  },
+  {
+    id: 'CV-GLZ', name: 'Glaze line belt conveyor', zone: 'G', kind: 'belt', from: 'DRY', to: 'KILN', bufferId: 'BUF-GLZ',
+    blocksInputOf: ['GLAZE', 'DECOR'], blocksOutputOf: ['GLAZE', 'DECOR'], capacityPerHour: 1600, speedMpm: 16,
+    reliability: cr(3400, 3, 12, ['CNV_TRACK', 'CNV_JAM', 'CNV_DRIVE']),
+  },
+  {
+    id: 'CV-KIN', name: 'Kiln infeed roller transfer', zone: 'H', kind: 'roller', from: 'DECOR', to: 'KILN', bufferId: 'BUF-KIN',
+    blocksInputOf: ['KILN'], blocksOutputOf: ['DECOR'], capacityPerHour: 1600, speedMpm: 14,
+    reliability: cr(5200, 3, 10, ['CNV_JAM', 'CNV_DRIVE']),
+  },
+  {
+    id: 'CV-SORT', name: 'Sorting line roller conveyor', zone: 'I', kind: 'roller', from: 'KILN', to: 'SORT', bufferId: 'BUF-KOUT',
+    blocksInputOf: ['SORT'], blocksOutputOf: [], capacityPerHour: 1600, speedMpm: 20,
+    reliability: cr(4200, 3, 10, ['CNV_JAM', 'CNV_DRIVE', 'CNV_PULLCORD']),
+  },
+  {
+    id: 'CV-PACK', name: 'Packing transfer belt', zone: 'J', kind: 'belt', from: 'SORT', to: 'PACK', bufferId: 'BUF-SORT',
+    blocksInputOf: ['PACK'], blocksOutputOf: [], capacityPerHour: 1650, speedMpm: 24,
+    reliability: cr(3000, 3, 12, ['CNV_JAM', 'CNV_TRACK', 'CNV_PULLCORD']),
+  },
+  {
+    id: 'CV-PAL', name: 'Carton conveyor to palletiser', zone: 'J', kind: 'roller', from: 'PACK', to: 'PAL', bufferId: 'BUF-PACK',
+    blocksInputOf: ['PAL'], blocksOutputOf: ['PACK'], capacityPerHour: 1700, speedMpm: 22,
+    reliability: cr(3200, 3, 10, ['CNV_JAM', 'CNV_DRIVE']),
+  },
+];
+export const CONVEYOR_BY_ID: Record<string, ConveyorDef> = Object.fromEntries(CONVEYORS.map((c) => [c.id, c]));
+export const CONVEYOR_IDS = CONVEYORS.map((c) => c.id);
+
+/**
+ * Camera positions. Each has a simulated feed rendered from the digital twin; a real stream is used
+ * only when one is configured for it and actually plays. No camera is connected in this release.
+ */
+export const CAMERAS: CameraDef[] = [
+  { id: 'CAM-A1', name: 'Main gate & holding area', zone: 'A', stage: 'YARD', covers: ['A-GATE', 'A-HOLD', 'GF-GATE', 'GF-HOLD'], purpose: 'Gate entries, truck queue' },
+  { id: 'CAM-B1', name: 'Raw-material receiving', zone: 'B', stage: 'PREP', covers: ['B-RCV', 'B-BAYS', 'B-LOAD', 'B-FEED', 'GF-RCV', 'GF-SHED'], purpose: 'Tipper unloading, wheel loader' },
+  { id: 'CAM-C1', name: 'Ball mill hall', zone: 'C', stage: 'PREP', covers: ['C-CRS', 'C-BM1', 'C-BM2', 'C-BM3', 'C-SLIP'], purpose: 'Mill drives and slip tanks' },
+  { id: 'CAM-D1', name: 'Spray dryer & powder feed', zone: 'D', stage: 'SPRAY', covers: ['D-TWR', 'D-HAG', 'D-SILO', 'D-BELT'], purpose: 'Tower discharge, powder belt' },
+  { id: 'CAM-E1', name: 'Press line', zone: 'E', stage: 'PRESS', covers: ['E-PRS1', 'E-PRS2', 'E-PRS3', 'E-COL'], purpose: 'Presses and green-tile collector' },
+  { id: 'CAM-G1', name: 'Glaze line', zone: 'G', stage: 'GLAZE', covers: ['F-DRY', 'F-BUF', 'G-LINE', 'G-INK', 'CV-GLZ'], purpose: 'Glaze application and decoration' },
+  { id: 'CAM-H1', name: 'Kiln entry', zone: 'H', stage: 'KILN', covers: ['H-KILN', 'CV-KIN'], purpose: 'Kiln infeed transfer' },
+  { id: 'CAM-I1', name: 'Sorting line', zone: 'I', stage: 'SORT', covers: ['CV-SORT', 'I-GAUGE', 'I-VIS', 'I-SORT', 'I-QC', 'I-BUF'], purpose: 'Kiln exit, gauge, grade diverters' },
+  { id: 'CAM-J1', name: 'Packaging & palletising', zone: 'J', stage: 'PACK', covers: ['CV-PACK', 'J-CNT', 'J-BOX', 'CV-PAL', 'J-PAL', 'J-WRAP', 'GF-PACK', 'GF-PALCELL', 'GF-WALK'], purpose: 'Packing, palletiser cell, walkway' },
+  { id: 'CAM-K1', name: 'Warehouse & docks', zone: 'K', stage: 'WH', covers: ['K-RACK', 'K-STG', 'K-DOCK', 'K-FLT', 'GF-RACK', 'GF-STG', 'GF-DOCKS', 'GF-PUT', 'GF-YARD'], purpose: 'Racking, staging lanes, docks' },
+];
+export const CAMERA_BY_ID: Record<string, CameraDef> = Object.fromEntries(CAMERAS.map((c) => [c.id, c]));
+/** First camera whose field of view includes the asset / geofence (null = none). */
+export const cameraFor = (id: string | undefined | null) => (id ? (CAMERAS.find((c) => c.covers.includes(id)) ?? null) : null);
+
+const cp = (label: string, unit: string, signalId: string | null, note?: string) => ({ label, unit, signalId, measured: signalId != null, note });
+
+/**
+ * Production-monitoring registry: what is counted where. Configurable per plant — the counting
+ * points below follow this line's signal list (src/model/plant.ts SIGNALS); quantities without a
+ * counting point are shown as "not measured" rather than inferred.
+ */
+export const MONITORED_STAGES: MonitoredStage[] = [
+  {
+    id: 'PREP', name: 'Raw-material preparation', step: 2, zone: 'C', unit: 'tiles',
+    equipment: ['C-BM1', 'C-BM2', 'C-BM3'], conveyors: [], cameras: ['CAM-B1', 'CAM-C1'],
+    input: cp('Raw materials dosed', 't', null, 'Box-feeder weighing not integrated; mills are fed continuously'),
+    output: cp('Slip to tanks (tile-equivalent)', 'tiles', 'C-BM1.count_total'),
+    good: null, rejected: null, wipBufferId: null, oeeMeaningful: true,
+  },
+  {
+    id: 'SPRAY', name: 'Spray drying & powder', step: 3, zone: 'D', unit: 'tiles',
+    equipment: ['D-TWR'], conveyors: ['D-BELT'], cameras: ['CAM-D1'],
+    input: cp('Slip from tanks', 'tiles', 'D-TWR.count_total', 'Tile-equivalent of slip drawn'),
+    output: cp('Powder to silos (tile-equivalent)', 'tiles', 'D-TWR.count_total'),
+    good: null, rejected: null, wipBufferId: 'BUF-SLIP', oeeMeaningful: true,
+  },
+  {
+    id: 'PRESS', name: 'Pressing & forming', step: 4, zone: 'E', unit: 'tiles',
+    equipment: ['E-PRS1', 'E-PRS2', 'E-PRS3'], conveyors: ['D-BELT', 'E-COL'], cameras: ['CAM-E1'],
+    input: cp('Powder from silos', 'tiles', 'D-BELT.tile_count', 'Tile-equivalent of powder fed'),
+    output: cp('Green tiles pressed', 'tiles', 'E-PRS1.count_total'),
+    good: null, rejected: null, wipBufferId: 'BUF-SILO', oeeMeaningful: true,
+  },
+  {
+    id: 'DRY', name: 'Drying', step: 5, zone: 'F', unit: 'tiles',
+    equipment: ['F-DRY'], conveyors: ['E-COL'], cameras: ['CAM-G1'],
+    input: cp('Green tiles in', 'tiles', 'E-COL.tile_count'),
+    output: cp('Dried tiles out', 'tiles', 'F-DRY.count_total'),
+    good: null, rejected: null, wipBufferId: 'BUF-COL', oeeMeaningful: true,
+  },
+  {
+    id: 'GLAZE', name: 'Glazing & decoration', step: 6, zone: 'G', unit: 'tiles',
+    equipment: ['G-LINE', 'G-INK'], conveyors: ['CV-GLZ'], cameras: ['CAM-G1'],
+    input: cp('Dried tiles from buffer', 'tiles', 'G-LINE.count_total'),
+    output: cp('Decorated tiles', 'tiles', 'G-INK.count_total'),
+    good: null, rejected: null, wipBufferId: 'BUF-DRY', oeeMeaningful: true,
+  },
+  {
+    id: 'KILN', name: 'Kiln firing & cooling', step: 7, zone: 'H', unit: 'tiles',
+    equipment: ['H-KILN'], conveyors: ['CV-KIN'], cameras: ['CAM-H1'],
+    input: cp('Tiles into kiln', 'tiles', 'CV-KIN.tile_count'),
+    output: cp('Tiles fired', 'tiles', 'H-KILN.count_total'),
+    good: null, rejected: null, wipBufferId: 'BUF-KIN', oeeMeaningful: true,
+  },
+  {
+    id: 'SORT', name: 'Sorting & inspection', step: 8, zone: 'I', unit: 'tiles',
+    equipment: ['I-SORT'], conveyors: ['CV-SORT'], cameras: ['CAM-I1'],
+    input: cp('Tiles inspected', 'tiles', 'I-VIS.count_inspected'),
+    output: cp('Tiles sorted', 'tiles', 'I-SORT.count_total'),
+    good: cp('First-quality accepted', 'tiles', 'I-SORT.count_good'),
+    rejected: cp('Rejected at gauge & vision', 'tiles', 'I-VIS.count_rejected'),
+    wipBufferId: 'BUF-KOUT', oeeMeaningful: true,
+  },
+  {
+    id: 'PACK', name: 'Packaging & palletising', step: 9, zone: 'J', unit: 'tiles',
+    equipment: ['J-BOX', 'J-PAL'], conveyors: ['CV-PACK', 'CV-PAL'], cameras: ['CAM-J1'],
+    input: cp('Tiles to packing', 'tiles', 'CV-PACK.tile_count'),
+    output: cp('Tiles palletised', 'tiles', 'J-PAL.count_total'),
+    good: null, rejected: null, wipBufferId: 'BUF-SORT', oeeMeaningful: true,
+  },
+  {
+    id: 'WH', name: 'Warehouse transfer', step: 10, zone: 'K', unit: 'pallets',
+    equipment: ['K-RACK', 'K-STG', 'K-DOCK'], conveyors: [], cameras: ['CAM-J1', 'CAM-K1'],
+    input: cp('Pallets off the wrapper', 'pallets', 'J-PAL.count_total', 'Pallets = palletised tiles ÷ tiles per pallet'),
+    output: cp('Pallets dispatched', 'pallets', 'K-DOCK.dock_occupancy', 'Counted at dock loading-complete events'),
+    good: null, rejected: null, wipBufferId: null, oeeMeaningful: false,
+  },
+];
+export const MONITORED_STAGE_BY_ID = Object.fromEntries(MONITORED_STAGES.map((m) => [m.id, m])) as Record<MonitoredStage['id'], MonitoredStage>;
+
+/** Default thresholds of the event-detection rules (src/sim/events.ts); editable at runtime. */
+export const DEFAULT_EVENT_RULES: EventRules = {
+  belowRateFactor: 0.85,
+  belowRateMinutes: 10,
+  starvedMinutesConstraint: 5,
+  starvedMinutes: 10,
+  counterInactiveMinutes: 3,
+  rejectRateMax: 0.05,
+  defectCount30Max: 12,
+  defectRepeatRecords: 5,
+  deteriorationRatio: 2,
+  truckWaitMax: 25,
+  dockStayMax: 75,
+  yardQueueMax: 4,
+  turnaroundMax: 150,
+  energyDeviationMax: 0.1,
+  ioImbalanceMax: 0.015,
 };
 
 /** Assets with (simulated) condition-monitoring sensors — see src/sim/health.ts. */
@@ -383,6 +556,11 @@ export const EQUIPMENT_OPS: EquipmentOps[] = EQUIPMENT.map((e) => {
   if (e.id === 'A-GATE') sigs.push(signal(e.id, 'gate_event', 'in/out', 'event', ['turnaround']));
   if (e.id === 'K-DOCK') sigs.push(signal(e.id, 'dock_occupancy', 'docks', 'analog', ['turnaround']));
   if (e.id === 'K-FLT' || e.id === 'B-LOAD') sigs.push(signal(e.id, 'vehicle_zone', 'zone id', 'event', []));
+  if (CONVEYOR_BY_ID[e.id]) {
+    sigs.push(signal(e.id, 'run_state', 'enum', 'state', ['availability', 'downtime']));
+    sigs.push(signal(e.id, 'speed', 'm/min', 'analog', []));
+    sigs.push(signal(e.id, 'tile_count', 'tiles', 'counter', ['output']));
+  }
   for (const [name, unit] of ANALOG[e.id] ?? []) sigs.push(signal(e.id, name, unit, 'analog', ['energy']));
   if (CONDITION_MONITORED.includes(e.id)) {
     sigs.push(signal(e.id, 'vibration', 'mm/s RMS', 'analog', ['health']));

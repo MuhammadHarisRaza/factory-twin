@@ -401,6 +401,12 @@ export function paramSummary(sc: ScenarioActivation): string {
       return `${sc.count ?? 6} outbound trucks, 2 min apart`;
     case 'prolonged-dock-stay':
       return `${sc.dockId ? dockName(sc.dockId) : 'First docked truck'} · +${sc.count ?? 75} min hold`;
+    case 'conveyor-stop':
+      return sc.equipmentId ?? '—';
+    case 'signal-loss':
+      return `${machineLabel(sc.equipmentId ?? '—')} · data feed stale`;
+    case 'restricted-entry':
+      return sc.vehicleId ?? 'Packaging forklift';
   }
 }
 

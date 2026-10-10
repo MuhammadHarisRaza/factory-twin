@@ -10,7 +10,7 @@
  * states so they stay plausible. A
  * future read-only gateway would supply the same signal ids with real values.
  */
-import { BUFFERS, DOCKS, GEOFENCES, INSPECTION_STATIONS, REASON_BY_CODE } from '../model/plant';
+import { BUFFERS, CONVEYOR_BY_ID, DOCKS, GEOFENCES, INSPECTION_STATIONS, REASON_BY_CODE } from '../model/plant';
 import type { MachineState } from '../model/types';
 import { findDowntime, type SimState } from './engine';
 import { internalActivity } from './metrics';
@@ -23,6 +23,10 @@ export type SignalReading = {
   value: number | string | null;
   /** Display text without the unit. */
   text: string;
+  /** 'stale' when the asset's data feed stopped updating — the value is the last one received. */
+  quality?: 'good' | 'stale';
+  /** Plant minute of the last update when stale. */
+  since?: number;
 };
 
 const STATE_TEXT: Record<MachineState, string> = {
@@ -121,6 +125,53 @@ export function signalValue(s: SimState, signalId: string): SignalReading {
   const dot = signalId.indexOf('.');
   if (dot < 0) return NONE;
   const equipmentId = signalId.slice(0, dot);
+  const f = s.feeds[equipmentId];
+  if (f?.status === 'stale') return { ...staleValue(s, signalId, f.since), quality: 'stale', since: f.since };
+  return liveValue(s, signalId);
+}
+
+/** Value as last received before a feed went stale. */
+function staleValue(s: SimState, signalId: string, since: number): SignalReading {
+  const dot = signalId.indexOf('.');
+  const equipmentId = signalId.slice(0, dot);
+  const name = signalId.slice(dot + 1);
+  const f = s.feeds[equipmentId];
+  switch (name) {
+    case 'state':
+      return f.lastState ? { value: f.lastState, text: STATE_TEXT[f.lastState] } : NONE;
+    case 'run_state':
+      return f.lastState ? { value: f.lastState, text: CONVEYOR_STATE_TEXT[f.lastState] } : NONE;
+    case 'count_total':
+    case 'tile_count':
+      return f.lastCount != null ? num(f.lastCount) : NONE;
+    case 'rate':
+      return f.lastRate != null ? num(f.lastRate) : NONE;
+    case 'speed':
+      return f.lastState === 'down' ? num(0, 1) : num(CONVEYOR_BY_ID[equipmentId]?.speedMpm ?? 0, 1);
+    case 'vibration':
+    case 'temperature':
+    case 'motor_current': {
+      if (!HEALTH_BY_ID[equipmentId]) return NONE;
+      const r = sensorsAt(s, equipmentId, Math.max(0, since - 1));
+      return name === 'vibration' ? num(r.vibration, 2) : name === 'temperature' ? num(r.temperature, 1) : num(r.current, 0);
+    }
+    default:
+      return liveValue(s, signalId);
+  }
+}
+
+const CONVEYOR_STATE_TEXT: Record<MachineState, string> = {
+  running: 'Running',
+  reduced: 'Running',
+  starved: 'Running empty',
+  blocked: 'Accumulating',
+  down: 'Stopped',
+  planned: 'Stopped (planned)',
+};
+
+function liveValue(s: SimState, signalId: string): SignalReading {
+  const dot = signalId.indexOf('.');
+  const equipmentId = signalId.slice(0, dot);
   const name = signalId.slice(dot + 1);
   const m = s.machines[equipmentId];
 
@@ -128,7 +179,14 @@ export function signalValue(s: SimState, signalId: string): SignalReading {
     case 'state':
       return m ? { value: m.state, text: STATE_TEXT[m.state] } : NONE;
     case 'count_total':
+    case 'tile_count':
       return m ? num(m.countTotal) : NONE;
+    case 'run_state':
+      return m ? { value: m.state, text: CONVEYOR_STATE_TEXT[m.state] } : NONE;
+    case 'speed': {
+      const c = CONVEYOR_BY_ID[equipmentId];
+      return c && m ? num(m.state === 'down' ? 0 : c.speedMpm * (0.98 + 0.04 * smooth(s.seed, `spd:${equipmentId}`, s.minute, 10)), 1) : NONE;
+    }
     case 'rate':
       return m ? num(m.ratePerHour) : NONE;
     case 'alarm': {

@@ -5,6 +5,7 @@ import { PERIOD_WORKSPACES, WORKSPACES, useApp } from './app/store';
 import { Header, Sidebar } from './app/Shell';
 import { ScenarioDrawer } from './app/ScenarioDrawer';
 import { CopilotDrawer } from './app/CopilotDrawer';
+import { EvidenceCapture } from './app/EvidenceCapture';
 import { useKeyboardShortcuts } from './useKeyboardShortcuts';
 import { Loader, PresentationExit, SceneErrorBoundary } from './ui/Overlays';
 import { TwinOverlays } from './ui/twin/TwinOverlays';
@@ -17,6 +18,9 @@ import { CommandCenterPage } from './pages/CommandCenterPage';
 import { ScenarioSimulatorPage } from './pages/ScenarioSimulatorPage';
 import { FleetPage } from './pages/FleetPage';
 import { AssetsPage } from './pages/AssetsPage';
+import { MonitoringPage } from './pages/MonitoringPage';
+import { EventsPage } from './pages/EventsPage';
+import { CopilotPage } from './pages/CopilotPage';
 
 // The 3D scene (three.js + all geometry) loads as its own chunk so the shell paints first.
 const Scene = lazy(() => import('./scene/Scene'));
@@ -65,6 +69,9 @@ function TwinWorkspace({ active }: { active: boolean }) {
 }
 
 const PAGES = {
+  monitoring: MonitoringPage,
+  events: EventsPage,
+  copilot: CopilotPage,
   production: ProductionPage,
   quality: QualityPage,
   health: MachineHealthPage,
@@ -96,6 +103,7 @@ export default function App() {
       </div>
       <ScenarioDrawer />
       <CopilotDrawer />
+      <EvidenceCapture />
       <Loader />
     </div>
   );

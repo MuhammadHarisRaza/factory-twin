@@ -1,7 +1,10 @@
 import type { ReactNode } from 'react';
 import {
+  Activity,
+  Bot,
   Box,
   Building2,
+  ClipboardList,
   ChevronsLeft,
   ChevronsRight,
   Database,
@@ -23,11 +26,14 @@ import { PERIOD_LABELS, type PeriodKey } from '../sim/metrics';
 import { SPEEDS, useSim, useSimValue } from '../sim/store';
 import { formatClock, formatDay, shiftAt } from '../sim/time';
 import { useTwin } from '../store';
-import { WORKSPACES, useApp, type WorkspaceId } from './store';
+import { WORKSPACES, WORKSPACE_GROUPS, useApp, type WorkspaceId } from './store';
 import { scenariosActive } from '../sim/engine';
 
 const ICONS: Record<WorkspaceId, LucideIcon> = {
   twin: Box,
+  monitoring: Activity,
+  events: ClipboardList,
+  copilot: Bot,
   production: Gauge,
   quality: ScanSearch,
   health: HeartPulse,
@@ -52,9 +58,9 @@ export function Sidebar() {
           <small>AI-Powered Operational Intelligence</small>
         </div>
       </div>
-      {(['operations', 'platform'] as const).map((group) => (
+      {WORKSPACE_GROUPS.map(({ id: group, label }) => (
         <div className="nav-items" key={group}>
-          {group === 'platform' && <div className="nav-section">Logistics & data</div>}
+          {group !== 'operations' && <div className="nav-section">{label}</div>}
           {WORKSPACES.filter((w) => w.group === group).map((w) => {
             const Icon = ICONS[w.id];
             return (

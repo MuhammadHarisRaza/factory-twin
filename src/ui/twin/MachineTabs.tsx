@@ -1,3 +1,4 @@
+import { followLink } from '../copilot/links';
 import {
   CircleCheck,
   CirclePause,
@@ -262,7 +263,8 @@ export function RecsTab({ id, recs }: { id: string; recs: Insight[] }) {
                             if (l.id === id) tw.focusEquipment(id);
                             else tw.select(l.id);
                           } else if (l.kind === 'vehicle') tw.selectVehicle(l.id, true);
-                          else go(l.id);
+                          else if (l.kind === 'workspace') go(l.id);
+                          else followLink(l);
                         }}
                       >
                         <Icon size={13} />

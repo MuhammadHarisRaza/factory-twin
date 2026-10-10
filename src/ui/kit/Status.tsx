@@ -1,6 +1,14 @@
 import {
   CircleCheck,
   CircleDashed,
+  CircleHelp,
+  CircleDot,
+  Eye,
+  Search,
+  Unplug,
+  WifiOff,
+  Wrench,
+  Radio,
   CirclePause,
   CircleSlash,
   Gauge,
@@ -10,7 +18,7 @@ import {
   Info,
   type LucideIcon,
 } from 'lucide-react';
-import type { AlertSeverity, MachineState, SourceStatus } from '../../model/types';
+import type { AlertSeverity, EventStatus, FeedStatus, MachineState, OperationalState, SourceStatus } from '../../model/types';
 import type { Metric } from '../../sim/oee';
 import { fmtMetric } from './format';
 
@@ -82,3 +90,37 @@ export function MetricText({ m, digits = 1 }: { m: Metric; digits?: number }) {
     </span>
   );
 }
+
+/** Operational state (src/sim/metrics.ts operationalState) in the four-colour scheme, icon + label. */
+export const OPERATIONAL_STATE: Record<OperationalState, { label: string; tone: Tone; icon: LucideIcon }> = {
+  running: { label: 'Running', tone: 'good', icon: CircleCheck },
+  reduced: { label: 'Below rate', tone: 'warning', icon: Gauge },
+  idle: { label: 'Idle — no material', tone: 'warning', icon: CirclePause },
+  stopped: { label: 'Stopped', tone: 'critical', icon: OctagonX },
+  fault: { label: 'Fault', tone: 'critical', icon: Wrench },
+  starved: { label: 'Starved', tone: 'warning', icon: CirclePause },
+  blocked: { label: 'Blocked', tone: 'warning', icon: CircleSlash },
+  planned: { label: 'Planned stop', tone: 'neutral', icon: CalendarClock },
+  disconnected: { label: 'Disconnected', tone: 'neutral', icon: Unplug },
+  unknown: { label: 'Unknown — data stale', tone: 'neutral', icon: CircleHelp },
+};
+export const OperationalStatus = ({ state }: { state: OperationalState }) => <StatusBadge {...OPERATIONAL_STATE[state]} />;
+
+/** Event lifecycle status. */
+export const EVENT_STATUS: Record<EventStatus, { label: string; tone: Tone; icon: LucideIcon }> = {
+  active: { label: 'Active', tone: 'serious', icon: CircleDot },
+  acknowledged: { label: 'Acknowledged', tone: 'neutral', icon: Eye },
+  investigating: { label: 'Investigating', tone: 'planned', icon: Search },
+  resolved: { label: 'Resolved', tone: 'good', icon: CircleCheck },
+};
+export const EventStatusBadge = ({ status }: { status: EventStatus }) => <StatusBadge {...EVENT_STATUS[status]} />;
+
+/** Data-feed freshness. 'live' only for a source that is actually connected and delivering. */
+export const FEED_STATUS: Record<FeedStatus, { label: string; tone: Tone; icon: LucideIcon }> = {
+  simulated: { label: 'Simulated', tone: 'warning', icon: CircleDashed },
+  live: { label: 'Live', tone: 'good', icon: Radio },
+  stale: { label: 'Stale', tone: 'warning', icon: CircleHelp },
+  disconnected: { label: 'Disconnected', tone: 'neutral', icon: WifiOff },
+  unavailable: { label: 'Unavailable', tone: 'neutral', icon: CircleSlash },
+};
+export const FeedStatusBadge = ({ status }: { status: FeedStatus }) => <StatusBadge {...FEED_STATUS[status]} />;

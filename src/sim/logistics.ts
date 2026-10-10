@@ -75,6 +75,10 @@ type ForkliftRuntime = {
   /** Dispatch assignment. */
   truckId: string | null;
   cycle: number;
+  /** Scenario id forcing the next packaging run across the walkway (restricted-zone entry). */
+  forceShortcut?: string | null;
+  /** Scenario id of the run in progress, if it was forced. */
+  shortcutScenario?: string | null;
 };
 
 export type TruckRuntime = Vehicle & {
@@ -422,7 +426,13 @@ function toHolding(s: SimState, v: TruckRuntime, t: number) {
     at = HOLDING_SLOTS[slot];
     path = [GATE_STOP_IN, [80, 96], [-20, 96], [-20, at[1]], at];
   } else {
-    slot = HOLDING_SLOTS.length + Math.min(OVERFLOW_SLOTS.length - 1, st.queue.length - HOLDING_SLOTS.length);
+    // Next free overflow position along the road (trucks still driving in hold theirs already).
+    const taken = new Set(
+      st.active.map((id) => st.vehicles[id] as TruckRuntime).filter((o) => o.id !== v.id && o.slot != null && o.slot >= HOLDING_SLOTS.length).map((o) => o.slot!),
+    );
+    let k = 0;
+    while (k < OVERFLOW_SLOTS.length - 1 && taken.has(HOLDING_SLOTS.length + k)) k++;
+    slot = HOLDING_SLOTS.length + k;
     at = OVERFLOW_SLOTS[slot - HOLDING_SLOTS.length];
     path = [GATE_STOP_IN, [80, 96], [at[0] + 10, 96], at];
   }
@@ -599,7 +609,11 @@ const loadingDone = (st: LogisticsState, truckId: string) => {
 function packagingLoop(s: SimState, v: Vehicle, fl: ForkliftRuntime, t: number) {
   closeOpen(v, t);
   fl.cycle++;
-  const shortcut = fl.cycle % 4 === 0;
+  // A restricted-zone entry scenario forces the next run across the walkway.
+  const forced = fl.forceShortcut ?? null;
+  fl.forceShortcut = null;
+  const shortcut = forced != null || fl.cycle % 4 === 0;
+  fl.shortcutScenario = forced;
   const home = fl.home;
   let c = t;
   const route: Vec2[] = shortcut
@@ -632,6 +646,68 @@ function runLoader(st: LogisticsState, t: number) {
 
 // ── Accounting & geofencing ───────────────────────────────────────────────────
 
+const RESTRICTED = GEOFENCES.filter((g) => g.kind === 'restricted');
+
+/** Does segment a→b touch the rectangle? (Liang–Barsky clipping.) */
+function segmentHitsRect(a: Vec2, b: Vec2, r: { x: [number, number]; z: [number, number] }) {
+  let t0 = 0;
+  let t1 = 1;
+  const dx = b[0] - a[0];
+  const dz = b[1] - a[1];
+  const clip = (p: number, q: number) => {
+    if (p === 0) return q >= 0;
+    const u = q / p;
+    if (p < 0) {
+      if (u > t1) return false;
+      if (u > t0) t0 = u;
+    } else {
+      if (u < t0) return false;
+      if (u < t1) t1 = u;
+    }
+    return true;
+  };
+  return clip(-dx, a[0] - r.x[0]) && clip(dx, r.x[1] - a[0]) && clip(-dz, a[1] - r.z[0]) && clip(dz, r.z[1] - a[1]) && t0 <= t1;
+}
+
+/** Point of a moving leg at time t (along its polyline). */
+function pointOnLeg(leg: VehicleLeg, t: number): { p: Vec2; i: number } {
+  const total = len(leg.path);
+  const f = leg.end > leg.start ? Math.min(1, Math.max(0, (t - leg.start) / (leg.end - leg.start))) : 1;
+  let d = f * total;
+  for (let i = 0; i < leg.path.length - 1; i++) {
+    const a = leg.path[i];
+    const b = leg.path[i + 1];
+    const seg = Math.hypot(b[0] - a[0], b[1] - a[1]);
+    if (d <= seg || i === leg.path.length - 2) {
+      const k = seg > 0 ? Math.min(1, d / seg) : 0;
+      return { p: [a[0] + (b[0] - a[0]) * k, a[1] + (b[1] - a[1]) * k], i };
+    }
+    d -= seg;
+  }
+  return { p: leg.path[leg.path.length - 1], i: leg.path.length - 2 };
+}
+
+/** First restricted geofence the vehicle's trajectory touches during [t0, t1), if any. */
+function restrictedCrossed(v: Vehicle, t0: number, t1: number) {
+  for (let li = v.legs.length - 1; li >= 0; li--) {
+    const leg = v.legs[li];
+    if (leg.end <= t0) break;
+    if (leg.start >= t1) continue;
+    const pts: Vec2[] = [];
+    if (!leg.moving || leg.path.length < 2) pts.push(leg.path[0], leg.path[0]);
+    else {
+      const a = pointOnLeg(leg, Math.max(t0, leg.start));
+      const b = pointOnLeg(leg, Math.min(t1, leg.end));
+      pts.push(a.p);
+      for (let k = a.i + 1; k <= b.i; k++) pts.push(leg.path[k]);
+      pts.push(b.p);
+    }
+    for (const g of RESTRICTED) for (let k = 0; k < pts.length - 1; k++) if (segmentHitsRect(pts[k], pts[k + 1], g.rect)) return g;
+  }
+  return undefined;
+}
+
+
 function accounting(s: SimState, t: number) {
   const st = s.logistics;
   const hour = Math.floor(t / 60);
@@ -643,11 +719,13 @@ function accounting(s: SimState, t: number) {
   for (const id of st.active) {
     const v = st.vehicles[id];
     if (v.class !== 'internal') continue;
-    const p = poseAt(v, t + 0.5);
-    const gf = p ? geofenceAt(p.x, p.z, ['restricted']) : undefined;
+    // The path travelled during this minute, not one sampled position: a forklift crosses the
+    // 1.6 m walkway in about a second.
+    const gf = restrictedCrossed(v, t, t + 1);
     const open = st.restrictedOpen[id];
     if (gf && !open) {
-      const ev: RestrictedZoneEvent = { id: nextId(s, 'RZ'), time: t, vehicleId: id, geofenceId: gf.id, durationMin: 1, source: 'simulation' };
+      const forced = st.forklifts[id]?.shortcutScenario;
+      const ev: RestrictedZoneEvent = { id: nextId(s, 'RZ'), time: t, vehicleId: id, geofenceId: gf.id, durationMin: 1, source: forced ? 'scenario' : 'simulation' };
       st.restrictedEvents.push(ev);
       st.restrictedOpen[id] = { geofenceId: gf.id, eventId: ev.id };
       raiseAlert(s, t, 'warning', `Restricted zone entry: ${v.label}`, gf.name, { vehicleId: id }, 'simulation');
@@ -687,6 +765,19 @@ export function applyLogisticsScenario(s: SimState, sc: ScenarioActivation) {
       const ev = st.timeline.find((e) => e.vehicleId === v.id && e.kind === 'gate-in');
       if (ev) ev.time += delay;
       st.timeline.sort((a, b) => a.time - b.time);
+    }
+  } else if (sc.kind === 'restricted-entry') {
+    const id = sc.vehicleId ?? 'FL-05';
+    const fl = st.forklifts[id];
+    if (fl) {
+      fl.forceShortcut = sc.id;
+      // Start the run now if the forklift is waiting at its station (cut the wait short).
+      const v = st.vehicles[id];
+      const l = v ? lastLeg(v) : undefined;
+      if (l && !l.moving && l.start <= sc.start && l.end > sc.start) {
+        l.end = sc.start;
+        fl.busyUntil = sc.start;
+      }
     }
   } else if (sc.kind === 'prolonged-dock-stay') {
     const extra = sc.count ?? 75;

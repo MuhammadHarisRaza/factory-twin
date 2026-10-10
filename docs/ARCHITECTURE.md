@@ -1,4 +1,4 @@
-# wAI Manufacturing Intelligence — architecture
+# wAI Manufacturing Digital Twin — architecture
 
 ## Starting point (stage 1 inspection)
 
@@ -24,15 +24,20 @@ Everything above is preserved; the product is built around it.
 | Production / quality / downtime simulation, scenarios | `src/sim/engine.ts` |
 | Vehicle simulation (trucks, forklifts, loader), gate/dock/geofence events | `src/sim/logistics.ts` |
 | OEE calculations (validated, no clamping) | `src/sim/oee.ts` |
-| All derived metrics (line/machine/stage, Pareto, bottleneck, trends, shifts, quality, fleet) | `src/sim/metrics.ts` |
-| Live store + demo clock | `src/sim/store.ts` |
+| All derived metrics (line/machine/stage, Pareto, bottleneck, trends, shifts, quality, fleet, energy, impact vs baseline, on-target rule) | `src/sim/metrics.ts` |
+| Energy model (electricity + gas per consumer, expected vs actual, tariffs) | `src/sim/energy.ts` |
+| Condition monitoring (simulated vibration / temperature / current, degradation, maintenance, rule-based assessment) | `src/sim/health.ts` |
+| Live store, demo clock, baseline twin | `src/sim/store.ts` |
+| Rule-based insights, recommendations, next actions | `src/intel/insights.ts` |
+| Rule-based copilot (intent → answer from the state) | `src/intel/copilot.ts` |
 | Simulated signal values (Assets & Data) | `src/sim/signals.ts` |
 | Tests | `src/sim/__tests__/` |
 | App shell, navigation, scenario drawer | `src/app/` |
 | Design system (tokens, components) | `src/styles.css`, `src/ui/kit/` |
-| Factory Twin overlays | `src/ui/` |
-| 3D scene | `src/scene/` (simulated vehicles: `SimVehicles.tsx`; status in `Selectable.tsx`) |
-| Workspaces | `src/pages/` |
+| Factory Twin overlays (KPI chips, search, line strip, timeline, live lists, inspector tabs) | `src/ui/`, `src/ui/twin/` |
+| Copilot panel (Command Center + global drawer) | `src/ui/copilot/`, `src/app/CopilotDrawer.tsx` |
+| 3D scene | `src/scene/` (vehicles: `SimVehicles.tsx`; selection: `Selectable.tsx`; status beacons, bottleneck, health/energy pins, inspection markers, product flow, vehicle route: `src/scene/status/`) |
+| Workspaces (each with a pure `derive.ts` + tests where it computes anything) | `src/pages/` (`production/`, `quality/`, `health/`, `energy/`, `command/`, `scenarios/`, `fleet/`, `assets/`) |
 
 ## One operational state
 
@@ -74,5 +79,40 @@ counter or vehicle state, so the twin, the tables, the charts and the KPIs canno
   quality at sorting. Reporting periods start on hour boundaries; invalid inputs (e.g. operating > planned,
   performance > 100 %) are flagged with an explanation instead of clamped, and missing values are shown as
   unavailable rather than zero.
+
+Displayed OEE is rounded to 0.1 % from the unrounded components; when the rounded A, P and Q do not multiply
+to the shown OEE, Production & OEE marks it with ≈ and states the product. This is a simplified demonstration
+of OEE, explained on that page with the live inputs.
+
+**On target** (`targetStatus` in metrics.ts) is one rule everywhere: ≥ 100 % ahead, ≥ 97 % on track, ≥ 90 %
+behind, below that well behind. The plan is 88 % of the kiln's design rate (1,100 good tiles/h).
+
+## Bottleneck
+
+`bottleneck(s)` traces the constraint from the kiln (the designed constraint) over the last 2 h: if the kiln
+was starved for more than 5 % of the window, walk upstream past every stage that was itself starved — the
+first stage that was not is what the line is waiting for; if the kiln was blocked, walk downstream the same
+way; otherwise the kiln is the constraint. Upstream stages carry an 8–15 % capacity surplus and a 700-tile
+kiln infeed buffer, so at baseline the kiln is the constraint ~85 % of the time and short stops elsewhere
+show up as brief, explainable shifts.
+
+## Intelligence layer (rule-based)
+
+- **Baseline twin**: the store keeps a second `SimState` built from the same seed without scenarios and
+  advances it in lockstep. Because the engine is deterministic, `impactVsBaseline` is exactly "what would
+  have happened" — output, OEE, downtime, reject rate, energy cost per good m².
+- **Machine health** (`src/sim/health.ts`): degradation episodes drive simulated signals; the product only
+  "knows" what the signals show — `assess()` compares observed vibration with the value expected for the
+  current load, extrapolates the 3-h trend to the alarm/trip limits (ISO 10816-style zones) and checks a
+  load-corrected temperature. No trained model and no physical sensor.
+- **Energy** (`src/sim/energy.ts`): each consumer's expected electricity/gas follows its load; actual = expected
+  × scenario anomaly × small noise. Tariffs and emission factors are editable assumptions.
+- **Insights** (`src/intel/insights.ts`): deterministic rules over the state (stoppages, health, quality,
+  energy, buffer time-to-empty, bottleneck, target gap, logistics, shift comparison), each with evidence,
+  impact, recommendation and links into the twin / workspaces.
+- **Copilot** (`src/intel/copilot.ts`): keyword intent matching → an answer composed from the same metrics and
+  insights, with facts, links and follow-ups. No language model is connected; the UI says so.
+- **Vision station**: inspection records carry an illustrative defect box and confidence; frames are drawn
+  procedurally (SVG) from the record — no images, no vision model.
 
 See `INTEGRATION.md` for the path to real data.

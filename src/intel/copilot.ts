@@ -12,6 +12,7 @@ import { HEALTH_BY_ID, assess, formatH } from '../sim/health';
 import {
   bottleneck,
   HELD_UP_SHARE,
+  targetStatus,
   defectShift,
   downtimePareto,
   energyIn,
@@ -129,14 +130,15 @@ export function ask(s: SimState, question: string, tariffs: Tariffs = DEFAULT_TA
       const pareto = downtimePareto(s, p).slice(0, 3);
       const bn = bottleneck(s);
       const losses = lossBreakdown(s, p.from, p.to);
-      const behind = lm.attainment != null && lm.attainment < 0.98;
+      const status = targetStatus(lm.attainment);
+      const behind = status === 'behind' || status === 'well-behind';
       return {
         ...base,
         intent,
         text: [
           behind
             ? `Output for ${inPeriod(p.label)} is ${m2(lm.output)} against a target of ${m2(lm.target)} — ${pct(lm.attainment, 0)} of target, ${m2(lm.target - lm.output)} behind.`
-            : `Output for ${inPeriod(p.label)} is on target: ${m2(lm.output)} (${pct(lm.attainment, 0)} of ${m2(lm.target)}).`,
+            : `Output for ${inPeriod(p.label)} is ${status === 'ahead' ? 'ahead of target' : 'on track'}: ${m2(lm.output)} (${pct(lm.attainment, 0)} of ${m2(lm.target)})${lm.output < lm.target ? ` — ${m2(lm.target - lm.output)} short, within normal variation` : ''}.`,
           `Line OEE is ${pct(lm.oee.oee.value)} (target ${pct(TARGET.oeeTarget, 0)}). The biggest loss is ${losses[0].label.toLowerCase()} (${pct(losses[0].share, 0)} of lost constraint time), followed by ${losses[1].label.toLowerCase()}.`,
           pareto.length
             ? `The largest stoppage reasons were ${pareto.map((r) => `${r.label.toLowerCase()} (${Math.round(r.minutes)} min)`).join(', ')}. The line is currently constrained by ${bn.current.name.toLowerCase()}${bn.shifted ? ', not the kiln as designed' : ''}.`

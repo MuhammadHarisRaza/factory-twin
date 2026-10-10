@@ -148,6 +148,23 @@ export type LineMetrics = {
   activeStops: DowntimeEvent[];
 };
 
+/** One rule for "are we on target?" — used by every workspace, the insights and the copilot. */
+export type TargetStatus = 'none' | 'ahead' | 'on-track' | 'behind' | 'well-behind';
+export const TARGET_STATUS_LABEL: Record<TargetStatus, string> = {
+  none: 'No production time yet',
+  ahead: 'Ahead of target',
+  'on-track': 'On track',
+  behind: 'Behind target',
+  'well-behind': 'Well behind target',
+};
+/** ≥ 100 % ahead · ≥ 97 % on track (within normal hour-to-hour variation) · ≥ 90 % behind · below that well behind. */
+export function targetStatus(attainment: number | null): TargetStatus {
+  if (attainment == null) return 'none';
+  if (attainment >= 1) return 'ahead';
+  if (attainment >= 0.97) return 'on-track';
+  return attainment >= 0.9 ? 'behind' : 'well-behind';
+}
+
 export function lineMetrics(s: SimState, p: Period): LineMetrics {
   const constraint = machineMetrics(s, LINE.designConstraint === 'KILN' ? 'H-KILN' : 'H-KILN', p);
   const q = qualityIn(s, p);
@@ -537,8 +554,16 @@ export type Impact = {
   deltaDowntimeMin: number;
   rejects: number;
   deltaRejects: number;
+  /** Rejected ÷ inspected — comparable even when a scenario changes how much was produced. */
+  rejectRate: number | null;
+  baselineRejectRate: number | null;
+  deltaRejectRatePts: number | null;
   energyCost: number;
   deltaEnergyCost: number;
+  /** Energy cost per good m² — a stopped line costs less in total but more per m². */
+  costPerGoodM2: number | null;
+  baselineCostPerGoodM2: number | null;
+  deltaCostPerGoodM2: number | null;
 };
 
 /**
@@ -552,6 +577,10 @@ export function impactVsBaseline(s: SimState, base: SimState, p: Period, tariffs
   const eb = energyIn(base, p, tariffs);
   const oee = a.oee.oee.status === 'ok' ? a.oee.oee.value : null;
   const baselineOee = b.oee.oee.status === 'ok' ? b.oee.oee.value : null;
+  const rejectRate = a.inspected > 0 ? a.rejected / a.inspected : null;
+  const baselineRejectRate = b.inspected > 0 ? b.rejected / b.inspected : null;
+  const costPerGoodM2 = a.outputM2 > 1 ? ea.cost / a.outputM2 : null;
+  const baselineCostPerGoodM2 = b.outputM2 > 1 ? eb.cost / b.outputM2 : null;
   return {
     period: p,
     outputM2: a.outputM2,
@@ -564,8 +593,14 @@ export function impactVsBaseline(s: SimState, base: SimState, p: Period, tariffs
     deltaDowntimeMin: a.downtimeMin - b.downtimeMin,
     rejects: a.rejected,
     deltaRejects: a.rejected - b.rejected,
+    rejectRate,
+    baselineRejectRate,
+    deltaRejectRatePts: rejectRate != null && baselineRejectRate != null ? (rejectRate - baselineRejectRate) * 100 : null,
     energyCost: ea.cost,
     deltaEnergyCost: ea.cost - eb.cost,
+    costPerGoodM2,
+    baselineCostPerGoodM2,
+    deltaCostPerGoodM2: costPerGoodM2 != null && baselineCostPerGoodM2 != null ? costPerGoodM2 - baselineCostPerGoodM2 : null,
   };
 }
 

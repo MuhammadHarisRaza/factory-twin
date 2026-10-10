@@ -1363,4 +1363,22 @@
   .tw-tl-ctl .tw-tl-clock {
     display: none;
   }
+  /* Small screens keep the factory visible: the header carries the clock, the live lists and the
+     timeline step aside, and the inspector becomes a bottom sheet only while something is selected. */
+  .tw-layout .tw-live,
+  .tw-layout .tw-tl {
+    display: none;
+  }
+  .tw-right:empty {
+    display: none;
+  }
+}
+/* Short viewports (e.g. a docked browser pane): drop the timeline before the scene gets squeezed. */
+@media (max-height: 600px) {
+  .tw-layout .tw-tl {
+    display: none;
+  }
+  .tw-layout .hint {
+    display: none;
+  }
 }

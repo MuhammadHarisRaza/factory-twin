@@ -3,6 +3,7 @@ import type { ReactNode } from 'react';
 import { CircleCheck, Info, OctagonX, TriangleAlert, Truck } from 'lucide-react';
 import { openEquipment, useApp } from '../../app/store';
 import { TARGET } from '../../model/plant';
+import { TARGET_STATUS_LABEL, targetStatus } from '../../sim/metrics';
 import { shiftAt } from '../../sim/time';
 import { useSimValue } from '../../sim/store';
 import { fmtInt, fmtM2, fmtPct, pct } from '../../ui/kit/format';
@@ -25,14 +26,12 @@ export function Strip() {
   const d = useSimValue((s) => strip(s, tariffs), [tariffs]);
   const { lm, alerts, attention, quality: q, bn, energy, fleet } = d;
   const att = lm.attainment;
-  const verdict =
-    att == null
-      ? { tone: 'neutral' as const, icon: Info, label: 'No production time yet' }
-      : att >= 0.97
-        ? { tone: 'good' as const, icon: CircleCheck, label: att >= 1 ? 'Ahead of target' : 'On track' }
-        : att >= 0.9
-          ? { tone: 'warning' as const, icon: TriangleAlert, label: 'Behind target' }
-          : { tone: 'critical' as const, icon: OctagonX, label: 'Well behind target' };
+  const status = targetStatus(att);
+  const verdict = {
+    tone: status === 'none' ? ('neutral' as const) : status === 'ahead' || status === 'on-track' ? ('good' as const) : status === 'behind' ? ('warning' as const) : ('critical' as const),
+    icon: status === 'none' ? Info : status === 'ahead' || status === 'on-track' ? CircleCheck : status === 'behind' ? TriangleAlert : OctagonX,
+    label: TARGET_STATUS_LABEL[status],
+  };
   const highAlerts = alerts.critical + alerts.serious + alerts.warning;
 
   return (

@@ -14,6 +14,8 @@ import { HEALTH_ASSETS, assess, formatH, type HealthAssessment } from '../sim/he
 import {
   bottleneck,
   HELD_UP_SHARE,
+  TARGET_STATUS_LABEL,
+  targetStatus,
   defectShift,
   downtimePareto,
   energyIn,
@@ -101,14 +103,15 @@ function targetRule(s: SimState, p: Period): Insight[] {
   const gap = lm.target - lm.output;
   const pareto = downtimePareto(s, p).slice(0, 3);
   const bn = bottleneck(s);
-  if (lm.attainment >= 0.98) {
+  const status = targetStatus(lm.attainment);
+  if (status === 'ahead' || status === 'on-track') {
     return [
       {
         id: 'target-ok',
         kind: 'target',
         severity: 'positive',
-        title: `Output on target · ${pct(lm.attainment, 0)}`,
-        summary: `${m2(lm.output)} m² first-quality output against a ${m2(lm.target)} m² target for ${p.label.toLowerCase()}.`,
+        title: `${TARGET_STATUS_LABEL[status]} · ${pct(lm.attainment, 0)}`,
+        summary: `${m2(lm.output)} m² first-quality output against a ${m2(lm.target)} m² target for ${p.label.charAt(0).toLowerCase() + p.label.slice(1)}${gap > 0 ? ` — ${m2(gap)} m² short, within normal variation` : ''}.`,
         evidence: [`Line OEE ${lm.oee.oee.status === 'ok' ? pct(lm.oee.oee.value!) : '—'} (target ${pct(TARGET.oeeTarget, 0)}).`],
         links: [{ kind: 'workspace', id: 'production', label: 'Production & OEE' }],
         weight: RANK.positive,
@@ -125,14 +128,14 @@ function targetRule(s: SimState, p: Period): Insight[] {
     {
       id: 'target-gap',
       kind: 'target',
-      severity: lm.attainment < 0.9 ? 'serious' : 'warning',
-      title: `Behind target by ${m2(gap)} m²`,
+      severity: status === 'well-behind' ? 'serious' : 'warning',
+      title: `${TARGET_STATUS_LABEL[status]} by ${m2(gap)} m²`,
       summary: `${p.label} output is ${pct(lm.attainment, 0)} of target; the gap is driven by ${pareto[0] ? `${pareto[0].label.toLowerCase()} and ` : ''}time lost at the ${bn.current.name.toLowerCase()} stage.`,
       evidence: ev,
       impact: `${m2(gap)} m² behind plan`,
       recommendation: `Protect the constraint (${bn.current.name}): keep its input buffer full and prioritise its repairs; then address ${pareto[0]?.label.toLowerCase() ?? 'the top downtime reason'}.`,
       links: [{ kind: 'workspace', id: 'production', label: 'Production & OEE' }],
-      weight: RANK[lm.attainment < 0.9 ? 'serious' : 'warning'] + gap / 50,
+      weight: RANK[status === 'well-behind' ? 'serious' : 'warning'] + gap / 50,
     },
   ];
 }
@@ -162,7 +165,7 @@ function stoppageRule(s: SimState): Insight[] {
           d.constraintImpactMin > 0 ? `The line constraint has been held up for ${Math.round(d.constraintImpactMin)} min while it is down.` : 'The line constraint has not been held up yet.',
           ...(cover != null && buf ? [`Downstream buffer (${buf.name}) covers ≈ ${Math.round(cover)} min of downstream demand.`] : []),
         ],
-        impact: `${m2(d.lostTiles)} m² lost so far`,
+        impact: `${m2(d.lostTiles)} m² of capacity lost so far (at design rate)`,
         recommendation: REASON_ACTIONS[d.reasonCode] ?? 'Dispatch maintenance to diagnose the stoppage.',
         equipmentId: d.equipmentId,
         links: [

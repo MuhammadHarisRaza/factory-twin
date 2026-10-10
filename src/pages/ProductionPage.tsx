@@ -7,6 +7,8 @@ import type { DowntimeCategory, DowntimeEvent, StageId } from '../model/types';
 import {
   bottleneck,
   HELD_UP_SHARE,
+  TARGET_STATUS_LABEL,
+  targetStatus,
   clippedDuration,
   energyIn,
   lineLossTree,
@@ -114,14 +116,13 @@ function Summary({ periodKey, constraint, shifted }: { periodKey: PeriodKey; con
   const gap = lm.targetM2 - lm.outputM2;
   // Meter scale: target sits at 80 % of the track so over-delivery stays visible.
   const scale = Math.max(1.25, (att ?? 0) * 1.05);
+  const status = targetStatus(att);
   const verdict =
-    att == null
+    status === 'none'
       ? { tone: 'neutral', icon: Info, text: 'No production time in this period yet' }
-      : att >= 1
-        ? { tone: 'good', icon: CircleCheck, text: `Ahead of target · ${pct(att)} of target` }
-        : att >= 0.97
-          ? { tone: 'good', icon: CircleCheck, text: `On track · ${pct(att)} of target` }
-          : { tone: att >= 0.9 ? 'warning' : 'critical', icon: att >= 0.9 ? TriangleAlert : OctagonX, text: `Behind target by ${fmtInt(gap)} m²` };
+      : status === 'ahead' || status === 'on-track'
+        ? { tone: 'good', icon: CircleCheck, text: `${TARGET_STATUS_LABEL[status]} · ${pct(att!)} of target` }
+        : { tone: status === 'behind' ? 'warning' : 'critical', icon: status === 'behind' ? TriangleAlert : OctagonX, text: `${TARGET_STATUS_LABEL[status]} by ${fmtInt(gap)} m²` };
   const VIcon = verdict.icon;
   const oee = lm.oee.oee;
   const oeeDelta = oee.status === 'ok' ? Math.round((oee.value! - TARGET.oeeTarget) * 1000) / 10 : null;

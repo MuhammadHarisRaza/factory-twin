@@ -1,10 +1,13 @@
 import { Component, useEffect, useRef, useState, type ReactNode } from 'react';
 import { LoaderCircle, Minimize2, MousePointerClick, TriangleAlert } from 'lucide-react';
 import { useTwin } from '../store';
+import { useApp } from '../app/store';
 
 /** Full-screen loader that fades out once the scene has rendered a few frames. */
 export function Loader() {
   const ready = useTwin((s) => s.ready);
+  // The 3D canvas only renders frames while the Factory Twin is open, so other workspaces never wait for it.
+  const twin = useApp((s) => s.workspace === 'twin');
   const [gone, setGone] = useState(false);
 
   useEffect(() => {
@@ -13,7 +16,7 @@ export function Loader() {
     return () => clearTimeout(t);
   }, [ready]);
 
-  if (gone) return null;
+  if (gone || !twin) return null;
   return (
     <div className={`loader ${ready ? 'fade' : ''}`} role="status">
       <LoaderCircle className="spin" size={28} />

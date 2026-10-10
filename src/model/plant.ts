@@ -83,7 +83,7 @@ export const OUTPUT_BUFFER: Record<StageId, string | null> = Object.fromEntries(
   STAGES.map((s, i) => [s.id, STAGES[i + 1]?.inputBuffer ?? null]),
 ) as Record<StageId, string | null>;
 
-export const TARGET: ProductionTarget = { lineId: 'LINE-1', goodPerHour: Math.round(1250 * 0.85), oeeTarget: 0.85 };
+export const TARGET: ProductionTarget = { lineId: 'LINE-1', goodPerHour: Math.round(1250 * 0.88), oeeTarget: 0.88 };
 
 /** Display names of scenario kinds (shared by every workspace). */
 export const SCENARIO_KIND_LABELS: Record<ScenarioKind, string> = {

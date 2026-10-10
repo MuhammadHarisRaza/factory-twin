@@ -100,7 +100,13 @@ function MachineLive({ id }: { id: string }) {
               <MetricText m={data.mm.oee.performance} digits={0} />
             </b>
           </div>
-          <div>
+          <div title="Tiles from this machine not rejected for defects that originate here">
+            <span>Qual.</span>
+            <b>
+              <MetricText m={data.mm.oee.quality} digits={0} />
+            </b>
+          </div>
+          <div title="Machine OEE = availability × performance × quality (this machine's own losses)">
             <span>OEE</span>
             <b>
               <MetricText m={data.mm.oee.oee} digits={0} />

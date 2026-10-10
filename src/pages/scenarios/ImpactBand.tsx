@@ -7,8 +7,6 @@ import { fmt1, fmtInt, fmtPct } from '../../ui/kit/format';
 import { StatusBadge } from '../../ui/kit/Status';
 import { impactWindow, judge, scenarioStatus, signed, when, type Direction, type WindowMode } from './catalogue';
 
-/** Product convention for illustrative costs: "USD 1,234". */
-const fmtMoney = (v: number, currency: string) => `${currency} ${fmtInt(v)}`;
 
 const VERDICT: Record<Direction, { label: string; tone: 'good' | 'warning' | 'neutral' }> = {
   better: { label: 'Better than baseline', tone: 'good' },
@@ -53,7 +51,6 @@ export function ImpactBand({ mode }: { mode: WindowMode }) {
     [mode, baseline, tariffs],
   );
   const { impact: im, w } = d;
-  const money = (v: number) => fmtMoney(v, tariffs.currency);
 
   const headline = !im ? (
     <span className="scnp-preparing">
@@ -106,25 +103,25 @@ export function ImpactBand({ mode }: { mode: WindowMode }) {
           title: 'Line downtime excluding planned stops, starved and blocked time',
         },
         {
-          label: 'Rejects',
-          value: signed(im.deltaRejects, fmtInt),
-          unit: 'tiles',
-          sub: `With scenarios ${fmtInt(im.rejects)} · baseline ${fmtInt(im.rejects - im.deltaRejects)}`,
-          delta: im.deltaRejects,
-          dir: judge(im.deltaRejects, 0.5, false),
-          title: 'Tiles rejected at the gauge and optical inspection',
+          label: 'Reject rate',
+          value: signed(im.deltaRejectRatePts, (v) => v.toFixed(2)),
+          unit: 'pts',
+          sub: `With scenarios ${fmtPct(im.rejectRate, 2)} (${fmtInt(im.rejects)} tiles) · baseline ${fmtPct(im.baselineRejectRate, 2)} (${fmtInt(im.rejects - im.deltaRejects)})`,
+          delta: im.deltaRejectRatePts,
+          dir: judge(im.deltaRejectRatePts, 0.05, false),
+          title: 'Share of inspected tiles rejected at the gauge and optical inspection — a rate, so a stopped line does not look better',
         },
         {
-          label: 'Energy cost',
-          value: signed(im.deltaEnergyCost, fmtInt),
+          label: 'Energy cost per good m²',
+          value: signed(im.deltaCostPerGoodM2, (v) => v.toFixed(2)),
           unit: tariffs.currency,
-          sub: `With scenarios ${money(im.energyCost)} · baseline ${money(im.energyCost - im.deltaEnergyCost)}`,
-          delta: im.deltaEnergyCost,
-          dir: judge(im.deltaEnergyCost, 0.5, false),
-          title: 'Illustrative energy model; tariffs are assumptions (editable in Energy Intelligence)',
+          sub: `With scenarios ${im.costPerGoodM2 != null ? `${tariffs.currency} ${im.costPerGoodM2.toFixed(2)}` : '—'} · baseline ${im.baselineCostPerGoodM2 != null ? `${tariffs.currency} ${im.baselineCostPerGoodM2.toFixed(2)}` : '—'} · total ${signed(im.deltaEnergyCost, fmtInt)} ${tariffs.currency}`,
+          delta: im.deltaCostPerGoodM2,
+          dir: judge(im.deltaCostPerGoodM2, 0.005, false),
+          title: 'Illustrative energy model; tariffs are assumptions (editable in Energy Intelligence). Per good m², because a stopped kiln still burns gas while producing nothing.',
         },
       ]
-    : ['Good output', 'Line OEE', 'Unplanned downtime', 'Rejects', 'Energy cost'].map((label) => ({
+    : ['Good output', 'Line OEE', 'Unplanned downtime', 'Reject rate', 'Energy cost per good m²'].map((label) => ({
         label,
         value: '—',
         unit: '',

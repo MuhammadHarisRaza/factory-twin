@@ -1,4 +1,4 @@
-import { Suspense, lazy } from 'react';
+import { Suspense, lazy, type ComponentType } from 'react';
 import { Expand, Presentation, RotateCcw } from 'lucide-react';
 import { useTwin } from './store';
 import { PERIOD_WORKSPACES, WORKSPACES, useApp } from './app/store';
@@ -10,20 +10,11 @@ import { useKeyboardShortcuts } from './useKeyboardShortcuts';
 import { Loader, PresentationExit, SceneErrorBoundary } from './ui/Overlays';
 import { TwinOverlays } from './ui/twin/TwinOverlays';
 import { TwinSearch } from './ui/twin/Search';
-import { ProductionPage } from './pages/ProductionPage';
-import { QualityPage } from './pages/QualityPage';
-import { MachineHealthPage } from './pages/MachineHealthPage';
-import { EnergyPage } from './pages/EnergyPage';
-import { CommandCenterPage } from './pages/CommandCenterPage';
-import { ScenarioSimulatorPage } from './pages/ScenarioSimulatorPage';
-import { FleetPage } from './pages/FleetPage';
-import { AssetsPage } from './pages/AssetsPage';
-import { MonitoringPage } from './pages/MonitoringPage';
-import { EventsPage } from './pages/EventsPage';
-import { CopilotPage } from './pages/CopilotPage';
-
 // The 3D scene (three.js + all geometry) loads as its own chunk so the shell paints first.
 const Scene = lazy(() => import('./scene/Scene'));
+
+// Workspaces load on first visit (each in its own chunk); the Factory Twin is always mounted.
+const page = <K extends string>(load: () => Promise<Record<K, ComponentType>>, name: K) => lazy(() => load().then((m) => ({ default: m[name] })));
 
 /** Header actions of the Factory Twin: global search, fit, overview and presentation mode. */
 function TwinActions() {
@@ -69,17 +60,17 @@ function TwinWorkspace({ active }: { active: boolean }) {
 }
 
 const PAGES = {
-  monitoring: MonitoringPage,
-  events: EventsPage,
-  copilot: CopilotPage,
-  production: ProductionPage,
-  quality: QualityPage,
-  health: MachineHealthPage,
-  energy: EnergyPage,
-  command: CommandCenterPage,
-  scenarios: ScenarioSimulatorPage,
-  fleet: FleetPage,
-  assets: AssetsPage,
+  monitoring: page(() => import('./pages/MonitoringPage'), 'MonitoringPage'),
+  events: page(() => import('./pages/EventsPage'), 'EventsPage'),
+  copilot: page(() => import('./pages/CopilotPage'), 'CopilotPage'),
+  production: page(() => import('./pages/ProductionPage'), 'ProductionPage'),
+  quality: page(() => import('./pages/QualityPage'), 'QualityPage'),
+  health: page(() => import('./pages/MachineHealthPage'), 'MachineHealthPage'),
+  energy: page(() => import('./pages/EnergyPage'), 'EnergyPage'),
+  command: page(() => import('./pages/CommandCenterPage'), 'CommandCenterPage'),
+  scenarios: page(() => import('./pages/ScenarioSimulatorPage'), 'ScenarioSimulatorPage'),
+  fleet: page(() => import('./pages/FleetPage'), 'FleetPage'),
+  assets: page(() => import('./pages/AssetsPage'), 'AssetsPage'),
 } as const;
 
 export default function App() {
@@ -98,7 +89,11 @@ export default function App() {
         <Header title={title} period={PERIOD_WORKSPACES.includes(workspace)} actions={twin ? <TwinActions /> : undefined} />
         <main className={`content ${twin ? 'immersive' : ''}`}>
           <TwinWorkspace active={twin} />
-          {Page && <Page />}
+          {Page && (
+            <Suspense fallback={<div className="page-loading" role="status">Loading workspace…</div>}>
+              <Page />
+            </Suspense>
+          )}
         </main>
       </div>
       <ScenarioDrawer />

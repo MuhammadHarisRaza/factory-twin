@@ -1757,3 +1757,10 @@ kbd {
     animation: none !important;
   }
 }
+
+/* Placeholder while a workspace chunk loads (first visit only). */
+.page-loading {
+  padding: var(--s-6, 24px);
+  color: var(--text-3);
+  font-size: var(--fs-13, 13px);
+}

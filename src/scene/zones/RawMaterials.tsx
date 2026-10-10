@@ -1,10 +1,8 @@
 import { useMemo } from 'react';
 import { ConeGeometry, type Material } from 'three';
-import type { Vec2 } from '../../data/types';
 import { MAT } from '../materials';
 import { BlobShadow, Box, ControlCabinet, Hopper, Instances, Silo, type Instance } from '../primitives';
 import { Selectable } from '../Selectable';
-import { PathMover, Truck, WheelLoader } from '../vehicles';
 
 /** X centres of the six covered storage bays. */
 const BAY_X = [-115, -109.6, -104.2, -98.8, -93.4, -88];
@@ -13,12 +11,6 @@ const BAY_MATERIALS: Material[] = [MAT.clay, MAT.redClay, MAT.feldspar, MAT.sand
 const BAY_WIDTH = 5.4;
 
 /** Wheel-loader shuttle loop between the bays and the box feeders. */
-const LOADER_PATH: Vec2[] = [
-  [-108, -31],
-  [-94, -31],
-  [-96, -16],
-  [-106, -16],
-];
 
 /** Stockpile of bulk material: a cone with a slightly irregular base. */
 function Stockpile({ x, m, seed }: { x: number; m: Material; seed: number }) {
@@ -60,7 +52,6 @@ export function RawMaterials() {
         <Box p={[-129, 0.4, -26.1]} s={[19, 0.5, 0.2]} m={MAT.safety} />
         <Box p={[-129, 1.4, -32.5]} s={[3.2, 2.8, 2.6]} m={MAT.machine} />
         <Box p={[-129, 1.8, -31.15]} s={[2.4, 1, 0.06]} m={MAT.glass} cast={false} />
-        <Truck p={[-130, 0, -28]} kind="tipper" />
       </Selectable>
 
       <Selectable id="B-BAYS">
@@ -71,10 +62,8 @@ export function RawMaterials() {
       </Selectable>
 
       <Selectable id="B-LOAD">
-        <PathMover pts={LOADER_PATH} speed={2.2}>
-          <WheelLoader p={[0, 0, 0]} />
-        </PathMover>
-        {/* Static invisible volume so the moving loader has stable selection bounds. */}
+        {/* The wheel loader itself is a simulated vehicle (src/scene/SimVehicles.tsx); this
+            invisible volume keeps a stable selection box over its working area. */}
         <mesh visible={false} position={[-101, 2, -23.5]} scale={[18, 4, 18]}>
           <boxGeometry />
         </mesh>

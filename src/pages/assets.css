@@ -1,0 +1,100 @@
+/* Assets & Data — page-specific layout only (tokens from styles.css). */
+
+.assets-page .toolbar-row .spacer {
+  flex: 1;
+}
+.assets-page .a-note {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  font-size: var(--fs-12);
+  color: var(--text-3);
+}
+.assets-page .a-note svg {
+  color: var(--warning);
+}
+.assets-page .a-filters {
+  display: flex;
+  align-items: center;
+  gap: var(--s-2);
+  flex-wrap: wrap;
+  justify-content: flex-end;
+}
+.assets-page .a-filters .select,
+.assets-page .a-filters .input {
+  height: 26px;
+}
+.assets-page .a-filters .select {
+  max-width: 240px;
+}
+.assets-page .a-search {
+  position: relative;
+  display: inline-flex;
+  align-items: center;
+}
+.assets-page .a-search svg {
+  position: absolute;
+  left: 8px;
+  color: var(--text-3);
+  pointer-events: none;
+}
+.assets-page .a-search .input {
+  padding-left: 26px;
+  width: 220px;
+}
+.assets-page .a-zone {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+}
+.assets-page .a-map {
+  display: inline-flex;
+  align-items: center;
+  gap: 10px;
+}
+.assets-page .a-wrap {
+  white-space: normal;
+  display: block;
+  line-height: 1.4;
+  padding: 6px 0;
+  min-width: 260px;
+}
+.assets-page .table td:has(.a-wrap) {
+  white-space: normal;
+  max-width: 420px;
+  height: auto;
+}
+.assets-page .a-text {
+  margin: 0 0 var(--s-3);
+  font-size: var(--fs-12);
+  line-height: 1.5;
+  color: var(--text-2);
+}
+.assets-page .a-list {
+  margin: 0;
+  padding-left: 16px;
+  display: flex;
+  flex-direction: column;
+  gap: var(--s-3);
+  font-size: var(--fs-12);
+  line-height: 1.5;
+  color: var(--text-2);
+}
+.assets-page .a-list b {
+  color: var(--text-1);
+  font-weight: var(--fw-medium);
+}
+.assets-page .a-reset {
+  margin-top: var(--s-4);
+  padding-top: var(--s-4);
+  border-top: 1px solid var(--line);
+}
+.assets-page .a-reset p {
+  margin: 0 0 var(--s-2);
+  font-size: var(--fs-12);
+  color: var(--text-2);
+}
+.assets-page .a-reset-row {
+  display: flex;
+  gap: var(--s-2);
+}

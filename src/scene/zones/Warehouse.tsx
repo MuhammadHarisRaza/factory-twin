@@ -1,9 +1,7 @@
 import { useMemo } from 'react';
-import type { Vec2 } from '../../data/types';
 import { MAT, hash01 } from '../materials';
-import { BlobShadow, ControlCabinet, Instances, Railing, type Instance } from '../primitives';
+import { ControlCabinet, Instances, Railing, type Instance } from '../primitives';
 import { Selectable } from '../Selectable';
-import { Forklift, PathMover, Truck } from '../vehicles';
 
 /** z centre of each back-to-back double rack row (five aisles between the six rows). */
 const RACK_ROWS_Z = [9.6, 16.1, 22.6, 29.1, 35.6, 42.1];
@@ -312,44 +310,6 @@ function buildDocks() {
   return { concrete, steelPlate, walls, roofs, rubber, yellow, bollards, boxes, white };
 }
 
-const FORKLIFT_ROUTES: { pts: Vec2[]; speed: number; offset?: number; load?: boolean }[] = [
-  // Cross-aisle between the rack ends and the put-away station.
-  {
-    pts: [
-      [-92, 8],
-      [-92, 44],
-    ],
-    speed: 2.4,
-  },
-  // Aisle 2.
-  {
-    pts: [
-      [-96, 19.35],
-      [-126, 19.35],
-    ],
-    speed: 1.6,
-    offset: 10,
-    load: false,
-  },
-  // Front cross-aisle between racks and staging lanes.
-  {
-    pts: [
-      [-90, 47],
-      [-122, 47],
-    ],
-    speed: 2,
-    offset: 5,
-  },
-  // Loading lane at the -112 dock.
-  {
-    pts: [
-      [-111.1, 50.2],
-      [-111.1, 57.6],
-    ],
-    speed: 1.1,
-    offset: 2,
-  },
-];
 
 /** Finished-goods warehouse: selective racking, forklifts, put-away, dispatch staging and loading docks. */
 export function Warehouse() {
@@ -394,12 +354,8 @@ export function Warehouse() {
         <ControlCabinet p={[-88, 0, 22.4]} w={0.8} h={1.6} d={0.5} rot={Math.PI} />
       </Selectable>
       <Selectable id="K-FLT">
-        {FORKLIFT_ROUTES.map((route, i) => (
-          <PathMover key={i} pts={route.pts} speed={route.speed} offset={route.offset}>
-            <Forklift p={[0, 0, 0]} load={route.load} />
-          </PathMover>
-        ))}
-        {/* Invisible volume so the moving fleet has a stable selection box. */}
+        {/* Forklifts are simulated vehicles (src/scene/SimVehicles.tsx); this invisible
+            volume gives the fleet asset a stable selection box over the warehouse floor. */}
         <mesh visible={false} position={[-108, 1.5, 28]} scale={[38, 3, 42]}>
           <boxGeometry />
         </mesh>
@@ -420,11 +376,6 @@ export function Warehouse() {
         <Instances items={docks.bollards} m={MAT.safety} cyl cast={false} />
         <Instances items={docks.boxes} m={MAT.machine} cast={false} />
         <Instances items={docks.white} m={MAT.markingWhite} cast={false} />
-        <Truck p={[-112, 0, TRUCK_Z]} rot={-Math.PI / 2} kind="box" />
-        <Truck p={[-98, 0, TRUCK_Z]} rot={-Math.PI / 2} kind="box" cab={MAT.truckCabBlue} />
-        {[-112, -98].map((x) => (
-          <BlobShadow key={x} p={[x, TRUCK_Z + 0.5]} w={3.6} d={15.5} />
-        ))}
       </Selectable>
     </group>
   );

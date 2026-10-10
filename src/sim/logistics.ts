@@ -372,10 +372,16 @@ function handleEvent(s: SimState, ev: TimelineEvent) {
       break;
     }
     case 'weighed':
+      // Driving from the weighbridge into the shed; unloading starts on arrival at the bay.
+      v.phase = 'to-dock';
+      break;
+    case 'unload-start':
       v.phase = 'unloading';
+      v.visit!.dockStart = t;
       break;
     case 'unloaded':
       v.phase = 'departing';
+      v.visit!.dockEnd = t;
       break;
     case 'gate-out': {
       v.visit!.gateOut = t;
@@ -429,11 +435,10 @@ function toWeighbridge(st: LogisticsState, v: TruckRuntime, t: number) {
   const unloadMin = Math.round(lerpRange(st.rng.inbound(), 12, 20));
   const unload = stop(inShed.end, inShed.end + unloadMin, [-112, -28], 'GF-SHED', `Unloading ${v.visit!.material}`, 0);
   push(v, unload);
-  v.visit!.dockStart = unload.start;
-  v.visit!.dockEnd = unload.end;
   const out = drive(unload.end, [[-112, -28], [-112, -14], [-125, -10], [-142, -10], [-142, 96], [78, 96], GATE_STOP_OUT], SPEED.road, 'GF-SITE', 'Departing to gate');
   push(v, out);
   schedule(st, { time: weigh.end, kind: 'weighed', vehicleId: v.id });
+  schedule(st, { time: unload.start, kind: 'unload-start', vehicleId: v.id });
   schedule(st, { time: unload.end, kind: 'unloaded', vehicleId: v.id });
   exitViaGate(st, v, out.end);
 }

@@ -322,9 +322,10 @@ export const FLOW_STAGES: FlowStage[] = [
 ];
 
 export const FLOW_COLORS: Record<FlowPath['kind'], string> = {
-  raw: '#e0913f',
-  intermediate: '#35c0dc',
-  finished: '#4fd18b',
+  // Validated categorical slots (dataviz palette, dark surface).
+  raw: '#d95926',
+  intermediate: '#3987e5',
+  finished: '#199e70',
 };
 
 export const FLOW_LABELS: Record<FlowPath['kind'], string> = {

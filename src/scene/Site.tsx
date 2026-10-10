@@ -12,7 +12,7 @@ import type { Vec2, Vec3 } from '../data/types';
 import { MAT, hash01 } from './materials';
 import { Box, Instances, type Instance } from './primitives';
 import { Selectable } from './Selectable';
-import { Car, PathMover, Truck } from './vehicles';
+import { Car } from './vehicles';
 import { Fence } from './zones/Utilities';
 
 /**
@@ -147,42 +147,19 @@ export function SiteDetails() {
       </Selectable>
 
       <Selectable id="A-HOLD" layer={null}>
-        {[57, 64, 71, 78].map((tz, i) => (
-          <Truck
-            key={tz}
-            p={[-40, 0, tz]}
-            kind={i % 2 ? 'box' : 'flat'}
-            cab={i % 2 ? MAT.truckCab : MAT.truckCabBlue}
-          />
+        {/* Waiting trucks are simulated vehicles (src/scene/SimVehicles.tsx). Bay lines match the
+            eight simulated holding slots; the volume keeps the area selectable when empty. */}
+        {[52.75, 57.25, 61.75, 66.25, 70.75, 75.25, 79.75, 84.25, 88.75].map((z) => (
+          <Box key={z} p={[-40, 0.06, z]} s={[17, 0.02, 0.14]} m={MAT.markingWhite} cast={false} />
         ))}
+        <mesh visible={false} position={[-40, 1.5, 70]} scale={[50, 3, 34]}>
+          <boxGeometry />
+        </mesh>
         {[-60, -20].map((lx) => (
           <Box key={lx} p={[lx, 0.06, 69]} s={[0.2, 0.02, 32]} m={MAT.markingWhite} cast={false} />
         ))}
       </Selectable>
 
-      <PathMover
-        pts={[
-          [-144, 98],
-          [118, 98],
-          [118, -70],
-          [-144, -70],
-        ]}
-        speed={6}
-      >
-        <Truck p={[0, 0, 0]} kind="box" />
-      </PathMover>
-      <PathMover
-        pts={[
-          [114, -66],
-          [-140, -66],
-          [-140, 94],
-          [114, 94],
-        ]}
-        speed={5}
-        offset={140}
-      >
-        <Truck p={[0, 0, 0]} kind="tipper" cab={MAT.truckCabBlue} />
-      </PathMover>
     </group>
   );
 }

@@ -3,6 +3,8 @@ import { Shape, ShapeGeometry } from 'three';
 import { LINK, SPRAY_TOWER } from '../data/layout';
 import type { Range, Vec3 } from '../data/types';
 import { useTwin } from '../store';
+import { DOCKS } from '../model/plant';
+import { useSimValue } from '../sim/store';
 import { BUILDING_FRAMES, type BuildingFrame, type WallMode } from './buildings/frames';
 import { MAT } from './materials';
 import { Box, Door, Instances, type Instance } from './primitives';
@@ -15,14 +17,6 @@ const DOORS: { p: Vec3; w: number; h: number; rot: number; open?: boolean }[] = 
   { p: [6, 0, -30], w: 5, h: 5, rot: 0 },
   { p: [76, 0, 10], w: 5, h: 5, rot: Math.PI / 2, open: true },
   { p: [-80, 0, -8], w: 4, h: 5, rot: Math.PI / 2, open: true },
-  // Warehouse loading docks
-  ...[-126, -119, -112, -105, -98, -91].map((x) => ({
-    p: [x, 0, 60] as Vec3,
-    w: 3.2,
-    h: 4.2,
-    rot: 0,
-    open: x === -112 || x === -98,
-  })),
   { p: [-80, 0, 19], w: 6, h: 5.5, rot: Math.PI / 2, open: true },
   { p: [79, 0, 10], w: 5, h: 5, rot: Math.PI / 2, open: true },
 ];
@@ -47,6 +41,19 @@ function wallTrim(
   for (let y = 3.6; y < h - 1; y += 2.4) out.push(along((from + to) / 2, y, to - from, 0.05, 0.05));
   if (full) out.push(along((from + to) / 2, h - 0.25, to - from + 0.3, 0.5, 0.16));
   return out;
+}
+
+/** Loading-dock doors: open while the simulation has a truck docked or reversing in. */
+function DockDoors() {
+  const open = useSimValue((s) => DOCKS.map((d) => Boolean(s.logistics.docks[d.id].vehicleId || s.logistics.docks[d.id].reservedBy)).join(','));
+  const flags = open.split(',');
+  return (
+    <>
+      {DOCKS.map((d, i) => (
+        <Door key={d.id} p={[d.x, 0, 60]} w={3.2} h={4.2} rot={0} open={flags[i] === 'true'} />
+      ))}
+    </>
+  );
 }
 
 /** Long wall running along x at `z`: plinth, cladding, window band (full) or capping (cut). */
@@ -256,6 +263,7 @@ export function Buildings() {
         {DOORS.map((d, i) => (
           <Door key={i} p={d.p} w={d.w} h={d.h} rot={d.rot} open={d.open} />
         ))}
+        <DockDoors />
         <SprayTowerCladding />
         <Box
           p={[(LINK.rect.x[0] + LINK.rect.x[1]) / 2, LINK.eave / 2, LINK.rect.z[0]]}

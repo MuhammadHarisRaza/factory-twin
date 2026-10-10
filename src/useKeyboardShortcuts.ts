@@ -1,5 +1,6 @@
 import { useEffect } from 'react';
 import { useTwin } from './store';
+import { useApp } from './app/store';
 import { VIEW_ORDER } from './data/layout';
 
 /**
@@ -10,7 +11,10 @@ import { VIEW_ORDER } from './data/layout';
 export function useKeyboardShortcuts() {
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
-      if (e.target instanceof HTMLInputElement || e.metaKey || e.ctrlKey || e.altKey) return;
+      if (e.target instanceof HTMLInputElement || e.target instanceof HTMLSelectElement || e.metaKey || e.ctrlKey || e.altKey) return;
+      // View and layer shortcuts only apply to the Factory Twin (Esc / H work everywhere).
+      const inTwin = useApp.getState().workspace === 'twin';
+      if (!inTwin && !['escape', 'h'].includes(e.key.toLowerCase())) return;
       const s = useTwin.getState();
       const key = e.key.toLowerCase();
 
@@ -18,6 +22,7 @@ export function useKeyboardShortcuts() {
         s.preset(VIEW_ORDER[key === '0' ? 9 : Number(key) - 1]);
       } else if (key === 'escape') {
         if (s.uiHidden) s.setUiHidden(false);
+        else if (s.vehicle) s.selectVehicle(null);
         else if (s.selected) s.select(null);
         else s.selectZone(null);
       } else if (key === 'm') s.toggle('flow');

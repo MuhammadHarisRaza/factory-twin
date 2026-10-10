@@ -1,0 +1,38 @@
+/* Quality Intelligence — page-specific layout only (tokens from styles.css). */
+
+.quality-page > .notice {
+  align-items: center;
+}
+.quality-page .q-filters {
+  display: flex;
+  align-items: center;
+  gap: var(--s-2);
+  flex-wrap: wrap;
+  justify-content: flex-end;
+}
+.quality-page .q-filters .select {
+  height: 26px;
+  max-width: 170px;
+}
+.quality-page .q-detail {
+  display: flex;
+  flex-direction: column;
+  gap: var(--s-4);
+}
+.quality-page .q-detail h3 {
+  margin: 0 0 var(--s-2);
+  font-size: var(--fs-11);
+  font-weight: var(--fw-medium);
+  color: var(--text-3);
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+}
+.quality-page .q-detail p {
+  margin: 0;
+  font-size: var(--fs-12);
+}
+.quality-page .q-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--s-2);
+}

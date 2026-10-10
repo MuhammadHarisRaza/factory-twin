@@ -1,0 +1,201 @@
+/* Production & OEE workspace — page-specific layout only; shared classes live in styles.css. */
+
+.prod-verdict {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  margin-top: 6px;
+  font-size: var(--fs-16);
+  font-weight: var(--fw-semibold);
+  line-height: 1.3;
+}
+.prod-verdict svg {
+  flex: none;
+}
+.prod-verdict.good svg {
+  color: var(--good);
+}
+.prod-verdict.warning svg {
+  color: var(--warning);
+}
+.prod-verdict.critical svg {
+  color: var(--critical);
+}
+.prod-verdict.neutral svg {
+  color: var(--neutral);
+}
+.prod .summary .kpi-value {
+  margin-top: 4px;
+}
+.prod-strong {
+  color: var(--text-1);
+  font-weight: var(--fw-medium);
+}
+.prod-spark {
+  margin-top: 6px;
+}
+
+.prod-actions {
+  display: flex;
+  align-items: center;
+  gap: var(--s-2);
+  flex-wrap: wrap;
+  justify-content: flex-end;
+}
+.prod-actions .select {
+  height: 28px;
+  max-width: 220px;
+}
+.prod-check {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  font-size: var(--fs-12);
+  color: var(--text-2);
+  white-space: nowrap;
+  cursor: pointer;
+}
+.prod-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 2px;
+  height: 26px;
+  padding: 0 2px 0 9px;
+  border: 1px solid var(--accent-line);
+  background: var(--accent-soft);
+  color: var(--accent-strong);
+  border-radius: var(--r-2);
+  font-size: var(--fs-12);
+  white-space: nowrap;
+}
+.prod-sel {
+  color: var(--accent-strong);
+  font-weight: var(--fw-medium);
+}
+
+.prod-foot {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+.prod-issues {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  color: var(--serious);
+}
+
+.prod-stage {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+}
+.tag.prod-constraint {
+  color: var(--text-1);
+  border-color: var(--line-3);
+  background: var(--bg-3);
+}
+.tag.prod-inprog {
+  margin-left: 8px;
+}
+.prod-under {
+  color: var(--serious);
+}
+
+.prod-buf {
+  display: inline-flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 8px;
+}
+.prod-buf-track {
+  display: inline-block;
+  position: relative;
+  width: 44px;
+  height: 6px;
+  border-radius: 2px;
+  background: var(--bg-4);
+  overflow: hidden;
+}
+.prod-buf-track i {
+  position: absolute;
+  inset: 0 auto 0 0;
+  background: var(--text-3);
+}
+
+/* Bottleneck ranking: active / starved / blocked as one stacked bar per stage */
+.prod-legend {
+  margin-bottom: 6px;
+}
+.prod-bn-row {
+  display: grid;
+  grid-template-columns: minmax(110px, 1fr) minmax(0, 1.4fr) 40px;
+  align-items: center;
+  gap: 10px;
+  height: 26px;
+  font-size: var(--fs-12);
+  border-bottom: 1px solid var(--line);
+  font-variant-numeric: tabular-nums;
+}
+.prod-bn-row:last-child {
+  border-bottom: 0;
+}
+.prod-bn-row.top .prod-bn-name {
+  color: var(--text-1);
+  font-weight: var(--fw-medium);
+}
+.prod-bn-name {
+  color: var(--text-2);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.prod-bn-track {
+  display: flex;
+  gap: 2px;
+  height: 10px;
+}
+.prod-bn-track i {
+  display: block;
+  height: 100%;
+  min-width: 0;
+}
+.prod-bn-track i:first-child {
+  border-radius: 2px 0 0 2px;
+}
+.prod-bn-val {
+  text-align: right;
+}
+
+/* Machine drill-down drawer */
+.drawer.prod-drawer {
+  width: min(600px, 100vw);
+}
+.prod-drawer-title {
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+}
+.prod-drawer-title h2 {
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.prod-drawer-title small {
+  color: var(--text-3);
+  font-size: var(--fs-11);
+}
+.prod-drawer-state {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  font-size: var(--fs-12);
+}
+.prod-h3 {
+  margin: 0 0 8px;
+  font-size: var(--fs-12);
+  font-weight: var(--fw-semibold);
+}
+.prod-h3 .muted {
+  font-weight: var(--fw-regular);
+}

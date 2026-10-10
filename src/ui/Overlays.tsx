@@ -44,7 +44,7 @@ export function Hint() {
 
   if (!visible) return null;
   return (
-    <div className="hint">
+    <div className="hint overlay-panel">
       <MousePointerClick size={15} />
       <span>
         <b>Drag</b> to orbit · <b>Right-drag</b> to pan · <b>Scroll</b> to zoom · <b>Click</b> a machine to inspect · keys{' '}
@@ -59,7 +59,7 @@ export function PresentationExit() {
   const setUiHidden = useTwin((s) => s.setUiHidden);
   if (!uiHidden) return null;
   return (
-    <button className="present-exit" onClick={() => setUiHidden(false)} title="Show the interface (H)">
+    <button className="btn present-exit" onClick={() => setUiHidden(false)} title="Show the interface (H)">
       <Minimize2 size={15} />
       Exit presentation
     </button>

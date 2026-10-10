@@ -25,6 +25,18 @@ describe('truck visit durations', () => {
     }
   });
 
+  it('never exposes a timestamp before the event has happened', () => {
+    const s = createSim(27, START);
+    for (let i = 0; i < 240; i++) {
+      advance(s, s.minute + 1);
+      for (const id of s.logistics.active) {
+        const vis = s.logistics.vehicles[id].visit;
+        if (!vis) continue;
+        for (const t of [vis.dockAssigned, vis.dockStart, vis.dockEnd, vis.gateOut]) if (t != null) expect(t).toBeLessThan(s.minute + 1);
+      }
+    }
+  });
+
   it('every departed truck has exactly one gate-in and one gate-out', () => {
     const s = createSim(22, START);
     expect(s.logistics.departed.length).toBeGreaterThan(5);

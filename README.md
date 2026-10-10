@@ -1,38 +1,45 @@
-# wAI Ceramic Factory Twin
+# wAI Manufacturing Intelligence
 
-Interactive 3D model of a representative ceramic tile plant, built with React 19, React Three Fiber,
-drei, three.js and Zustand. All geometry is procedural; there are no external model files.
+Manufacturing operations product built around an interactive 3D digital twin of a representative ceramic tile
+plant (reference context: Ghani Ceramics — the layout, equipment and figures are illustrative and do not
+reproduce any real plant).
+
+**This is a simulation-backed demonstration.** Every operational value, event and vehicle movement comes from
+a deterministic in-browser simulation. No PLC, SCADA, camera, GPS or other system is connected.
+
+## Workspaces
+
+| Workspace | What it does |
+|---|---|
+| **Factory Twin** | Interactive 3D plant: zones, equipment, live (simulated) machine status, trucks and forklifts, material flow, camera views, layers, minimap, presentation mode. |
+| **Production & OEE** | Output vs target, line OEE (A × P × Q), loss waterfall, downtime Pareto and events, machine/stage table, bottleneck, shifts, trends. |
+| **Quality Intelligence** | Inspection stations, inspected/accepted/rejected, defect categories and trends, simulated inspection records and batches. |
+| **Fleet & Logistics** | Live site map, trucks on site, waiting/dock times, dock board, gate and dock events, forklifts, geofences, turnaround. |
+| **Assets & Data** | Equipment registry, signals and metric mappings, data-source status, event history, simulation configuration. |
+
+The header on every workspace shows the **Demo · simulated data** indicator, the simulated plant clock
+(pause, speed 1×–300×) and the **Scenarios** drawer: machine stoppage, reduced rate, production bottleneck,
+quality deterioration, truck arrival, yard congestion, prolonged dock stay, and reset to baseline.
 
 ## Run
+
+Requires Node.js 20+.
 
 ```bash
 npm install
 npm run dev        # http://localhost:5173
+npm test           # OEE, simulation, scenario and vehicle tests (vitest)
 npm run build      # type-check + production build into dist/
 npm run preview    # serve the production build
 ```
 
-## Controls
+## Factory Twin controls
 
-Drag to orbit · right-drag to pan · scroll to zoom · click a machine to inspect.
-Keys: `1`–`0` camera views · `M` flow mode · `H` hide UI · `R` reset · `F` fit · `L` labels · `Esc` back.
+Drag to orbit · right-drag to pan · scroll to zoom · click a machine or vehicle to inspect.
+Keys (Factory Twin): `1`–`0` camera views · `M` flow · `L` labels · `R` full factory · `F` fit.
+Everywhere: `H` presentation mode · `Esc` back.
 
-## Layout
+## Documentation
 
-```
-src/
-  data/            plant data: zones, equipment, camera views, roads, material-flow routes
-  store.ts         app state (layers, selection, zone, camera requests)
-  ui/              HTML overlay: top bar, zone panel, inspector, toolbar, minimap, loader
-  scene/
-    Scene.tsx      <Canvas>, lights, environment, camera rig, zone labels
-    materials.ts   shared materials and procedural canvas textures
-    primitives.tsx Box, Cyl, Pipe, Instances, Railing, Stair, Silo, Tank, Door…
-    Selectable.tsx hit box, outline and name tag for each equipment item
-    vehicles.tsx   trucks, forklifts, cars, wheel loader, PathMover animation
-    Ground / Buildings / Structure / Site / Conveyors / FlowOverlay
-    zones/         one file per process area (raw materials → warehouse)
-```
-
-To add a machine: add an entry to `src/data/equipment.ts`, then draw it inside a
-`<Selectable id="...">` in the matching `src/scene/zones/*` file.
+- `docs/ARCHITECTURE.md` — starting point, module map, data model, simulation and OEE definitions.
+- `docs/INTEGRATION.md` — signal ids, data sources and the boundary for future PLC/SCADA integration.

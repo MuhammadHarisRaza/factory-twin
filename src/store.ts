@@ -12,7 +12,10 @@ export type LayerId =
   | 'conveyors'
   | 'flow'
   | 'labels'
-  | 'minimap';
+  | 'minimap'
+  | 'status'
+  | 'internal'
+  | 'external';
 
 export const LAYER_LABELS: Record<LayerId, string> = {
   roof: 'Roof',
@@ -23,6 +26,9 @@ export const LAYER_LABELS: Record<LayerId, string> = {
   flow: 'Material flow',
   labels: 'Labels',
   minimap: 'Minimap',
+  status: 'Machine status',
+  internal: 'Internal vehicles',
+  external: 'External vehicles',
 };
 
 /**
@@ -54,7 +60,13 @@ type TwinState = {
   uiHidden: boolean;
   zonePanel: boolean;
   ready: boolean;
+  /** Selected vehicle (exclusive with equipment selection). */
+  vehicle: string | null;
+  /** Camera keeps the selected vehicle in frame. */
+  follow: boolean;
   toggle: (layer: LayerId) => void;
+  selectVehicle: (id: string | null, follow?: boolean) => void;
+  setFollow: (follow: boolean) => void;
   select: (id: string | null) => void;
   hover: (id: string | null) => void;
   selectZone: (id: string | null) => void;
@@ -78,7 +90,12 @@ export const useTwin = create<TwinState>((set, get) => ({
     flow: false,
     labels: true,
     minimap: true,
+    status: true,
+    internal: true,
+    external: true,
   },
+  vehicle: null,
+  follow: false,
   selected: null,
   hovered: null,
   zone: null,
@@ -89,8 +106,10 @@ export const useTwin = create<TwinState>((set, get) => ({
   ready: false,
 
   toggle: (layer) => set((s) => ({ layers: { ...s.layers, [layer]: !s.layers[layer] } })),
+  selectVehicle: (id, follow = false) => set({ vehicle: id, follow: id ? follow : false, selected: id ? null : get().selected }),
+  setFollow: (follow) => set({ follow }),
   select: (id) => {
-    set({ selected: id });
+    set({ selected: id, vehicle: id ? null : get().vehicle, follow: id ? false : get().follow });
     if (id) {
       set({ zone: EQUIPMENT_BY_ID[id].zone });
       get().focusEquipment(id);
@@ -138,7 +157,7 @@ export const useTwin = create<TwinState>((set, get) => ({
     }));
   },
   reset: () => {
-    set({ selected: null, zone: null });
+    set({ selected: null, zone: null, vehicle: null, follow: false });
     get().preset('full');
   },
   fit: () => set((s) => ({ fitNonce: s.fitNonce + 1 })),

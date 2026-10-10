@@ -98,7 +98,11 @@ function tick() {
     useSim.setState({ version: sim.version });
   }
 }
-if (typeof window !== 'undefined') setInterval(tick, 50);
+if (typeof window !== 'undefined') {
+  setInterval(tick, 50);
+  // Dev-only handle for console debugging and automated checks.
+  if (import.meta.env.DEV) Object.assign(window, { sim: useSim, simClock });
+}
 
 /** Re-render on every simulated minute and memoise `fn` on it. */
 export function useSimValue<T>(fn: (s: SimState) => T, deps: unknown[] = []): T {

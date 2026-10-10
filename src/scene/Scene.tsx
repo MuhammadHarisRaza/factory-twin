@@ -13,6 +13,7 @@ import { SiteDetails } from './Site';
 import { Structure } from './Structure';
 import { Conveyors } from './Conveyors';
 import { FlowOverlay } from './FlowOverlay';
+import { SimVehicles, selectedVehiclePose } from './SimVehicles';
 import { Utilities } from './zones/Utilities';
 import { RawMaterials } from './zones/RawMaterials';
 import { Preparation } from './zones/Preparation';
@@ -108,6 +109,23 @@ function CameraRig() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [fitNonce]);
 
+  // Following a vehicle: fly in once, then keep it centred (the user can still orbit and zoom).
+  const vehicle = useTwin((s) => s.vehicle);
+  const follow = useTwin((s) => s.follow);
+  useEffect(() => {
+    if (!vehicle || !follow || !controls) return;
+    const p = selectedVehiclePose();
+    if (!p) return;
+    const target = new Vector3(p.x, 1.5, p.z);
+    const dir = camera.position.clone().sub(controls.target).setY(0);
+    if (dir.lengthSq() < 1) dir.set(0.5, 0, 0.9);
+    dir.normalize();
+    const distance = 46;
+    const pos = target.clone().addScaledVector(dir, Math.cos(0.62) * distance).add(new Vector3(0, Math.sin(0.62) * distance, 0));
+    startFlight(pos, target);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [vehicle, follow, controls]);
+
   useEffect(() => {
     if (!controls) return;
     const cancel = () => {
@@ -129,6 +147,19 @@ function CameraRig() {
       controls.target.lerpVectors(f.fromTarget, f.toTarget, e);
       if (t >= 1) flight.current = null;
     }
+    const tw = useTwin.getState();
+    if (!f && tw.follow && tw.vehicle) {
+      const p = selectedVehiclePose();
+      if (p) {
+        const k = 1 - Math.exp(-dt * 4);
+        const dx = (p.x - controls.target.x) * k;
+        const dz = (p.z - controls.target.z) * k;
+        controls.target.x += dx;
+        controls.target.z += dz;
+        state.camera.position.x += dx;
+        state.camera.position.z += dz;
+      }
+    }
     const target = controls.target;
     target.x = MathUtils.clamp(target.x, SITE.x[0] - 20, SITE.x[1] + 20);
     target.z = MathUtils.clamp(target.z, SITE.z[0] - 20, SITE.z[1] + 20);
@@ -145,23 +176,34 @@ function CameraRig() {
 }
 
 /**
- * The scene is static, so the shadow map is rendered on demand: once now and a
- * few more times while lazily built geometry settles, and again whenever a
- * layer that casts shadows is toggled.
+ * Shadows are rendered on demand rather than every frame. Updates are requested from
+ * inside the render loop (so they always happen in a normal scene render, never inside a
+ * post-processing pass), when a shadow-casting layer changes, when the twin becomes
+ * visible again, and every few seconds so moved geometry (dock doors) stays correct.
  */
-function ShadowRefresher() {
+function ShadowRefresher({ active }: { active: boolean }) {
   const gl = useThree((s) => s.gl);
   const layers = useTwin((s) => s.layers);
+  const pending = useRef(3);
+  const sinceRefresh = useRef(0);
   useEffect(() => {
     gl.shadowMap.autoUpdate = false;
-    gl.shadowMap.needsUpdate = true;
-    const timers = [300, 1200, 2500].map((ms) =>
-      setTimeout(() => {
-        gl.shadowMap.needsUpdate = true;
-      }, ms),
-    );
-    return () => timers.forEach(clearTimeout);
-  }, [gl, layers.roof, layers.walls, layers.structure, layers.equipment, layers.conveyors]);
+  }, [gl]);
+  useEffect(() => {
+    // A few refreshes while lazily built geometry settles.
+    pending.current = 3;
+  }, [active, layers.roof, layers.walls, layers.structure, layers.equipment, layers.conveyors]);
+  useFrame((_, dt) => {
+    sinceRefresh.current += dt;
+    if (pending.current > 0 && sinceRefresh.current > 0.4) {
+      pending.current--;
+      sinceRefresh.current = 0;
+      gl.shadowMap.needsUpdate = true;
+    } else if (sinceRefresh.current > 3) {
+      sinceRefresh.current = 0;
+      gl.shadowMap.needsUpdate = true;
+    }
+  });
   return null;
 }
 
@@ -317,7 +359,8 @@ function Effects() {
   );
 }
 
-export default function Scene() {
+/** `active` false pauses rendering (other workspace open) while keeping the scene and camera alive. */
+export default function Scene({ active = true }: { active?: boolean }) {
   const start = VIEWS.full;
   // Drops ambient occlusion and resolution on slow GPUs; never re-enables mid-session
   // to avoid quality flicker during a presentation.
@@ -325,6 +368,7 @@ export default function Scene() {
   const [dpr, setDpr] = useState(1.75);
   return (
     <Canvas
+      frameloop={active ? 'always' : 'never'}
       shadows="percentage"
       dpr={dpr}
       camera={{ position: start.pos, fov: CAMERA_FOV, near: 1, far: 1600 }}
@@ -345,7 +389,7 @@ export default function Scene() {
       <fog attach="fog" args={['#d9e0e6', 380, 900]} />
       <Lights />
       <Environment />
-      <ShadowRefresher />
+      <ShadowRefresher active={active} />
       <Suspense fallback={null}>
         <Ground />
         <Buildings />
@@ -353,6 +397,7 @@ export default function Scene() {
         <Structure />
         <Equipment />
         <Conveyors />
+        <SimVehicles />
         <FlowOverlay />
         <ZoneLabels />
       </Suspense>

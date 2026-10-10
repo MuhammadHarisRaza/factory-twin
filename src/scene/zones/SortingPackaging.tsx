@@ -5,7 +5,6 @@ import type { Vec2, Vec3 } from '../../data/types';
 import { MAT } from '../materials';
 import { BlobShadow, Box, ControlCabinet, Cyl, Instances, Pallet, type Instance } from '../primitives';
 import { Selectable } from '../Selectable';
-import { Forklift } from '../vehicles';
 
 /** z of the sorting / packaging line centreline. */
 const LINE_Z = 15;
@@ -831,7 +830,6 @@ export function Packaging() {
         <Pallet p={[-55, 0, 24]} cartons={4} wrap />
         <Pallet p={[-53.4, 0, 24]} cartons={3} wrap />
         <Pallet p={[-51.8, 0, 24]} cartons={4} wrap />
-        <Forklift p={[-48.5, 0, 25.5]} rot={Math.PI} />
       </group>
     </group>
   );

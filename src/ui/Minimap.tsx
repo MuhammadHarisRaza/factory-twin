@@ -1,5 +1,7 @@
 import { useEffect, useState } from 'react';
 import { minimapCamera, useTwin } from '../store';
+import { simClock, useSim } from '../sim/store';
+import { poseAt } from '../sim/logistics';
 import {
   FLOW_COLORS,
   FLOW_PATHS,
@@ -30,9 +32,20 @@ export function Minimap() {
   const flyTo = useTwin((s) => s.flyTo);
   const flow = useTwin((s) => s.layers.flow);
   const [cam, setCam] = useState({ ...minimapCamera });
+  const [vehicles, setVehicles] = useState<{ id: string; x: number; z: number; external: boolean }[]>([]);
 
   useEffect(() => {
-    const id = setInterval(() => setCam({ ...minimapCamera }), 120);
+    const id = setInterval(() => {
+      setCam({ ...minimapCamera });
+      const lg = useSim.getState().sim.logistics;
+      setVehicles(
+        lg.active.flatMap((vid) => {
+          const v = lg.vehicles[vid];
+          const p = poseAt(v, simClock.t);
+          return p ? [{ id: vid, x: p.x, z: p.z, external: v.class === 'external' }] : [];
+        }),
+      );
+    }, 120);
     return () => clearInterval(id);
   }, []);
 
@@ -53,7 +66,7 @@ export function Minimap() {
   const camY = clamp(my(cam.z), 4, height - 4);
 
   return (
-    <div className="minimap">
+    <div className="minimap overlay-panel">
       <div className="mm-h">
         <span>Site plan</span>
         <span className="muted">click to move · N ↑</span>
@@ -129,6 +142,18 @@ export function Minimap() {
               pointerEvents="none"
             />
           ))}
+        {vehicles.map((v) => (
+          <circle
+            key={v.id}
+            cx={mx(v.x)}
+            cy={my(v.z)}
+            r={v.external ? 2.6 : 1.6}
+            fill={v.external ? '#e7ebee' : '#c98500'}
+            stroke="#0b1116"
+            strokeWidth={0.8}
+            pointerEvents="none"
+          />
+        ))}
         <g transform={`translate(${camX} ${camY}) rotate(${(heading * 180) / Math.PI})`} pointerEvents="none">
           <path d="M0 0 L26 -11 L26 11 Z" fill="#2fd0ee" fillOpacity={0.22} />
           <circle r={3.6} fill="#2fd0ee" stroke="#0b1116" strokeWidth={1.2} />

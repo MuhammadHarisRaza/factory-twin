@@ -330,6 +330,8 @@ function scenarioRate(s: SimState, id: string, stage: StageId, t: number) {
 
 export function activateScenario(s: SimState, def: Omit<ScenarioActivation, 'id' | 'start'> & { start?: number }) {
   const sc: ScenarioActivation = { ...def, id: nextId(s, 'SCN'), start: def.start ?? s.minute };
+  // One-off logistics injections are applied at once; they are logged, not left "active".
+  if (sc.kind === 'truck-arrival' || sc.kind === 'yard-congestion' || sc.kind === 'prolonged-dock-stay') sc.end = sc.start + 1;
   s.scenarios.push(sc);
   if (sc.kind === 'machine-stop') applyScenarioStops(s, s.minute);
   applyLogisticsScenario(s, sc);

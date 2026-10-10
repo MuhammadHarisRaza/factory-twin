@@ -397,3 +397,7 @@
 .prod-h3 .muted {
   font-weight: var(--fw-regular);
 }
+.prod-bn-tag {
+  margin-left: 6px;
+  vertical-align: 1px;
+}

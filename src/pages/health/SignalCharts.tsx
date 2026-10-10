@@ -29,7 +29,6 @@ export function SignalCharts({ row }: { row: AssetRow }) {
   const { id, asset: a, h } = row;
   const d = useSimValue((s) => signalSeries(s, id), [id]);
   const labels = d.t.map(formatClock);
-  const flat = (v: number) => d.t.map(() => v);
   const top = (vals: number[], limit: number, min = 0) => niceAxisMax(Math.max(limit, ...vals), min);
   return (
     <Panel
@@ -55,9 +54,11 @@ export function SignalCharts({ row }: { row: AssetRow }) {
             series={[
               { id: 'vib', label: 'Observed', color: 'var(--series-1)', points: d.vibration },
               { id: 'exp', label: 'Expected at current load', color: 'var(--series-2)', points: d.vibrationExpected, dashed: true },
-              { id: 'trip', label: `Trip limit (${a.vib.trip})`, color: 'var(--text-3)', points: flat(a.vib.trip), dashed: true },
             ]}
-            reference={{ value: a.vib.alarm, label: `Alarm ${a.vib.alarm} mm/s` }}
+            reference={[
+              { value: a.vib.alarm, label: `Alarm ${a.vib.alarm} mm/s` },
+              { value: a.vib.trip, label: `Trip ${a.vib.trip} mm/s` },
+            ]}
           />
         </ChartBlock>
         <ChartBlock title="Temperature" unit="°C · bearing / oil" now={`${fmtInt(h.reading.temperature)} °C`}>

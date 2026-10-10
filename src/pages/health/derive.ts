@@ -12,6 +12,8 @@ import {
   HEALTH_ASSETS,
   HEALTH_BY_ID,
   assess,
+  expectedTemp,
+  expectedVib,
   sensorHistory,
   type HealthAsset,
   type HealthAssessment,
@@ -99,12 +101,9 @@ export function fleetSummary(rows: AssetRow[]): FleetSummary {
 
 // ── Signals ───────────────────────────────────────────────────────────────────
 
-/**
- * Healthy-baseline expectation for the current load. Mirrors expectedVib / expectedTemp in
- * src/sim/health.ts (not exported there); derive.test.ts checks they stay identical.
- */
-export const expectedVibration = (a: HealthAsset, load: number, running: boolean) => (running ? a.vib.full * (0.8 + 0.25 * load) : 0.25);
-export const expectedTemperature = (a: HealthAsset, load: number) => 28 + (a.temp.full - 28) * (0.45 + 0.55 * load);
+/** Healthy-baseline expectation for the current load (the same model the simulation uses). */
+export const expectedVibration = expectedVib;
+export const expectedTemperature = expectedTemp;
 
 export type SignalSeries = {
   t: number[];

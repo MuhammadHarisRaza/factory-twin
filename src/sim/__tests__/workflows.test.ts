@@ -12,6 +12,7 @@ import {
   energyIn,
   impactVsBaseline,
   internalActivity,
+  internalVehicles,
   lineMetrics,
   qualityIn,
   resolvePeriod,
@@ -158,6 +159,23 @@ describe('Vehicle monitoring', () => {
     advance(s, s.minute + 30);
     const waiting = lg.active.map((id) => lg.vehicles[id]).filter((v) => v.phase === 'waiting');
     expect(waiting.length).toBeGreaterThanOrEqual(3);
+  });
+
+  it('dwell time never shrinks while a vehicle stays in the same zone (8 h, every minute)', () => {
+    const s = createSim(41, START);
+    const ids = internalVehicles(s).map((v) => v.id);
+    const last: Record<string, { zone: string | null; dwell: number | null }> = {};
+    for (let i = 0; i < 480; i++) {
+      advance(s, s.minute + 1);
+      for (const id of ids) {
+        const a = internalActivity(s.logistics.vehicles[id], s.minute);
+        const prev = last[id];
+        if (prev && prev.zone === a.zone && prev.dwell != null && a.dwell != null && a.dwell < prev.dwell)
+          // Only a fresh entry into the same zone (left and came back within the minute) may restart it.
+          expect(a.dwell).toBeLessThanOrEqual(1);
+        last[id] = { zone: a.zone, dwell: a.dwell };
+      }
+    }
   });
 });
 

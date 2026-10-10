@@ -268,15 +268,36 @@ export function stageMetrics(s: SimState, p: Period): StageMetrics[] {
   });
 }
 
+/** Starved / blocked share of the window above which a stage counts as held up by its neighbours. */
+export const HELD_UP_SHARE = 0.05;
+
+export type BottleneckCause = 'constraint' | 'starving' | 'blocking';
+
 /**
- * Active-period bottleneck detection: the stage that spent the largest share of the
- * window working (or broken down) rather than starved or blocked is the constraint.
+ * Bottleneck detection traced from the designed constraint (the kiln):
+ * - the kiln neither starved nor blocked (≤ 5 % of the window) → the kiln limits the line, as designed;
+ * - the kiln starved → walk upstream past every stage that was itself starved; the first stage that was
+ *   not (working flat out, slowed or broken down) is what the line is waiting for;
+ * - the kiln blocked → walk downstream past every blocked stage in the same way.
+ * Upstream of a bottleneck stages are blocked, downstream they are starved — the evidence shown with it.
  */
 export function bottleneck(s: SimState, windowMin = 120) {
   const p: Period = { from: Math.max(0, s.minute - windowMin), to: s.minute, label: `Last ${windowMin} min` };
   const stages = stageMetrics(s, p);
-  const ranked = [...stages].sort((a, b) => b.activeShare - a.activeShare);
-  return { period: p, current: ranked[0], ranked, shifted: ranked[0].stage !== LINE.designConstraint };
+  const ci = stages.findIndex((st) => st.stage === LINE.designConstraint);
+  const c = stages[ci];
+  let i = ci;
+  let cause: BottleneckCause = 'constraint';
+  if (c.starvedShare > HELD_UP_SHARE && c.starvedShare >= c.blockedShare) {
+    cause = 'starving';
+    while (i > 0 && stages[i].starvedShare > HELD_UP_SHARE) i--;
+  } else if (c.blockedShare > HELD_UP_SHARE) {
+    cause = 'blocking';
+    while (i < stages.length - 1 && stages[i].blockedShare > HELD_UP_SHARE) i++;
+  }
+  const current = stages[i];
+  const ranked = [current, ...stages.filter((st) => st !== current).sort((a, b) => b.activeShare - a.activeShare)];
+  return { period: p, current, cause, constraint: c, stages, ranked, shifted: current.stage !== LINE.designConstraint };
 }
 
 // ── Trends & shifts ───────────────────────────────────────────────────────────
@@ -390,6 +411,8 @@ export function internalActivity(v: Vehicle, now: number) {
   if (!current) return { zone: null, dwell: null, idleLastHour: null, current: null };
   let since = current.start;
   for (let i = legs.length - 2; i >= 0 && legs[i].zone === current.zone; i--) since = legs[i].start;
+  const entry = v.zoneLog?.filter((z) => z.start <= now).pop();
+  if (entry && entry.zone === current.zone) since = Math.min(since, entry.start);
   let idle = 0;
   for (const l of legs) {
     if (l.moving || !/idle|waiting|available/i.test(l.activity)) continue;

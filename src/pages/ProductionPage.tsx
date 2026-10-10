@@ -6,6 +6,7 @@ import { BASE_REJECT_RATE, DOWNTIME_REASONS, LINE, M2_PER_TILE, PROCESS_MACHINES
 import type { DowntimeCategory, DowntimeEvent, StageId } from '../model/types';
 import {
   bottleneck,
+  HELD_UP_SHARE,
   clippedDuration,
   energyIn,
   lineLossTree,
@@ -70,7 +71,7 @@ export function ProductionPage() {
 
       {/* 3. How is it trending? */}
       <Trends periodKey={periodKey} />
-      <BottleneckPanel ranked={bn.ranked} shifted={bn.shifted} />
+      <BottleneckPanel stages={bn.stages} current={bn.current.stage} shifted={bn.shifted} />
       <ShiftTable />
 
       {/* 4. Event detail */}
@@ -480,16 +481,20 @@ function BufferLevel({ v }: { v: number }) {
 
 // ── 7. Bottleneck ────────────────────────────────────────────────────────────
 
-function BottleneckPanel({ ranked, shifted }: { ranked: StageMetrics[]; shifted: boolean }) {
+function BottleneckPanel({ stages, current, shifted }: { stages: StageMetrics[]; current: StageMetrics['stage']; shifted: boolean }) {
   return (
     <Panel
       className="col-4"
       title="Bottleneck · last 2 h"
-      subtitle={shifted ? `Constraint has moved from ${stageName(LINE.designConstraint)}` : `Constraint at ${stageName(LINE.designConstraint)} as designed`}
+      subtitle={
+        shifted
+          ? `${stageName(current)} is holding up ${stageName(LINE.designConstraint).toLowerCase()} (the designed constraint)`
+          : `Constraint at ${stageName(LINE.designConstraint)} as designed`
+      }
       footer={
         <span>
-          Active-period method: the stage that spent the largest share of planned time working or broken down — rather than starved by upstream or
-          blocked by downstream — is the current constraint.
+          Traced from the kiln: if it waited for tiles (starved over {Math.round(HELD_UP_SHARE * 100)} % of the window) the bottleneck is the first stage upstream that was not
+          itself waiting; if it was blocked, the first stage downstream that was not blocked. Upstream of a bottleneck stages block, downstream they starve.
         </span>
       }
     >
@@ -507,11 +512,17 @@ function BottleneckPanel({ ranked, shifted }: { ranked: StageMetrics[]; shifted:
           Blocked
         </span>
       </div>
-      <div className="prod-bn" role="table" aria-label="Stages ranked by active share">
-        {ranked.map((st, i) => (
-          <div key={st.stage} className={`prod-bn-row ${i === 0 ? 'top' : ''}`} role="row" title={`Active ${pct(st.activeShare)} · starved ${pct(st.starvedShare)} · blocked ${pct(st.blockedShare)}`}>
+      <div className="prod-bn" role="table" aria-label="Stages in process order">
+        {stages.map((st, i) => (
+          <div
+            key={st.stage}
+            className={`prod-bn-row ${st.stage === current ? 'top' : ''}`}
+            role="row"
+            title={`Active ${pct(st.activeShare)} · starved ${pct(st.starvedShare)} · blocked ${pct(st.blockedShare)} · down ${pct(st.downShare)}`}
+          >
             <span className="prod-bn-name">
               {i + 1}. {st.name}
+              {st.stage === current && <span className="tag scenario prod-bn-tag">Bottleneck</span>}
             </span>
             <span className="prod-bn-track">
               <i style={{ width: `${st.activeShare * 100}%`, background: 'var(--series-1)' }} />

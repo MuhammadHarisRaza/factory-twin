@@ -211,8 +211,10 @@ export function loadAt(s: SimState, id: string, t: number) {
 export type SensorReading = { t: number; temperature: number; vibration: number; current: number; running: boolean; load: number };
 
 const ambient = 28;
-const expectedTemp = (a: HealthAsset, load: number) => ambient + (a.temp.full - ambient) * (0.45 + 0.55 * load);
-const expectedVib = (a: HealthAsset, load: number, running: boolean) => (running ? a.vib.full * (0.8 + 0.25 * load) : 0.25);
+/** Healthy-baseline temperature (°C) for the current load. */
+export const expectedTemp = (a: HealthAsset, load: number) => ambient + (a.temp.full - ambient) * (0.45 + 0.55 * load);
+/** Healthy-baseline vibration (mm/s RMS) for the current load. */
+export const expectedVib = (a: HealthAsset, load: number, running: boolean) => (running ? a.vib.full * (0.8 + 0.25 * load) : 0.25);
 
 export function sensorsAt(s: SimState, id: string, t: number): SensorReading {
   const a = HEALTH_BY_ID[id];
@@ -341,6 +343,12 @@ export const formatH = (h: number) => (h < 1 ? `${Math.round(h * 60)} min` : h <
 
 // ── Step ──────────────────────────────────────────────────────────────────────
 
+/** A developing-fault scenario is over once its fault has tripped the machine or been repaired. */
+function endScenarioOf(s: SimState, scenarioId: string | undefined, t: number) {
+  const sc = scenarioId ? s.scenarios.find((x) => x.id === scenarioId) : undefined;
+  if (sc && (sc.end == null || sc.end > t)) sc.end = t;
+}
+
 export function stepHealth(s: SimState, t: number) {
   const h = s.health;
   // Failures when a degradation reaches the end of its life.
@@ -357,6 +365,7 @@ export function stepHealth(s: SimState, t: number) {
     openDowntime(s, e.equipmentId, a.failureReason, t, t + duration, e.source, e.scenarioId);
     e.end = t;
     e.endReason = 'trip';
+    endScenarioOf(s, e.scenarioId, t);
     h.maintenance.push({
       id: nextId(s, 'MR'),
       equipmentId: e.equipmentId,
@@ -374,6 +383,7 @@ export function stepHealth(s: SimState, t: number) {
     for (const e of h.episodes) if (e.equipmentId === id && e.end == null && e.start <= t) {
       e.end = t;
       e.endReason = 'maintenance';
+      endScenarioOf(s, e.scenarioId, t);
     }
     delete h.fixAt[id];
   }

@@ -389,6 +389,21 @@ export function clearScenario(s: SimState, id: string) {
         e.end = s.minute;
         e.endReason = 'maintenance';
       }
+  if (sc.kind === 'maintenance' && sc.equipmentId) {
+    // Cancelling maintenance ends the planned stop early; the fault it was meant to remove stays.
+    const m = s.machines[sc.equipmentId];
+    const ev = m.activeDowntimeId ? findDowntime(s, m.activeDowntimeId) : undefined;
+    if (ev?.scenarioId === sc.id) closeDowntime(s, ev, s.minute);
+    if (s.health.fixAt[sc.equipmentId]?.scenarioId === sc.id) delete s.health.fixAt[sc.equipmentId];
+    for (let i = s.health.maintenance.length - 1; i >= 0; i--) {
+      const r = s.health.maintenance[i];
+      if (r.equipmentId === sc.equipmentId && r.type === 'Condition-based' && r.end > s.minute) {
+        r.end = s.minute;
+        r.description += ' (cancelled)';
+        break;
+      }
+    }
+  }
   raiseAlert(s, s.minute, 'info', `Scenario cleared: ${sc.label}`, 'Simulated scenario input', { equipmentId: sc.equipmentId }, 'scenario');
   s.version++;
 }

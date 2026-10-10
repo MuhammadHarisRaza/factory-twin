@@ -148,6 +148,8 @@ export function ColumnChart({
 
 export type LineSeries = { id: string; label: string; color: string; points: (number | null)[]; dashed?: boolean };
 
+export type RefLine = { value: number; label: string };
+
 /** Multi-line chart on one y scale with a crosshair tooltip. */
 export function LineChart({
   labels,
@@ -166,12 +168,14 @@ export function LineChart({
   yMin?: number;
   format: (v: number) => string;
   tickEvery?: number;
-  reference?: { value: number; label: string };
+  /** One or more labelled horizontal reference lines (limits, targets, baselines). */
+  reference?: RefLine | RefLine[];
 }) {
   const [ref, width] = useWidth<HTMLDivElement>();
   const [hi, setHi] = useState<number | null>(null);
+  const refs = reference == null ? [] : Array.isArray(reference) ? reference : [reference];
   const all = series.flatMap((s) => s.points.filter((p): p is number => p != null));
-  const max = yMax ?? niceScale(Math.max(1e-9, ...all, reference?.value ?? 0)).top;
+  const max = yMax ?? niceScale(Math.max(1e-9, ...all, ...refs.map((r) => r.value))).top;
   const ticks = Array.from({ length: 5 }, (_, i) => yMin + ((max - yMin) * i) / 4);
   const iw = width - PAD.l - PAD.r;
   const ih = height - PAD.t - PAD.b;
@@ -225,14 +229,14 @@ export function LineChart({
               {format(t)}
             </text>
           ))}
-          {reference && (
-            <g>
-              <line x1={PAD.l} x2={width - PAD.r} y1={y(reference.value)} y2={y(reference.value)} stroke="var(--text-2)" strokeDasharray="3 3" />
-              <text x={width - PAD.r} y={y(reference.value) - 5} textAnchor="end" style={{ fill: 'var(--text-2)' }}>
-                {reference.label}
+          {refs.map((r) => (
+            <g key={`${r.label}-${r.value}`}>
+              <line x1={PAD.l} x2={width - PAD.r} y1={y(r.value)} y2={y(r.value)} stroke="var(--text-2)" strokeDasharray="3 3" />
+              <text x={width - PAD.r} y={y(r.value) - 5} textAnchor="end" style={{ fill: 'var(--text-2)' }}>
+                {r.label}
               </text>
             </g>
-          )}
+          ))}
           {series.map((s) => (
             <path
               key={s.id}

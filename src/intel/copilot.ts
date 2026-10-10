@@ -11,6 +11,7 @@ import { DEFAULT_TARIFFS, type Tariffs } from '../sim/energy';
 import { HEALTH_BY_ID, assess, formatH } from '../sim/health';
 import {
   bottleneck,
+  HELD_UP_SHARE,
   defectShift,
   downtimePareto,
   energyIn,
@@ -111,6 +112,9 @@ function periodFor(q: string): PeriodKey {
   return 'shift';
 }
 
+/** A period label inside a sentence: "Today" → "today", "Shift A · 06:00–14:00" → "shift A · 06:00–14:00". */
+const inPeriod = (label: string) => label.charAt(0).toLowerCase() + label.slice(1);
+
 export function ask(s: SimState, question: string, tariffs: Tariffs = DEFAULT_TARIFFS): CopilotAnswer {
   const q = question.toLowerCase().trim();
   const p = resolvePeriod(periodFor(q), s.minute);
@@ -131,8 +135,8 @@ export function ask(s: SimState, question: string, tariffs: Tariffs = DEFAULT_TA
         intent,
         text: [
           behind
-            ? `Output for ${p.label.toLowerCase()} is ${m2(lm.output)} against a target of ${m2(lm.target)} — ${pct(lm.attainment, 0)} of target, ${m2(lm.target - lm.output)} behind.`
-            : `Output for ${p.label.toLowerCase()} is on target: ${m2(lm.output)} (${pct(lm.attainment, 0)} of ${m2(lm.target)}).`,
+            ? `Output for ${inPeriod(p.label)} is ${m2(lm.output)} against a target of ${m2(lm.target)} — ${pct(lm.attainment, 0)} of target, ${m2(lm.target - lm.output)} behind.`
+            : `Output for ${inPeriod(p.label)} is on target: ${m2(lm.output)} (${pct(lm.attainment, 0)} of ${m2(lm.target)}).`,
           `Line OEE is ${pct(lm.oee.oee.value)} (target ${pct(TARGET.oeeTarget, 0)}). The biggest loss is ${losses[0].label.toLowerCase()} (${pct(losses[0].share, 0)} of lost constraint time), followed by ${losses[1].label.toLowerCase()}.`,
           pareto.length
             ? `The largest stoppage reasons were ${pareto.map((r) => `${r.label.toLowerCase()} (${Math.round(r.minutes)} min)`).join(', ')}. The line is currently constrained by ${bn.current.name.toLowerCase()}${bn.shifted ? ', not the kiln as designed' : ''}.`
@@ -153,19 +157,27 @@ export function ask(s: SimState, question: string, tariffs: Tariffs = DEFAULT_TA
     case 'bottleneck': {
       const bn = bottleneck(s);
       const c = bn.current;
-      const second = bn.ranked[1];
+      const k = bn.constraint;
+      const kilnName = STAGE_BY_ID[LINE.designConstraint].name.toLowerCase();
+      const machines = STAGE_BY_ID[c.stage].machines.join(', ');
+      const up = bn.stages.filter((r) => bn.stages.indexOf(r) < bn.stages.indexOf(c) && r.blockedShare > HELD_UP_SHARE).map((r) => r.name.toLowerCase());
+      const down = bn.stages.filter((r) => bn.stages.indexOf(r) > bn.stages.indexOf(c) && r.starvedShare > HELD_UP_SHARE).map((r) => r.name.toLowerCase());
       return {
         ...base,
         periodLabel: bn.period.label,
         intent,
         text: [
-          `${c.name} (${STAGE_BY_ID[c.stage].machines.join(', ')}) is the current bottleneck: it was working or broken down ${pct(c.activeShare, 0)} of the last 2 hours and almost never waited for material (starved ${pct(c.starvedShare, 0)}, blocked ${pct(c.blockedShare, 0)}).`,
+          bn.cause === 'constraint'
+            ? `${c.name} (${machines}) is the bottleneck, as designed: over the last 2 hours it was starved ${pct(c.starvedShare, 0)} and blocked ${pct(c.blockedShare, 0)} of the time, so the line output is set by the kiln's own rate and stops.`
+            : bn.cause === 'starving'
+              ? `${c.name} (${machines}) is the current bottleneck: the kiln waited for tiles ${pct(k.starvedShare, 0)} of the last 2 hours, and ${c.name.toLowerCase()} is the first stage upstream that was not itself waiting (active ${pct(c.activeShare, 0)}, down ${pct(c.downShare, 0)}).`
+              : `${c.name} (${machines}) is the current bottleneck: the kiln was blocked ${pct(k.blockedShare, 0)} of the last 2 hours because ${c.name.toLowerCase()} could not take its output.`,
           bn.shifted
-            ? `The designed constraint is ${STAGE_BY_ID[LINE.designConstraint].name.toLowerCase()}; it is now waiting on ${c.name.toLowerCase()}, so the bottleneck has shifted. Every minute lost at ${c.name.toLowerCase()} is lost for the whole line.`
-            : `This matches the designed constraint. ${second.name} is next (${pct(second.activeShare, 0)} active).`,
-          `Method: active-period analysis — the stage that spends the largest share of time working rather than starved or blocked limits the line.`,
+            ? `The designed constraint is ${kilnName}; every minute it waits on ${c.name.toLowerCase()} is output lost for the whole line.${up.length ? ` Blocked upstream: ${up.join(', ')}.` : ''}${down.length ? ` Starved downstream: ${down.join(', ')}.` : ''}`
+            : `${down.length ? `Downstream stages wait on it (starved: ${down.join(', ')}), ` : ''}${up.length ? `upstream stages are held back (blocked: ${up.join(', ')}). ` : ''}Keep it fed and running — a lost kiln minute cannot be recovered later.`,
+          `Method: starting at the kiln, a starved constraint is traced upstream (blocked: downstream) past every stage that was itself held up more than ${pct(HELD_UP_SHARE, 0)} of the window.`,
         ],
-        facts: bn.ranked.slice(0, 4).map((r) => ({ label: r.name, value: `${pct(r.activeShare, 0)} active` })),
+        facts: bn.stages.map((r) => ({ label: r.name, value: `${pct(r.activeShare, 0)} active · ${pct(r.starvedShare, 0)} starved · ${pct(r.blockedShare, 0)} blocked` })),
         links: [...bnLinks(c.stage), { kind: 'workspace', id: 'production', label: 'Open bottleneck analysis' }],
         followUps: ['How is the kiln affecting production?', 'What should the shift supervisor do next?'],
       };
@@ -173,7 +185,7 @@ export function ask(s: SimState, question: string, tariffs: Tariffs = DEFAULT_TA
     case 'largest-downtime': {
       const pareto = downtimePareto(s, p);
       if (!pareto.length)
-        return { ...base, intent, text: [`No unplanned downtime has been recorded in ${p.label.toLowerCase()}.`], facts: [], links: [], followUps: SUGGESTED_QUESTIONS.slice(0, 2) };
+        return { ...base, intent, text: [`No unplanned downtime has been recorded in ${inPeriod(p.label)}.`], facts: [], links: [], followUps: SUGGESTED_QUESTIONS.slice(0, 2) };
       const top = pareto[0];
       const events = s.downtime.filter((d) => d.reasonCode === top.key && d.start < p.to && (d.end ?? s.minute) > p.from);
       const byMachine = new Map<string, number>();
@@ -183,7 +195,7 @@ export function ask(s: SimState, question: string, tariffs: Tariffs = DEFAULT_TA
         ...base,
         intent,
         text: [
-          `The largest downtime loss in ${p.label.toLowerCase()} is ${top.label.toLowerCase()}: ${Math.round(top.minutes)} min over ${top.events} event${top.events > 1 ? 's' : ''} (${pct(top.share, 0)} of unplanned downtime).`,
+          `The largest downtime loss in ${inPeriod(p.label)} is ${top.label.toLowerCase()}: ${Math.round(top.minutes)} min over ${top.events} event${top.events > 1 ? 's' : ''} (${pct(top.share, 0)} of unplanned downtime).`,
           worst ? `Most of it was on ${worst[0]} (${EQUIPMENT_BY_ID[worst[0]].name}, ${Math.round(worst[1])} min).` : '',
           REASON_ACTIONS[top.key] ? `Standard response: ${REASON_ACTIONS[top.key]}` : '',
         ].filter(Boolean),
@@ -205,7 +217,7 @@ export function ask(s: SimState, question: string, tariffs: Tariffs = DEFAULT_TA
         ...base,
         intent,
         text: [
-          `The kiln is ${stateWord(state.state)} (since ${formatClock(state.since)}). In ${p.label.toLowerCase()} it ran at availability ${pct(k.oee.availability.value)} and performance ${pct(k.oee.performance.value)}; it fired ${m2(k.totals.count)}.`,
+          `The kiln is ${stateWord(state.state)} (since ${formatClock(state.since)}). In ${inPeriod(p.label)} it ran at availability ${pct(k.oee.availability.value)} and performance ${pct(k.oee.performance.value)}; it fired ${m2(k.totals.count)}.`,
           `It was starved ${Math.round(k.totals.starved)} min and blocked ${Math.round(k.totals.blocked)} min — time the line cannot recover because the kiln is the designed constraint. ${bn.current.stage === 'KILN' ? 'It is currently the bottleneck.' : `The current bottleneck is ${bn.current.name.toLowerCase()}, which is starving it.`}`,
           `While waiting for tiles the kiln still burnt ≈ ${Math.round(idle).toLocaleString('en-GB')} kWh of gas (${tariffs.currency} ${(idle * tariffs.gas).toFixed(0)}).`,
         ],
@@ -235,7 +247,7 @@ export function ask(s: SimState, question: string, tariffs: Tariffs = DEFAULT_TA
           rising
             ? `${top.label} has increased the most: ${pct(top.rateRecent, 2)} of inspected tiles in the last 2 hours versus ${pct(top.rateRef, 2)} over the previous 24 hours (${top.ratio!.toFixed(1)}×). It originates at ${STAGE_BY_ID[origin].name.toLowerCase()}.`
             : `No defect category has increased significantly; the largest relative change is ${top.label.toLowerCase()} at ${top.ratio != null ? `${top.ratio.toFixed(1)}×` : '—'} its 24-hour rate.`,
-          `In ${p.label.toLowerCase()} the sorter inspected ${Math.round(q2.inspected).toLocaleString('en-GB')} tiles and rejected ${Math.round(q2.rejected).toLocaleString('en-GB')} (${pct(q2.inspected ? q2.rejected / q2.inspected : null, 2)}).`,
+          `In ${inPeriod(p.label)} the sorter inspected ${Math.round(q2.inspected).toLocaleString('en-GB')} tiles and rejected ${Math.round(q2.rejected).toLocaleString('en-GB')} (${pct(q2.inspected ? q2.rejected / q2.inspected : null, 2)}).`,
           rising ? `Investigate: ${DEFECT_ACTIONS[top.defect]}` : '',
           'Inspection records are simulated; no computer-vision model is running in this demo.',
         ].filter(Boolean),
@@ -323,7 +335,7 @@ export function ask(s: SimState, question: string, tariffs: Tariffs = DEFAULT_TA
         ...base,
         intent,
         text: [
-          `Line OEE for ${p.label.toLowerCase()} is ${pct(lm.oee.oee.value)} = availability ${pct(lm.oee.availability.value)} × performance ${pct(lm.oee.performance.value)} × quality ${pct(lm.oee.quality.value)}.`,
+          `Line OEE for ${inPeriod(p.label)} is ${pct(lm.oee.oee.value)} = availability ${pct(lm.oee.availability.value)} × performance ${pct(lm.oee.performance.value)} × quality ${pct(lm.oee.quality.value)}.`,
           `Availability and performance are measured at the line constraint (H-KILN): operating ${Math.round(lm.constraint.totals.operating)} of ${Math.round(lm.constraint.totals.planned)} planned min, ${Math.round(lm.constraint.totals.count).toLocaleString('en-GB')} tiles at an ideal ${lm.constraint.idealRatePerHour} tiles/h. Quality is first-pass yield at sorting: ${Math.round(lm.good).toLocaleString('en-GB')} good of ${Math.round(lm.inspected).toLocaleString('en-GB')}.`,
         ],
         facts: [
@@ -344,7 +356,7 @@ export function ask(s: SimState, question: string, tariffs: Tariffs = DEFAULT_TA
         intent,
         text: [
           `${fm.onSite} external vehicle${fm.onSite === 1 ? '' : 's'} on site: ${fm.waiting} waiting for a dock, ${fm.atDock} at a dock. ${docked.length} of 6 docks occupied.`,
-          `In ${p.label.toLowerCase()}: ${fm.completedVisits} visits completed, average turnaround ${fm.avgTurnaround != null ? `${Math.round(fm.avgTurnaround)} min` : '—'}, gate-to-dock ${fm.avgGateToDock != null ? `${Math.round(fm.avgGateToDock)} min` : '—'}, dock utilisation ${pct(fm.dockUtilisation, 0)}.`,
+          `In ${inPeriod(p.label)}: ${fm.completedVisits} visits completed, average turnaround ${fm.avgTurnaround != null ? `${Math.round(fm.avgTurnaround)} min` : '—'}, gate-to-dock ${fm.avgGateToDock != null ? `${Math.round(fm.avgGateToDock)} min` : '—'}, dock utilisation ${pct(fm.dockUtilisation, 0)}.`,
           'Vehicle positions and gate events are simulated at zone level; no GPS or ANPR is connected.',
         ],
         facts: [
@@ -379,7 +391,7 @@ export function ask(s: SimState, question: string, tariffs: Tariffs = DEFAULT_TA
         intent,
         text: [
           `${item.name} (${id}) is ${stateWord(m.state)} since ${formatClock(m.since)}${active ? ` — ${REASON_BY_CODE[active.reasonCode].label.toLowerCase()}, ${formatDuration(s.minute - active.start)} so far` : ''}.`,
-          `In ${p.label.toLowerCase()}: output ${m2(mm.totals.count)}, OEE ${pct(mm.oee.oee.value)} (A ${pct(mm.oee.availability.value)}, P ${pct(mm.oee.performance.value)}, Q ${pct(mm.oee.quality.value)}), ${Math.round(mm.totals.down)} min unplanned downtime.`,
+          `In ${inPeriod(p.label)}: output ${m2(mm.totals.count)}, OEE ${pct(mm.oee.oee.value)} (A ${pct(mm.oee.availability.value)}, P ${pct(mm.oee.performance.value)}, Q ${pct(mm.oee.quality.value)}), ${Math.round(mm.totals.down)} min unplanned downtime.`,
           h ? `Condition: health ${h.score}/100 (${h.level}).` : '',
           rec ? `Recommendation: ${rec.recommendation}` : '',
         ].filter(Boolean),

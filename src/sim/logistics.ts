@@ -150,6 +150,7 @@ export function createLogistics(seed: number): LogisticsState {
       label: `Forklift ${id.slice(3)}`,
       operator: role === 'packaging' ? 'Packaging' : 'Warehouse',
       legs: [stop(0, Infinity, home, role === 'packaging' ? 'GF-PACK' : 'GF-RACK', 'Idle', 0)],
+      zoneLog: [{ zone: role === 'packaging' ? 'GF-PACK' : 'GF-RACK', start: 0 }],
       task,
       spawned: 0,
     };
@@ -191,8 +192,16 @@ const faceEnd = (leg: VehicleLeg) => {
 };
 
 function push(v: Vehicle, leg: VehicleLeg) {
+  const prev = lastLeg(v);
   v.legs.push(leg);
-  if (v.class === 'internal' && v.legs.length > 60) v.legs.splice(0, v.legs.length - 60);
+  if (v.class !== 'internal') return;
+  // Zone entries outlive the pruned legs so dwell time stays right for long stays in one zone.
+  if (!prev || prev.zone !== leg.zone) {
+    const log = (v.zoneLog ??= []);
+    log.push({ zone: leg.zone, start: leg.start });
+    if (log.length > 40) log.splice(0, log.length - 40);
+  }
+  if (v.legs.length > 60) v.legs.splice(0, v.legs.length - 60);
 }
 
 /** Close an open (end = Infinity) stop at `t` and continue with `next` legs. */

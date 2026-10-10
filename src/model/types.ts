@@ -328,6 +328,8 @@ export type Vehicle = {
   operator: string;
   /** Planned legs; the current pose is interpolated from these at render time. */
   legs: VehicleLeg[];
+  /** Internal: zone entry times (kept longer than the pruned legs), for dwell time. */
+  zoneLog?: { zone: string; start: number }[];
   /** External: visit timeline (minutes). */
   visit?: TruckVisit;
   /** Internal: current task description. */

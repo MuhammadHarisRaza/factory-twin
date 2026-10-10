@@ -13,6 +13,7 @@ import { CONSUMER_BY_ID, DEFAULT_TARIFFS, type Tariffs } from '../sim/energy';
 import { HEALTH_ASSETS, assess, formatH, type HealthAssessment } from '../sim/health';
 import {
   bottleneck,
+  HELD_UP_SHARE,
   defectShift,
   downtimePareto,
   energyIn,
@@ -177,11 +178,14 @@ function bottleneckRule(s: SimState): Insight[] {
   const bn = bottleneck(s);
   const cur = bn.current;
   const machines = STAGE_BY_ID[cur.stage].machines;
-  const up = bn.ranked.filter((r) => r.blockedShare > 0.05).map((r) => r.name);
-  const down = bn.ranked.filter((r) => r.starvedShare > 0.05).map((r) => r.name);
+  const at = bn.stages.indexOf(cur);
+  const up = bn.stages.filter((r, i) => i < at && r.blockedShare > HELD_UP_SHARE).map((r) => r.name);
+  const down = bn.stages.filter((r, i) => i > at && r.starvedShare > HELD_UP_SHARE).map((r) => r.name);
   const ev = [
-    `${cur.name} was active ${pct(cur.activeShare, 0)} of the last 2 h (starved ${pct(cur.starvedShare, 0)}, blocked ${pct(cur.blockedShare, 0)}).`,
+    `${cur.name} was active ${pct(cur.activeShare, 0)} of the last 2 h (starved ${pct(cur.starvedShare, 0)}, blocked ${pct(cur.blockedShare, 0)}, down ${pct(cur.downShare, 0)}).`,
   ];
+  if (bn.cause === 'starving') ev.unshift(`The kiln waited for tiles ${pct(bn.constraint.starvedShare, 0)} of the last 2 h.`);
+  if (bn.cause === 'blocking') ev.unshift(`The kiln was blocked ${pct(bn.constraint.blockedShare, 0)} of the last 2 h.`);
   if (up.length) ev.push(`Blocked upstream: ${up.join(', ')}.`);
   if (down.length) ev.push(`Starved downstream: ${down.join(', ')}.`);
   if (cur.inputBufferLevel != null) ev.push(`Its input buffer is at ${pct(cur.inputBufferLevel, 0)}.`);

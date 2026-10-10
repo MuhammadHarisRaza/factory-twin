@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { PROCESS_MACHINES } from '../../model/plant';
+import { OPS_BY_ID, PROCESS_MACHINES } from '../../model/plant';
 import { activateScenario, advance, createSim } from '../../sim/engine';
 import { lineLossTree, lineMetrics, resolvePeriod } from '../../sim/metrics';
 import type { Metric } from '../../sim/oee';
@@ -62,7 +62,7 @@ describe('production page derivations', () => {
     advance(t, t.minute + 30);
     const after = machineLoss(t, 'E-PRS2', resolvePeriod('shift', t.minute));
     expect(after.downMin - before).toBeGreaterThanOrEqual(29);
-    expect(after.downM2).toBeCloseTo(((after.downMin * 450) / 60) * 0.36, 6);
+    expect(after.downM2).toBeCloseTo(((after.downMin * OPS_BY_ID['E-PRS2'].idealRatePerHour!) / 60) * 0.36, 6);
   });
 
   it('explains the line OEE from its underlying values', () => {

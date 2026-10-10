@@ -24,7 +24,8 @@ import {
 import type { DefectCategory, DowntimeCategory, DowntimeEvent, HourBucket, ShiftId, StageId, Vehicle } from '../model/types';
 import type { SimState } from './engine';
 import type { TruckRuntime } from './logistics';
-import { computeOee, lossTree, type OeeResult } from './oee';
+import { combineOee, computeOee, lossTree, quality, type OeeResult } from './oee';
+import { CONSUMERS, CONSUMER_BY_ID, DEFAULT_TARIFFS, type Tariffs } from './energy';
 import { MIN_PER_DAY, SHIFT_MIN, dayStart, shiftAt, shiftInstance } from './time';
 
 export type Period = { from: number; to: number; label: string };
@@ -150,24 +151,18 @@ export type LineMetrics = {
 export function lineMetrics(s: SimState, p: Period): LineMetrics {
   const constraint = machineMetrics(s, LINE.designConstraint === 'KILN' ? 'H-KILN' : 'H-KILN', p);
   const q = qualityIn(s, p);
-  const oee = computeOee({
-    plannedMin: constraint.totals.planned,
-    operatingMin: constraint.totals.operating,
-    idealCycleMin: 60 / constraint.idealRatePerHour,
-    totalCount: q.inspected,
-    goodCount: q.accepted,
-    periodMin: periodMinutes(p),
-  });
-  // Kiln count vs sorted count differ only by the small kiln-outfeed buffer; performance uses the kiln's own count.
-  oee.performance = computeOee({
+  // Availability and performance at the line constraint (kiln time accounting and its own
+  // count); quality is first-pass yield at sorting. Components come from two measurement
+  // points, so they are combined explicitly.
+  const atConstraint = computeOee({
     plannedMin: constraint.totals.planned,
     operatingMin: constraint.totals.operating,
     idealCycleMin: 60 / constraint.idealRatePerHour,
     totalCount: constraint.totals.count,
     goodCount: constraint.totals.count,
-  }).performance;
-  if (oee.availability.status === 'ok' && oee.performance.status === 'ok' && oee.quality.status === 'ok')
-    oee.oee = { value: oee.availability.value! * oee.performance.value! * oee.quality.value!, status: 'ok' };
+    periodMin: periodMinutes(p),
+  });
+  const oee = combineOee(atConstraint.availability, atConstraint.performance, quality(q.accepted, q.inspected));
   const output = lineGoodIn(s, p);
   const target = (TARGET.goodPerHour * periodMinutes(p)) / 60;
   const events = downtimeIn(s, p).filter((d) => d.category !== 'Starved' && d.category !== 'Blocked' && d.category !== 'Planned');
@@ -405,3 +400,160 @@ export function internalActivity(v: Vehicle, now: number) {
 }
 
 export const processMachines = PROCESS_MACHINES;
+
+// ── Energy ────────────────────────────────────────────────────────────────────
+
+export type EnergyRow = {
+  id: string;
+  label: string;
+  elec: number;
+  thermal: number;
+  expElec: number;
+  expThermal: number;
+  total: number;
+  expected: number;
+  /** (actual − expected) / expected; null when the consumer drew (almost) nothing. */
+  deviation: number | null;
+  cost: number;
+  expectedCost: number;
+};
+
+export function energyIn(s: SimState, p: Period, tariffs: Tariffs = DEFAULT_TARIFFS) {
+  const rows: EnergyRow[] = CONSUMERS.map((c) => {
+    let elec = 0;
+    let thermal = 0;
+    let expElec = 0;
+    let expThermal = 0;
+    for (const h of hoursIn(p)) {
+      const b = s.energy[c.id]?.get(h);
+      if (!b) continue;
+      elec += b.elec;
+      thermal += b.thermal;
+      expElec += b.expElec;
+      expThermal += b.expThermal;
+    }
+    const total = elec + thermal;
+    const expected = expElec + expThermal;
+    return {
+      id: c.id,
+      label: c.label,
+      elec,
+      thermal,
+      expElec,
+      expThermal,
+      total,
+      expected,
+      deviation: expected > 1 ? total / expected - 1 : null,
+      cost: elec * tariffs.electricity + thermal * tariffs.gas,
+      expectedCost: expElec * tariffs.electricity + expThermal * tariffs.gas,
+    };
+  });
+  const sum = (k: keyof EnergyRow) => rows.reduce((a, r) => a + (r[k] as number), 0);
+  const goodM2 = lineGoodIn(s, p) * M2_PER_TILE;
+  const total = sum('total');
+  const expected = sum('expected');
+  const cost = sum('cost');
+  const expectedCost = sum('expectedCost');
+  return {
+    rows,
+    elec: sum('elec'),
+    thermal: sum('thermal'),
+    total,
+    expected,
+    deviation: expected > 0 ? total / expected - 1 : null,
+    cost,
+    expectedCost,
+    excessCost: cost - expectedCost,
+    co2Kg: sum('elec') * tariffs.co2Electricity + sum('thermal') * tariffs.co2Gas,
+    goodM2,
+    /** Specific energy consumption, kWh per good m² (null when nothing good was made). */
+    sec: goodM2 > 0 ? total / goodM2 : null,
+    expectedSec: goodM2 > 0 ? expected / goodM2 : null,
+  };
+}
+
+/** Hourly actual vs model energy (kWh) for the period, optionally for one consumer. */
+export function energyTrend(s: SimState, p: Period, id?: string) {
+  return hoursIn(p).map((h) => {
+    let act = 0;
+    let exp = 0;
+    for (const c of CONSUMERS) {
+      if (id && c.id !== id) continue;
+      const b = s.energy[c.id]?.get(h);
+      if (!b) continue;
+      act += b.elec + b.thermal;
+      exp += b.expElec + b.expThermal;
+    }
+    return { hour: h, start: h * 60, actual: act, expected: exp };
+  });
+}
+
+/** Gas the kiln burnt while it was starved or blocked (no output) in the period, kWh. */
+export function kilnIdleBurn(s: SimState, p: Period) {
+  const c = CONSUMER_BY_ID['H-KILN'];
+  let kwh = 0;
+  for (const h of hoursIn(p)) {
+    const b = s.hours['H-KILN']?.get(h);
+    if (!b) continue;
+    kwh += ((b.starved + b.blocked) / 60) * c.thermal![0];
+  }
+  return kwh;
+}
+
+// ── Scenario impact vs the no-scenario baseline ──────────────────────────────
+
+export type Impact = {
+  period: Period;
+  outputM2: number;
+  baselineOutputM2: number;
+  deltaOutputM2: number;
+  oee: number | null;
+  baselineOee: number | null;
+  deltaOeePts: number | null;
+  downtimeMin: number;
+  deltaDowntimeMin: number;
+  rejects: number;
+  deltaRejects: number;
+  energyCost: number;
+  deltaEnergyCost: number;
+};
+
+/**
+ * Compares the live simulation with a baseline run of the same seed without scenarios.
+ * Because the engine is deterministic, the baseline is exactly "what would have happened".
+ */
+export function impactVsBaseline(s: SimState, base: SimState, p: Period, tariffs: Tariffs = DEFAULT_TARIFFS): Impact {
+  const a = lineMetrics(s, p);
+  const b = lineMetrics(base, p);
+  const ea = energyIn(s, p, tariffs);
+  const eb = energyIn(base, p, tariffs);
+  const oee = a.oee.oee.status === 'ok' ? a.oee.oee.value : null;
+  const baselineOee = b.oee.oee.status === 'ok' ? b.oee.oee.value : null;
+  return {
+    period: p,
+    outputM2: a.outputM2,
+    baselineOutputM2: b.outputM2,
+    deltaOutputM2: a.outputM2 - b.outputM2,
+    oee,
+    baselineOee,
+    deltaOeePts: oee != null && baselineOee != null ? (oee - baselineOee) * 100 : null,
+    downtimeMin: a.downtimeMin,
+    deltaDowntimeMin: a.downtimeMin - b.downtimeMin,
+    rejects: a.rejected,
+    deltaRejects: a.rejected - b.rejected,
+    energyCost: ea.cost,
+    deltaEnergyCost: ea.cost - eb.cost,
+  };
+}
+
+/** Defect rate per category in a recent window vs a reference window (for "what increased"). */
+export function defectShift(s: SimState, recentMin = 120, referenceMin = 1440) {
+  const now = s.minute;
+  const rec = qualityIn(s, { from: hourFloor(now - recentMin), to: now, label: '' });
+  const ref = qualityIn(s, { from: hourFloor(now - recentMin - referenceMin), to: hourFloor(now - recentMin), label: '' });
+  return DEFECT_ORDER.map((d) => {
+    const rateRecent = rec.inspected > 0 ? rec.byDefect[d] / rec.inspected : null;
+    const rateRef = ref.inspected > 0 ? ref.byDefect[d] / ref.inspected : null;
+    return { defect: d, label: DEFECTS[d].label, rateRecent, rateRef, ratio: rateRecent != null && rateRef ? rateRecent / rateRef : null };
+  }).sort((x, y) => (y.ratio ?? 0) - (x.ratio ?? 0));
+}

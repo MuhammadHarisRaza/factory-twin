@@ -1,18 +1,19 @@
 import { Suspense, lazy } from 'react';
 import { Expand, Presentation, RotateCcw } from 'lucide-react';
 import { useTwin } from './store';
-import { useApp } from './app/store';
+import { PERIOD_WORKSPACES, WORKSPACES, useApp } from './app/store';
 import { Header, Sidebar } from './app/Shell';
 import { ScenarioDrawer } from './app/ScenarioDrawer';
+import { CopilotDrawer } from './app/CopilotDrawer';
 import { useKeyboardShortcuts } from './useKeyboardShortcuts';
-import { ZonePanel } from './ui/ZonePanel';
-import { Inspector } from './ui/Inspector';
-import { FlowLegend, Toolbar } from './ui/Toolbar';
-import { Minimap } from './ui/Minimap';
-import { Hint, Loader, PresentationExit, SceneErrorBoundary } from './ui/Overlays';
-import { TwinStatusBar } from './ui/TwinStatusBar';
+import { Loader, PresentationExit, SceneErrorBoundary } from './ui/Overlays';
+import { TwinOverlays } from './ui/twin/TwinOverlays';
 import { ProductionPage } from './pages/ProductionPage';
 import { QualityPage } from './pages/QualityPage';
+import { MachineHealthPage } from './pages/MachineHealthPage';
+import { EnergyPage } from './pages/EnergyPage';
+import { CommandCenterPage } from './pages/CommandCenterPage';
+import { ScenarioSimulatorPage } from './pages/ScenarioSimulatorPage';
 import { FleetPage } from './pages/FleetPage';
 import { AssetsPage } from './pages/AssetsPage';
 
@@ -29,9 +30,9 @@ function TwinActions() {
         <Expand size={14} />
         <span className="btn-label">Fit</span>
       </button>
-      <button className="btn ghost" onClick={reset} title="Return to the full-factory view and clear selection (R)">
+      <button className="btn ghost" onClick={reset} title="Return to the factory overview and clear selection (R)">
         <RotateCcw size={14} />
-        <span className="btn-label">Full factory</span>
+        <span className="btn-label">Overview</span>
       </button>
       <button className="btn ghost" onClick={() => setUiHidden(true)} title="Presentation mode — hide the interface (H)">
         <Presentation size={14} />
@@ -53,28 +54,21 @@ function TwinWorkspace({ active }: { active: boolean }) {
           </Suspense>
         </SceneErrorBoundary>
       </div>
-      {active && !uiHidden && (
-        <>
-          <ZonePanel />
-          <TwinStatusBar />
-          <Inspector />
-          <Toolbar />
-          <Minimap />
-          <FlowLegend />
-          <Hint />
-        </>
-      )}
+      {active && !uiHidden && <TwinOverlays />}
       {active && <PresentationExit />}
     </div>
   );
 }
 
-const TITLES = {
-  twin: 'Factory Twin',
-  production: 'Production & OEE',
-  quality: 'Quality Intelligence',
-  fleet: 'Fleet & Logistics',
-  assets: 'Assets & Data',
+const PAGES = {
+  production: ProductionPage,
+  quality: QualityPage,
+  health: MachineHealthPage,
+  energy: EnergyPage,
+  command: CommandCenterPage,
+  scenarios: ScenarioSimulatorPage,
+  fleet: FleetPage,
+  assets: AssetsPage,
 } as const;
 
 export default function App() {
@@ -83,21 +77,21 @@ export default function App() {
   const collapsed = useApp((s) => s.navCollapsed);
   const presenting = useTwin((s) => s.uiHidden);
   const twin = workspace === 'twin';
+  const Page = twin ? null : PAGES[workspace];
+  const title = WORKSPACES.find((w) => w.id === workspace)!.title;
 
   return (
     <div className={`shell ${collapsed ? 'nav-collapsed' : ''} ${presenting ? 'presenting' : ''}`}>
       <Sidebar />
       <div className="main">
-        <Header title={TITLES[workspace]} period={workspace !== 'twin' && workspace !== 'assets'} actions={twin ? <TwinActions /> : undefined} />
+        <Header title={title} period={PERIOD_WORKSPACES.includes(workspace)} actions={twin ? <TwinActions /> : undefined} />
         <main className={`content ${twin ? 'immersive' : ''}`}>
           <TwinWorkspace active={twin} />
-          {workspace === 'production' && <ProductionPage />}
-          {workspace === 'quality' && <QualityPage />}
-          {workspace === 'fleet' && <FleetPage />}
-          {workspace === 'assets' && <AssetsPage />}
+          {Page && <Page />}
         </main>
       </div>
       <ScenarioDrawer />
+      <CopilotDrawer />
       <Loader />
     </div>
   );

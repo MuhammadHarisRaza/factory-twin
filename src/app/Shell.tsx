@@ -7,11 +7,15 @@ import {
   Database,
   FlaskConical,
   Gauge,
+  HeartPulse,
+  LayoutDashboard,
+  MessageSquareText,
   Pause,
   Play,
   ScanSearch,
   SlidersHorizontal,
   Truck,
+  Zap,
   type LucideIcon,
 } from 'lucide-react';
 import { FACTORY } from '../model/plant';
@@ -26,6 +30,10 @@ const ICONS: Record<WorkspaceId, LucideIcon> = {
   twin: Box,
   production: Gauge,
   quality: ScanSearch,
+  health: HeartPulse,
+  energy: Zap,
+  command: LayoutDashboard,
+  scenarios: FlaskConical,
   fleet: Truck,
   assets: Database,
 };
@@ -40,27 +48,30 @@ export function Sidebar() {
       <div className="nav-brand">
         <div className="mark">wAI</div>
         <div>
-          <b>Manufacturing Intelligence</b>
-          <small>Operations twin</small>
+          <b>wAI Manufacturing Digital Twin</b>
+          <small>AI-Powered Operational Intelligence</small>
         </div>
       </div>
-      <div className="nav-items">
-        {WORKSPACES.map((w) => {
-          const Icon = ICONS[w.id];
-          return (
-            <button
-              key={w.id}
-              className={`nav-item ${workspace === w.id ? 'on' : ''}`}
-              onClick={() => go(w.id)}
-              aria-current={workspace === w.id ? 'page' : undefined}
-              title={collapsed ? w.title : undefined}
-            >
-              <Icon size={17} strokeWidth={1.9} />
-              <span>{w.title}</span>
-            </button>
-          );
-        })}
-      </div>
+      {(['operations', 'platform'] as const).map((group) => (
+        <div className="nav-items" key={group}>
+          {group === 'platform' && <div className="nav-section">Logistics & data</div>}
+          {WORKSPACES.filter((w) => w.group === group).map((w) => {
+            const Icon = ICONS[w.id];
+            return (
+              <button
+                key={w.id}
+                className={`nav-item ${workspace === w.id ? 'on' : ''}`}
+                onClick={() => go(w.id)}
+                aria-current={workspace === w.id ? 'page' : undefined}
+                title={collapsed ? w.title : undefined}
+              >
+                <Icon size={17} strokeWidth={1.9} />
+                <span>{w.title}</span>
+              </button>
+            );
+          })}
+        </div>
+      ))}
       <div className="nav-foot">
         <div className="nav-note">
           Demonstration release. All operational data is simulated; no equipment, cameras or vehicles are connected.
@@ -142,6 +153,10 @@ export function Header({ title, period = false, actions }: { title: string; peri
       )}
       <div className="spacer" />
       {actions}
+      <button className="btn" onClick={() => useApp.getState().openCopilot()} title="Ask the operations copilot (rule-based, uses the current demo state)">
+        <MessageSquareText size={14} />
+        <span className="btn-label">Copilot</span>
+      </button>
       <button className={`btn ${active ? 'on' : ''}`} onClick={() => setScenariosOpen(true)} title="Simulated scenarios">
         <SlidersHorizontal size={14} />
         <span className="btn-label">Scenarios</span>

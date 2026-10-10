@@ -23,6 +23,13 @@ export const simClock = { t: DEFAULT_START };
 
 type SimStore = {
   sim: SimState;
+  /**
+   * The same seed simulated without any scenario — exactly "what would have happened".
+   * Built in the background after start-up and advanced in lockstep; null until ready.
+   */
+  baseline: SimState | null;
+  /** Incremented by Reset Demo (UI keys that must remount). */
+  resets: number;
   version: number;
   running: boolean;
   speed: number;
@@ -37,6 +44,8 @@ type SimStore = {
   clearAll: () => void;
   /** Jump forward by whole minutes (used by "skip ahead" and tests). */
   skip: (minutes: number) => void;
+  /** Build the baseline now if it is not ready yet. */
+  ensureBaseline: () => SimState;
 };
 
 export const useSim = create<SimStore>((set, get) => {
@@ -44,6 +53,8 @@ export const useSim = create<SimStore>((set, get) => {
   simClock.t = initial.minute;
   return {
     sim: initial,
+    baseline: null,
+    resets: 0,
     version: initial.version,
     running: true,
     speed: 60,
@@ -54,10 +65,23 @@ export const useSim = create<SimStore>((set, get) => {
     reset: () => {
       const sim = createSim(get().seed, DEFAULT_START);
       simClock.t = sim.minute;
-      set({ sim, version: sim.version + Math.random() });
+      set({ sim, baseline: null, resets: get().resets + 1, version: sim.version + 1000 * (get().resets + 1) });
+      scheduleBaseline();
+    },
+    ensureBaseline: () => {
+      const { baseline, sim, seed } = get();
+      if (baseline && baseline.minute === sim.minute) return baseline;
+      if (baseline) {
+        advance(baseline, sim.minute);
+        return baseline;
+      }
+      const b = createSim(seed, sim.minute);
+      set({ baseline: b });
+      return b;
     },
     activate: (def) => {
       const { sim } = get();
+      get().ensureBaseline();
       const sc = activateScenario(sim, def);
       set({ version: sim.version });
       return sc;
@@ -75,6 +99,8 @@ export const useSim = create<SimStore>((set, get) => {
     skip: (minutes) => {
       const { sim } = get();
       advance(sim, sim.minute + minutes);
+      const { baseline } = get();
+      if (baseline) advance(baseline, sim.minute);
       simClock.t = sim.minute;
       set({ version: sim.version });
     },
@@ -95,9 +121,20 @@ function tick() {
   const target = Math.floor(simClock.t);
   if (target > sim.minute) {
     advance(sim, target);
+    const { baseline } = useSim.getState();
+    if (baseline) advance(baseline, target);
     useSim.setState({ version: sim.version });
   }
 }
+
+/** Builds the baseline shortly after start-up (≈1 s of work) without blocking the first paint. */
+function scheduleBaseline() {
+  if (typeof window === 'undefined') return;
+  setTimeout(() => {
+    if (!useSim.getState().baseline) useSim.getState().ensureBaseline();
+  }, 2500);
+}
+scheduleBaseline();
 if (typeof window !== 'undefined') {
   setInterval(tick, 50);
   // Dev-only handle for console debugging and automated checks.

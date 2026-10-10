@@ -6,17 +6,25 @@
 import { create } from 'zustand';
 import { INSPECTION_STATIONS } from '../model/plant';
 import type { PeriodKey } from '../sim/metrics';
+import { DEFAULT_TARIFFS, type Tariffs } from '../sim/energy';
 import { useTwin } from '../store';
 
-export type WorkspaceId = 'twin' | 'production' | 'quality' | 'fleet' | 'assets';
+export type WorkspaceId = 'twin' | 'production' | 'quality' | 'health' | 'energy' | 'command' | 'scenarios' | 'fleet' | 'assets';
 
-export const WORKSPACES: { id: WorkspaceId; title: string; short: string }[] = [
-  { id: 'twin', title: 'Factory Twin', short: 'Twin' },
-  { id: 'production', title: 'Production & OEE', short: 'Production' },
-  { id: 'quality', title: 'Quality Intelligence', short: 'Quality' },
-  { id: 'fleet', title: 'Fleet & Logistics', short: 'Fleet' },
-  { id: 'assets', title: 'Assets & Data', short: 'Assets' },
+export const WORKSPACES: { id: WorkspaceId; title: string; short: string; group: 'operations' | 'platform' }[] = [
+  { id: 'twin', title: 'Factory Twin', short: 'Twin', group: 'operations' },
+  { id: 'production', title: 'Production & OEE', short: 'Production', group: 'operations' },
+  { id: 'quality', title: 'Quality Intelligence', short: 'Quality', group: 'operations' },
+  { id: 'health', title: 'Machine Health', short: 'Health', group: 'operations' },
+  { id: 'energy', title: 'Energy Intelligence', short: 'Energy', group: 'operations' },
+  { id: 'command', title: 'Command Center', short: 'Command', group: 'operations' },
+  { id: 'scenarios', title: 'Scenario Simulator', short: 'Scenarios', group: 'operations' },
+  { id: 'fleet', title: 'Fleet & Logistics', short: 'Fleet', group: 'platform' },
+  { id: 'assets', title: 'Assets & Data', short: 'Assets', group: 'platform' },
 ];
+
+/** Workspaces that use the shared reporting-period selector in the header. */
+export const PERIOD_WORKSPACES: WorkspaceId[] = ['production', 'quality', 'energy', 'fleet'];
 
 const fromHash = (): WorkspaceId => {
   const h = (typeof location !== 'undefined' ? location.hash : '').replace(/^#\/?/, '');
@@ -29,7 +37,15 @@ type AppState = {
   /** Reporting period shared by the analytical workspaces. */
   period: PeriodKey;
   scenariosOpen: boolean;
+  /** Illustrative energy tariffs (editable in Energy Intelligence; used everywhere costs appear). */
+  tariffs: Tariffs;
+  copilotOpen: boolean;
+  /** Question to pre-fill / ask when the copilot opens (from a link). */
+  copilotPrompt: string | null;
   go: (w: WorkspaceId) => void;
+  setTariffs: (t: Partial<Tariffs>) => void;
+  openCopilot: (prompt?: string) => void;
+  closeCopilot: () => void;
   setNavCollapsed: (v: boolean) => void;
   setPeriod: (p: PeriodKey) => void;
   setScenariosOpen: (v: boolean) => void;
@@ -40,6 +56,12 @@ export const useApp = create<AppState>((set) => ({
   navCollapsed: false,
   period: 'shift',
   scenariosOpen: false,
+  tariffs: DEFAULT_TARIFFS,
+  copilotOpen: false,
+  copilotPrompt: null,
+  setTariffs: (t) => set((s) => ({ tariffs: { ...s.tariffs, ...t } })),
+  openCopilot: (prompt) => set({ copilotOpen: true, copilotPrompt: prompt ?? null }),
+  closeCopilot: () => set({ copilotOpen: false, copilotPrompt: null }),
   go: (workspace) => {
     set({ workspace });
     if (location.hash !== `#/${workspace}`) history.replaceState(null, '', `#/${workspace}`);

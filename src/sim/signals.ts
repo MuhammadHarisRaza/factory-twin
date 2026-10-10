@@ -4,16 +4,19 @@
  * Pure and deterministic: the value is derived from the simulation state only —
  * machine runtime for state / counters / rate / alarm, buffer fill for levels, the
  * hourly quality buckets for inspection counters, logistics state for gate / dock /
- * vehicle-zone signals. Analog process values (temperatures, pressure, power, flow)
- * have no physical model in this release: they are bounded, smoothly varying values
- * from `noise01`, nudged by the relevant machine states so they stay plausible. A
+ * vehicle-zone signals, and the energy model (src/sim/energy.ts) for power and gas.
+ * Process temperatures and pressure have no physical model in this release: they are
+ * bounded, smoothly varying values from `noise01`, nudged by the relevant machine
+ * states so they stay plausible. A
  * future read-only gateway would supply the same signal ids with real values.
  */
-import { BUFFERS, DOCKS, GEOFENCES, INSPECTION_STATIONS, PROCESS_MACHINES, REASON_BY_CODE } from '../model/plant';
+import { BUFFERS, DOCKS, GEOFENCES, INSPECTION_STATIONS, REASON_BY_CODE } from '../model/plant';
 import type { MachineState } from '../model/types';
 import { findDowntime, type SimState } from './engine';
 import { internalActivity } from './metrics';
 import { noise01 } from './rng';
+import { CONSUMERS, powerNow } from './energy';
+import { HEALTH_BY_ID, sensorsAt } from './health';
 
 export type SignalReading = {
   /** Raw value: number for counters / analog, string for state / event signals, null if no value yet. */
@@ -57,6 +60,16 @@ const isStopped = (s: SimState, id: string) => {
 function analog(s: SimState, equipmentId: string, name: string): SignalReading | null {
   const t = s.minute;
   const n = (period = 15) => smooth(s.seed, `sig:${equipmentId}.${name}`, t, period);
+  if (name === 'vibration' || name === 'temperature' || name === 'motor_current') {
+    if (!HEALTH_BY_ID[equipmentId]) return null;
+    const r = sensorsAt(s, equipmentId, Math.max(0, s.minute - 1));
+    return name === 'vibration' ? num(r.vibration, 2) : name === 'temperature' ? num(r.temperature, 1) : num(r.current, 0);
+  }
+  if (name === 'energy_kwh') {
+    let kwh = 0;
+    for (const b of s.energy[equipmentId]?.values() ?? []) kwh += b.elec + b.thermal;
+    return num(kwh);
+  }
   switch (`${equipmentId}.${name}`) {
     case 'H-KILN.temp_firing':
       // Kiln thermal mass: a stop only lowers the firing zone slightly.
@@ -71,14 +84,17 @@ function analog(s: SimState, equipmentId: string, name: string): SignalReading |
       return num((isStopped(s, 'F-DRY') ? 165 : 192) + 22 * n());
     case 'A-COMP.header_pressure':
       return num(6.8 + 0.6 * n(10), 2);
+    case 'A-COMP.active_power':
+      return num(powerNow(s, 'A-COMP').elec);
     case 'A-SUB.active_power': {
-      // Base load plus a share per running process machine.
-      const running = PROCESS_MACHINES.filter((id) => !isStopped(s, id)).length / PROCESS_MACHINES.length;
-      return num(1900 + 2500 * running + 160 * (n(10) - 0.5));
+      // Site electrical demand from the energy model (sum of all consumers).
+      const kw = CONSUMERS.reduce((a, c) => a + powerNow(s, c.id).elec, 0);
+      return num(kw);
     }
     case 'A-GAS.gas_flow': {
-      const burners = (isStopped(s, 'H-KILN') ? 0.55 : 1) * 1300 + (isStopped(s, 'D-TWR') ? 0.1 : 1) * 650 + (isStopped(s, 'F-DRY') ? 0.3 : 1) * 260;
-      return num(burners + 140 * (n(12) - 0.5));
+      // Natural gas at ~10.5 kWh/Nm³ (LHV) for the kiln, hot-air generator and dryer, from the energy model.
+      const kwTh = CONSUMERS.reduce((a, c) => a + powerNow(s, c.id).thermal, 0);
+      return num(kwTh / 10.5);
     }
     case 'A-WTR.tank_level':
       return num(55 + 30 * n(120), 1);

@@ -19,6 +19,7 @@ export const METRIC_LABEL: Record<MetricId, string> = {
   rejects: 'Rejects',
   'buffer-level': 'Buffer level',
   energy: 'Energy / process',
+  health: 'Machine health',
   turnaround: 'Turnaround',
 };
 

@@ -19,11 +19,20 @@ export type Tone = 'good' | 'warning' | 'serious' | 'critical' | 'neutral' | 'pl
 export const MACHINE_STATE: Record<MachineState, { label: string; tone: Tone; icon: LucideIcon }> = {
   running: { label: 'Running', tone: 'good', icon: CircleCheck },
   reduced: { label: 'Reduced rate', tone: 'warning', icon: Gauge },
-  starved: { label: 'Starved', tone: 'neutral', icon: CirclePause },
-  blocked: { label: 'Blocked', tone: 'neutral', icon: CircleSlash },
+  starved: { label: 'Starved', tone: 'warning', icon: CirclePause },
+  blocked: { label: 'Blocked', tone: 'warning', icon: CircleSlash },
   down: { label: 'Down', tone: 'critical', icon: OctagonX },
-  planned: { label: 'Planned stop', tone: 'planned', icon: CalendarClock },
+  planned: { label: 'Planned stop', tone: 'neutral', icon: CalendarClock },
 };
+
+/**
+ * The product-wide four-state operational colour scheme:
+ * green running normally · amber warning / degraded · red stopped or critical · grey offline / planned / unavailable.
+ */
+export type OpColor = 'green' | 'amber' | 'red' | 'grey';
+export const OP_COLOR_HEX: Record<OpColor, string> = { green: '#2fb344', amber: '#fab219', red: '#e05252', grey: '#8a9bad' };
+export const toneToColor = (t: Tone): OpColor => (t === 'good' ? 'green' : t === 'warning' || t === 'serious' ? 'amber' : t === 'critical' ? 'red' : 'grey');
+export const machineColor = (state: MachineState | null | undefined): OpColor => (state ? toneToColor(MACHINE_STATE[state].tone) : 'grey');
 
 export const SEVERITY: Record<AlertSeverity, { label: string; tone: Tone; icon: LucideIcon }> = {
   info: { label: 'Info', tone: 'neutral', icon: Info },

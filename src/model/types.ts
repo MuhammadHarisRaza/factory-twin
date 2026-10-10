@@ -126,6 +126,7 @@ export type MetricId =
   | 'rejects'
   | 'buffer-level'
   | 'energy'
+  | 'health'
   | 'turnaround';
 
 // ── Runtime: equipment ────────────────────────────────────────────────────────
@@ -259,6 +260,9 @@ export type QualityInspection = {
   measurement: string | null;
   /** Rejected tiles represented by this record. */
   tiles: number;
+  /** Illustrative vision output (simulated): classification confidence 0–1 and defect box on the tile (0–1 coords). */
+  confidence: number | null;
+  box: { x: number; y: number; w: number; h: number } | null;
   source: RecordSource;
 };
 
@@ -412,7 +416,10 @@ export type ScenarioKind =
   | 'quality-deterioration'
   | 'truck-arrival'
   | 'yard-congestion'
-  | 'prolonged-dock-stay';
+  | 'prolonged-dock-stay'
+  | 'energy-anomaly'
+  | 'degradation'
+  | 'maintenance';
 
 export type ScenarioActivation = {
   id: string;

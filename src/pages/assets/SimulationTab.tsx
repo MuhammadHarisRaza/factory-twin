@@ -1,23 +1,16 @@
 import { useState } from 'react';
 import { RotateCcw } from 'lucide-react';
 import { BASE_REJECT_RATE, BUFFERS, CHANGEOVER_EVERY_MIN, LINE, M2_PER_TILE, OPS_BY_ID, STAGES, STAGE_BY_ID, TARGET } from '../../model/plant';
-import type { BufferDef, ProcessStage, ScenarioActivation, ScenarioKind } from '../../model/types';
+import type { BufferDef, ProcessStage, ScenarioActivation } from '../../model/types';
 import { SPEEDS, useSim, useSimValue } from '../../sim/store';
 import { DEFAULT_START, MIN_PER_DAY, formatDateTime, formatDuration } from '../../sim/time';
 import { DataTable, type Column } from '../../ui/kit/DataTable';
 import { fmt1, fmtInt, fmtPct } from '../../ui/kit/format';
+import { SCENARIO_KIND_LABELS } from '../../model/plant';
 import { Panel } from '../../ui/kit/Panel';
 import { SourceTag } from '../../ui/kit/Status';
 
-const SCENARIO_KIND: Record<ScenarioKind, string> = {
-  'machine-stop': 'Machine stop',
-  'reduced-rate': 'Reduced rate',
-  bottleneck: 'Bottleneck',
-  'quality-deterioration': 'Quality deterioration',
-  'truck-arrival': 'Truck arrival',
-  'yard-congestion': 'Yard congestion',
-  'prolonged-dock-stay': 'Prolonged dock stay',
-};
+const SCENARIO_KIND = SCENARIO_KIND_LABELS;
 
 const stageRate = (st: ProcessStage) => st.machines.reduce((a, id) => a + (OPS_BY_ID[id].idealRatePerHour ?? 0), 0);
 const BUF_NAME = Object.fromEntries(BUFFERS.map((b) => [b.id, b.name]));

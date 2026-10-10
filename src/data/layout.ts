@@ -175,12 +175,12 @@ export const ZONES: Zone[] = [
 export const ZONE_BY_ID: Record<string, Zone> = Object.fromEntries(ZONES.map((z) => [z.id, z]));
 
 export const VIEWS: Record<PresetId, CameraView> = {
-  full: { label: 'Full factory', pos: [112, 168, 224], target: [-18, 0, 8] },
-  hall: { label: 'Production hall', pos: [34, 74, 96], target: [-6, 0, -2] },
+  full: { label: 'Factory overview', pos: [112, 168, 224], target: [-18, 0, 8] },
+  hall: { label: 'Production line', pos: [34, 74, 96], target: [-6, 0, -2] },
   raw: { label: 'Raw materials', pos: [-58, 34, 24], target: [-92, 2, -24] },
   pressglaze: { label: 'Pressing & glazing', pos: [56, 8, -2.5], target: [6, 1.5, -18] },
   kiln: { label: 'Kiln & cooling', pos: [70, 10.5, 37], target: [28, 1.5, 14] },
-  sorting: { label: 'Quality & sorting', pos: [2, 10.5, 40], target: [-24, 1.5, 14] },
+  sorting: { label: 'Quality inspection', pos: [2, 10.5, 40], target: [-24, 1.5, 14] },
   packaging: { label: 'Packaging', pos: [-34, 10.5, 40], target: [-60, 1.5, 15] },
   warehouse: { label: 'Warehouse', pos: [-82, 27, 86], target: [-108, 1.5, 36] },
   utilities: { label: 'Utilities & maintenance', pos: [104, 58, -98], target: [50, 2, -24] },

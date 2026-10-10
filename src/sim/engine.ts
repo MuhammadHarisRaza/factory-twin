@@ -45,6 +45,8 @@ import type {
   StageId,
 } from '../model/types';
 import { createLogistics, stepLogistics, applyLogisticsScenario, type LogisticsState } from './logistics';
+import { CONSUMERS, stepEnergy, type EnergyBucket } from './energy';
+import { createHealth, degradationLoad, startMaintenance, stepHealth, type HealthState } from './health';
 import { expBounded, lerpRange, noise01, streamFor, weighted, type Rng } from './rng';
 import { DEFAULT_START, SHIFT_MIN, formatDate } from './time';
 
@@ -70,6 +72,9 @@ export type SimState = {
   scenarios: ScenarioActivation[];
   alerts: Alert[];
   logistics: LogisticsState;
+  /** Consumer id → hour → energy (kWh). */
+  energy: Record<string, Map<number, EnergyBucket>>;
+  health: HealthState;
   /** Internal bookkeeping (not for display). */
   internal: Internal;
   /** Incremented on every change; UI memoisation key. */
@@ -86,6 +91,8 @@ type Internal = {
   /** Fractional reject accumulators per station+defect for record emission. */
   recordAcc: Record<string, number>;
   qualityRng: Rng;
+  /** Separate stream for illustrative vision detections (keeps quality records stable). */
+  cvRng: Rng;
   palletAcc: number;
   seq: number;
   /** Last minute an alert of a given key fired (de-duplication). */
@@ -129,6 +136,8 @@ export function createSim(seed = DEFAULT_SEED, startMinute = DEFAULT_START): Sim
     scenarios: [],
     alerts: [],
     logistics: createLogistics(seed),
+    energy: {},
+    health: createHealth(seed),
     internal: {
       failRng: {},
       nextFailure: {},
@@ -136,6 +145,7 @@ export function createSim(seed = DEFAULT_SEED, startMinute = DEFAULT_START): Sim
       spell: {},
       recordAcc: {},
       qualityRng: streamFor(seed, 'quality'),
+      cvRng: streamFor(seed, 'cv'),
       palletAcc: 0,
       seq: 0,
       alertAt: {},
@@ -179,6 +189,10 @@ function stepMinute(s: SimState) {
   applyScenarioStops(s, t);
   endFinishedDowntime(s, t);
   produce(s, t);
+  const active = activeScenarios(s, t);
+  stepEnergy(s, t, active, degradationLoad(s, t));
+  if (t % 15 === 0) energyAlerts(s, t);
+  stepHealth(s, t);
   stepLogistics(s, t);
   s.minute = t + 1;
 }
@@ -238,7 +252,7 @@ function startFailures(s: SimState, t: number) {
 /** End time scheduled for an open downtime event (not exposed in the record until it ends). */
 const scheduledEnd = new WeakMap<DowntimeEvent, number | null>();
 
-function openDowntime(
+export function openDowntime(
   s: SimState,
   equipmentId: string,
   reasonCode: string,
@@ -330,6 +344,26 @@ function scenarioRate(s: SimState, id: string, stage: StageId, t: number) {
 
 export function activateScenario(s: SimState, def: Omit<ScenarioActivation, 'id' | 'start'> & { start?: number }) {
   const sc: ScenarioActivation = { ...def, id: nextId(s, 'SCN'), start: def.start ?? s.minute };
+  if (sc.kind === 'degradation' && sc.equipmentId) {
+    // A developing fault: starts mildly abnormal and progresses towards failure.
+    s.health.episodes.push({
+      id: nextId(s, 'DG'),
+      equipmentId: sc.equipmentId,
+      start: sc.start,
+      startSeverity: 0.3,
+      ratePerMin: sc.factor ?? 0.0068,
+      end: null,
+      endReason: null,
+      cause: 'Developing component fault (scenario)',
+      source: 'scenario',
+      scenarioId: sc.id,
+    });
+  }
+  if (sc.kind === 'maintenance' && sc.equipmentId) {
+    const duration = sc.count ?? 45;
+    startMaintenance(s, sc.equipmentId, duration, sc.id);
+    sc.end = sc.start + duration;
+  }
   // One-off logistics injections are applied at once; they are logged, not left "active".
   if (sc.kind === 'truck-arrival' || sc.kind === 'yard-congestion' || sc.kind === 'prolonged-dock-stay') sc.end = sc.start + 1;
   s.scenarios.push(sc);
@@ -349,6 +383,12 @@ export function clearScenario(s: SimState, id: string) {
     const ev = m.activeDowntimeId ? findDowntime(s, m.activeDowntimeId) : undefined;
     if (ev?.scenarioId === sc.id) closeDowntime(s, ev, s.minute);
   }
+  if (sc.kind === 'degradation')
+    for (const e of s.health.episodes)
+      if (e.scenarioId === sc.id && e.end == null) {
+        e.end = s.minute;
+        e.endReason = 'maintenance';
+      }
   raiseAlert(s, s.minute, 'info', `Scenario cleared: ${sc.label}`, 'Simulated scenario input', { equipmentId: sc.equipmentId }, 'scenario');
   s.version++;
 }
@@ -584,6 +624,8 @@ function inspect(s: SimState, t: number, hour: number, inspected: number) {
       severity: pass ? null : 'minor',
       measurement: `Water absorption ${wa} % · MOR ${mor} N/mm²${pass ? '' : ' · retest requested'}`,
       tiles: 5,
+      confidence: null,
+      box: null,
       source: 'simulation',
     });
   }
@@ -640,8 +682,34 @@ function pushInspection(s: SimState, t: number, stationId: string, batchIdValue:
     severity: sev,
     measurement: MEASURE[defect](r),
     tiles: TILES_PER_RECORD,
+    ...detection(s.internal.cvRng, defect),
     source: activeScenarios(s, t).some((sc) => sc.kind === 'quality-deterioration') ? 'scenario' : 'simulation',
   });
+}
+
+/** Illustrative defect box (tile coordinates 0–1) and classification confidence for a record. */
+function detection(r: Rng, defect: DefectCategory): Pick<QualityInspection, 'confidence' | 'box'> {
+  const confidence = Math.round((0.78 + r() * 0.21) * 1000) / 1000;
+  const at = (w: number, h: number) => ({ x: 0.06 + r() * (0.88 - w), y: 0.06 + r() * (0.88 - h), w, h });
+  const corner = () => {
+    const w = 0.1 + r() * 0.06;
+    return { x: r() > 0.5 ? 0 : 1 - w, y: r() > 0.5 ? 0 : 1 - w, w, h: w };
+  };
+  const box =
+    defect === 'crack'
+      ? at(0.12 + r() * 0.1, 0.35 + r() * 0.3)
+      : defect === 'chip'
+        ? corner()
+        : defect === 'surface'
+          ? at(0.1 + r() * 0.08, 0.1 + r() * 0.08)
+          : defect === 'glaze'
+            ? at(0.25 + r() * 0.2, 0.18 + r() * 0.15)
+            : defect === 'shade'
+              ? at(0.45 + r() * 0.2, 0.45 + r() * 0.2)
+              : defect === 'planarity'
+                ? { x: 0.04, y: 0.04, w: 0.92, h: 0.92 }
+                : { x: 0, y: 0.3 + r() * 0.3, w: 0.08, h: 0.3 };
+  return { confidence, box };
 }
 
 function pushRecord(s: SimState, rec: QualityInspection) {
@@ -652,6 +720,27 @@ function pushRecord(s: SimState, rec: QualityInspection) {
 export function batchAt(s: SimState, t: number): ProductionBatch {
   for (let i = s.batches.length - 1; i >= 0; i--) if (s.batches[i].start <= t) return s.batches[i];
   return s.batches[0];
+}
+
+// ── Energy alerts ─────────────────────────────────────────────────────────────
+
+/** Flags consumers whose last-hour consumption deviates > 10 % from the energy model. */
+function energyAlerts(s: SimState, t: number) {
+  const hour = Math.floor((t - 1) / 60);
+  for (const c of CONSUMERS) {
+    const b = s.energy[c.id]?.get(hour);
+    if (!b) continue;
+    const exp = b.expElec + b.expThermal;
+    const act = b.elec + b.thermal;
+    if (exp < 20) continue;
+    const dev = act / exp - 1;
+    const key = `energy:${c.id}`;
+    if (dev > 0.1 && t - (s.internal.alertAt[key] ?? -1e9) > 120) {
+      s.internal.alertAt[key] = t;
+      const scen = activeScenarios(s, t).some((sc) => sc.kind === 'energy-anomaly' && sc.equipmentId === c.id);
+      raiseAlert(s, t, 'serious', `Energy anomaly: ${c.id}`, `${c.label} consumption ${(dev * 100).toFixed(0)} % above the energy model this hour`, { equipmentId: c.id }, scen ? 'scenario' : 'simulation');
+    }
+  }
 }
 
 // ── Alerts ────────────────────────────────────────────────────────────────────

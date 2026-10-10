@@ -89,10 +89,19 @@ export function computeOee(inputs: OeeInputs): OeeResult {
   const a = availability(inputs.plannedMin, inputs.operatingMin, inputs.periodMin);
   const p = performance(inputs.idealCycleMin, inputs.totalCount, inputs.operatingMin);
   const q = quality(inputs.goodCount, inputs.totalCount);
+  return combineOee(a, p, q);
+}
+
+/**
+ * OEE from already-computed components. Used directly when the components come from
+ * different measurement points (line OEE: A and P at the constraint, Q at inspection).
+ */
+export function combineOee(a: Metric, p: Metric, q: Metric): OeeResult {
   const parts = [a, p, q];
   const issues = parts.filter((m) => m.issue).map((m) => m.issue!);
   let oee: Metric;
   if (parts.some((m) => m.status === 'invalid')) oee = invalid('One or more components are invalid');
+  // A genuine zero availability (no operating time at all) means zero OEE, whatever P and Q are.
   else if (a.status === 'ok' && a.value === 0) oee = ok(0);
   else if (parts.some((m) => m.status === 'unavailable')) oee = unavailable('One or more components are unavailable');
   else oee = ok(a.value! * p.value! * q.value!);

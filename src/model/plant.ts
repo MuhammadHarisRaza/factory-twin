@@ -21,6 +21,7 @@ import type {
   Product,
   ProductionLine,
   ProductionTarget,
+  ScenarioKind,
   SignalDef,
   StageId,
   ZoneId,
@@ -84,6 +85,20 @@ export const OUTPUT_BUFFER: Record<StageId, string | null> = Object.fromEntries(
 
 export const TARGET: ProductionTarget = { lineId: 'LINE-1', goodPerHour: Math.round(1250 * 0.85), oeeTarget: 0.85 };
 
+/** Display names of scenario kinds (shared by every workspace). */
+export const SCENARIO_KIND_LABELS: Record<ScenarioKind, string> = {
+  'machine-stop': 'Machine breakdown',
+  'reduced-rate': 'Reduced production rate',
+  bottleneck: 'Production bottleneck',
+  'quality-deterioration': 'Quality deterioration',
+  'truck-arrival': 'Truck arrival',
+  'yard-congestion': 'Yard congestion',
+  'prolonged-dock-stay': 'Prolonged dock stay',
+  'energy-anomaly': 'Energy anomaly',
+  degradation: 'Developing machine fault',
+  maintenance: 'Condition-based maintenance',
+};
+
 export const DOWNTIME_REASONS: DowntimeReason[] = [
   { code: 'MECH_HYD', label: 'Hydraulic pressure fault', category: 'Mechanical', planned: false },
   { code: 'MECH_DIE', label: 'Die / punch damage', category: 'Mechanical', planned: false },
@@ -107,6 +122,7 @@ export const DOWNTIME_REASONS: DowntimeReason[] = [
   { code: 'STARVED', label: 'Starved — no input', category: 'Starved', planned: false },
   { code: 'BLOCKED', label: 'Blocked — output full', category: 'Blocked', planned: false },
   { code: 'PLN_CLEAN', label: 'Planned cleaning', category: 'Planned', planned: true },
+  { code: 'PLN_MAINT', label: 'Condition-based maintenance', category: 'Planned', planned: true },
   { code: 'SCN_STOP', label: 'Simulated breakdown (scenario)', category: 'Mechanical', planned: false },
 ];
 export const REASON_BY_CODE = Object.fromEntries(DOWNTIME_REASONS.map((r) => [r.code, r]));
@@ -324,11 +340,19 @@ const ANALOG: Record<string, [string, string][]> = {
     ['powder_moisture', '%'],
   ],
   'F-DRY': [['temp_deck', '°C']],
-  'A-COMP': [['header_pressure', 'bar']],
+  'A-COMP': [
+    ['header_pressure', 'bar'],
+    ['active_power', 'kW'],
+  ],
   'A-SUB': [['active_power', 'kW']],
   'A-GAS': [['gas_flow', 'Nm³/h']],
   'A-WTR': [['tank_level', '%']],
 };
+
+/** Assets with (simulated) condition-monitoring sensors — see src/sim/health.ts. */
+export const CONDITION_MONITORED = ['C-BM1', 'C-BM2', 'C-BM3', 'D-TWR', 'E-PRS1', 'E-PRS2', 'E-PRS3', 'F-DRY', 'H-KILN', 'J-PAL'];
+/** Assets with a (simulated) energy meter — see src/sim/energy.ts. */
+export const ENERGY_METERED = ['C-BM1', 'C-BM2', 'C-BM3', 'D-TWR', 'D-HAG', 'E-PRS1', 'E-PRS2', 'E-PRS3', 'F-DRY', 'G-LINE', 'G-INK', 'H-KILN', 'I-SORT', 'J-BOX', 'J-PAL', 'A-COMP', 'A-SUB'];
 
 export const SIGNALS: SignalDef[] = [];
 const signal = (equipmentId: string, name: string, unit: string, kind: SignalDef['kind'], metrics: SignalDef['metrics']) => {
@@ -360,6 +384,13 @@ export const EQUIPMENT_OPS: EquipmentOps[] = EQUIPMENT.map((e) => {
   if (e.id === 'K-DOCK') sigs.push(signal(e.id, 'dock_occupancy', 'docks', 'analog', ['turnaround']));
   if (e.id === 'K-FLT' || e.id === 'B-LOAD') sigs.push(signal(e.id, 'vehicle_zone', 'zone id', 'event', []));
   for (const [name, unit] of ANALOG[e.id] ?? []) sigs.push(signal(e.id, name, unit, 'analog', ['energy']));
+  if (CONDITION_MONITORED.includes(e.id)) {
+    sigs.push(signal(e.id, 'vibration', 'mm/s RMS', 'analog', ['health']));
+    sigs.push(signal(e.id, 'temperature', '°C', 'analog', ['health']));
+    sigs.push(signal(e.id, 'motor_current', 'A', 'analog', ['health']));
+  }
+  if (ENERGY_METERED.includes(e.id) && !(ANALOG[e.id] ?? []).some(([n]) => n === 'active_power'))
+    sigs.push(signal(e.id, 'energy_kwh', 'kWh', 'counter', ['energy']));
   return {
     id: e.id,
     category: categoryFor(e.id, zone),

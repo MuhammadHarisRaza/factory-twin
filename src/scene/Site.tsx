@@ -134,7 +134,7 @@ export function SiteDetails() {
         <group position={[41, 0, 64]}>
           <Box p={[0, 4, 0]} s={[34, 8, 14]} m={MAT.machine} />
           {[2.2, 5.4].map((y) => (
-            <Box key={y} p={[0, y, 7.03]} s={[32, 1.6, 0.06]} m={MAT.screen} cast={false} />
+            <Box key={y} p={[0, y, 7.03]} s={[32, 1.6, 0.06]} m={MAT.curtainGlass} cast={false} />
           ))}
           <Box p={[0, 8.2, 0]} s={[34.6, 0.4, 14.6]} m={MAT.machineDark} />
           {/* Entrance canopy */}

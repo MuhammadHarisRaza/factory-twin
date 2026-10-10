@@ -1,10 +1,11 @@
-import { Suspense, useEffect, useMemo, useRef } from 'react';
+import { Suspense, useEffect, useMemo, useRef, useState } from 'react';
 import { Canvas, useFrame, useThree } from '@react-three/fiber';
-import { Html, OrbitControls } from '@react-three/drei';
+import { Html, OrbitControls, PerformanceMonitor } from '@react-three/drei';
+import { EffectComposer, N8AO } from '@react-three/postprocessing';
 import { ACESFilmicToneMapping, DirectionalLight, MathUtils, PMREMGenerator, Vector3 } from 'three';
 import { RoomEnvironment } from 'three/examples/jsm/environments/RoomEnvironment.js';
 import type { OrbitControls as OrbitControlsImpl } from 'three-stdlib';
-import { minimapCamera, useTwin } from '../store';
+import { CAMERA_FOV, minimapCamera, useTwin } from '../store';
 import { SITE, VIEWS, ZONES } from '../data/layout';
 import { Ground } from './Ground';
 import { Buildings } from './Buildings';
@@ -25,10 +26,45 @@ import { Maintenance } from './zones/Maintenance';
 
 const SITE_CENTER = new Vector3((SITE.x[0] + SITE.x[1]) / 2, 0, (SITE.z[0] + SITE.z[1]) / 2);
 
+type Flight = {
+  fromPos: Vector3;
+  fromTarget: Vector3;
+  toPos: Vector3;
+  toTarget: Vector3;
+  /** Seconds. */
+  duration: number;
+  elapsed: number;
+  /** Extra height at mid-flight so long moves arc over the buildings. */
+  lift: number;
+};
+
+const easeInOutCubic = (t: number) => (t < 0.5 ? 4 * t * t * t : 1 - (-2 * t + 2) ** 3 / 2);
+
 /**
- * Eases the camera towards the latest store request (view preset, zone, focus,
- * minimap click or "fit"), keeps the orbit target inside the site, and
- * publishes the camera position for the minimap. Any user drag cancels a flight.
+ * Presets are composed for a ~16:10 canvas. On narrower canvases the vertical field of
+ * view widens so the horizontal coverage stays the same, instead of moving the camera
+ * (which would push interior views into the steelwork).
+ */
+function ResponsiveFov() {
+  const camera = useThree((s) => s.camera);
+  const size = useThree((s) => s.size);
+  useEffect(() => {
+    if (!('fov' in camera)) return;
+    const aspect = size.width / size.height;
+    const reference = 1.6;
+    const half = (CAMERA_FOV * Math.PI) / 360;
+    const fov =
+      aspect >= reference ? CAMERA_FOV : (2 * Math.atan((Math.tan(half) * reference) / aspect) * 180) / Math.PI;
+    camera.fov = Math.min(fov, 52);
+    camera.updateProjectionMatrix();
+  }, [camera, size]);
+  return null;
+}
+
+/**
+ * Flies the camera to the latest store request (view preset, zone, equipment focus,
+ * minimap click or "fit") along an eased path, keeps the orbit target inside the
+ * site, and publishes the camera position for the minimap. A user drag cancels a flight.
  */
 function CameraRig() {
   const request = useTwin((s) => s.camera);
@@ -36,13 +72,29 @@ function CameraRig() {
   const controls = useThree((s) => s.controls) as OrbitControlsImpl | null;
   const camera = useThree((s) => s.camera);
   const size = useThree((s) => s.size);
-  const flight = useRef<{ pos: Vector3; target: Vector3 } | null>(null);
+  const flight = useRef<Flight | null>(null);
+
+  const startFlight = (toPos: Vector3, toTarget: Vector3) => {
+    if (!controls) return;
+    const fromPos = camera.position.clone();
+    const fromTarget = controls.target.clone();
+    const travel = Math.max(fromPos.distanceTo(toPos), fromTarget.distanceTo(toTarget));
+    flight.current = {
+      fromPos,
+      fromTarget,
+      toPos,
+      toTarget,
+      duration: MathUtils.clamp(0.75 + travel / 220, 0.8, 2.1),
+      elapsed: 0,
+      lift: travel > 60 ? Math.min(35, travel * 0.12) : 0,
+    };
+  };
 
   useEffect(() => {
-    flight.current = { pos: new Vector3(...request.pos), target: new Vector3(...request.target) };
+    startFlight(new Vector3(...request.pos), new Vector3(...request.target));
     // Only a new nonce starts a flight; the coordinates come along with it.
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [request.nonce]);
+  }, [request.nonce, controls]);
 
   useEffect(() => {
     if (!fitNonce || !('fov' in camera)) return;
@@ -52,7 +104,7 @@ function CameraRig() {
     const hFov = 2 * Math.atan(Math.tan(vFov / 2) * (size.width / size.height));
     const distance = (radius / Math.sin(Math.min(vFov, hFov) / 2)) * 0.82;
     const dir = new Vector3(...VIEWS.full.pos).sub(new Vector3(...VIEWS.full.target)).normalize();
-    flight.current = { pos: SITE_CENTER.clone().add(dir.multiplyScalar(distance)), target: SITE_CENTER.clone() };
+    startFlight(SITE_CENTER.clone().add(dir.multiplyScalar(distance)), SITE_CENTER.clone());
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [fitNonce]);
 
@@ -69,12 +121,13 @@ function CameraRig() {
     if (!controls) return;
     const f = flight.current;
     if (f) {
-      const t = 1 - Math.exp(-dt * 2.8);
-      state.camera.position.lerp(f.pos, t);
-      controls.target.lerp(f.target, t);
-      if (state.camera.position.distanceTo(f.pos) < 0.08 && controls.target.distanceTo(f.target) < 0.08) {
-        flight.current = null;
-      }
+      f.elapsed += Math.min(dt, 0.05);
+      const t = Math.min(1, f.elapsed / f.duration);
+      const e = easeInOutCubic(t);
+      state.camera.position.lerpVectors(f.fromPos, f.toPos, e);
+      state.camera.position.y += Math.sin(Math.PI * e) * f.lift;
+      controls.target.lerpVectors(f.fromTarget, f.toTarget, e);
+      if (t >= 1) flight.current = null;
     }
     const target = controls.target;
     target.x = MathUtils.clamp(target.x, SITE.x[0] - 20, SITE.x[1] + 20);
@@ -120,12 +173,21 @@ function Environment() {
     const pmrem = new PMREMGenerator(gl);
     const texture = pmrem.fromScene(new RoomEnvironment(), 0.04).texture;
     scene.environment = texture;
-    scene.environmentIntensity = 0.45;
+    scene.environmentIntensity = 0.55;
     return () => {
       texture.dispose();
       pmrem.dispose();
     };
   }, [gl, scene]);
+  return null;
+}
+
+/** Dev-only: exposes the renderer, scene and camera for console profiling. */
+function DevHandles() {
+  const { gl, scene, camera } = useThree();
+  useEffect(() => {
+    if (import.meta.env.DEV) Object.assign(window, { r3f: { gl, scene, camera } });
+  }, [gl, scene, camera]);
   return null;
 }
 
@@ -140,7 +202,7 @@ function ReadySignal() {
 }
 
 function Lights() {
-  const sun = useMemo(() => new DirectionalLight('#fff6ea', 2.3), []);
+  const sun = useMemo(() => new DirectionalLight('#fff3e3', 2.5), []);
   useEffect(() => {
     sun.position.set(-90, 160, 110);
     sun.target.position.set(-10, 0, 10);
@@ -153,13 +215,14 @@ function Lights() {
     cam.bottom = -130;
     cam.near = 20;
     cam.far = 420;
-    sun.shadow.bias = -6e-4;
-    sun.shadow.normalBias = 0.6;
+    sun.shadow.bias = -4e-4;
+    sun.shadow.normalBias = 0.45;
+    sun.shadow.radius = 3;
     cam.updateProjectionMatrix();
   }, [sun]);
   return (
     <>
-      <hemisphereLight args={['#dde7f0', '#7d7466', 0.7]} />
+      <hemisphereLight args={['#dfe7ee', '#8a8172', 0.62]} />
       <primitive object={sun} />
       <primitive object={sun.target} />
       <directionalLight position={[120, 60, -80]} intensity={0.35} color="#cfe0ff" />
@@ -167,17 +230,47 @@ function Lights() {
   );
 }
 
-/** Clickable zone name tags on the ground (hidden in flow mode). */
+/**
+ * How visible a world-space label should be for the current camera: everything shows in
+ * overview shots; in close shots only labels near the point of interest remain, so tags
+ * from distant zones don't float over (or through) the machinery being inspected.
+ */
+export function labelOpacity(camera: Vector3, target: Vector3, x: number, z: number) {
+  const height = camera.y;
+  if (height > 70) return 1;
+  const reach = MathUtils.lerp(28, 120, MathUtils.clamp((height - 8) / 62, 0, 1));
+  const d = Math.hypot(x - target.x, z - target.z);
+  return MathUtils.clamp(1 - (d - reach) / 18, 0, 1);
+}
+
+/** Clickable zone name tags on the ground (hidden in flow mode), faded by relevance. */
 function ZoneLabels() {
   const visible = useTwin((s) => s.layers.labels && !s.layers.flow);
   const activeZone = useTwin((s) => s.zone);
   const selectZone = useTwin((s) => s.selectZone);
+  const controls = useThree((s) => s.controls) as OrbitControlsImpl | null;
+  const refs = useRef<(HTMLButtonElement | null)[]>([]);
+
+  useFrame(({ camera }) => {
+    if (!visible || !controls) return;
+    ZONES.forEach((zone, i) => {
+      const el = refs.current[i];
+      if (!el) return;
+      const o = zone.id === activeZone ? 1 : labelOpacity(camera.position, controls.target, zone.label[0], zone.label[1]);
+      el.style.opacity = o.toFixed(2);
+      el.style.pointerEvents = o < 0.3 ? 'none' : '';
+    });
+  });
+
   if (!visible) return null;
   return (
     <>
-      {ZONES.map((zone) => (
+      {ZONES.map((zone, i) => (
         <Html key={zone.id} position={[zone.label[0], 0.5, zone.label[1]]} center zIndexRange={[8, 0]}>
           <button
+            ref={(el) => {
+              refs.current[i] = el;
+            }}
             className={`zone-tag ${activeZone === zone.id ? 'on' : ''}`}
             onClick={() => selectZone(zone.id)}
             title={`Go to ${zone.name}`}
@@ -212,21 +305,44 @@ function Equipment() {
   );
 }
 
+/**
+ * Screen-space ambient occlusion grounds the procedural geometry (contact darkening
+ * under machines, in rack bays and truss joints). MSAA comes from the composer.
+ */
+function Effects() {
+  return (
+    <EffectComposer multisampling={4} enableNormalPass={false}>
+      <N8AO aoRadius={2.4} distanceFalloff={0.9} intensity={2.2} quality="medium" halfRes color="#1c2026" />
+    </EffectComposer>
+  );
+}
+
 export default function Scene() {
   const start = VIEWS.full;
+  // Drops ambient occlusion and resolution on slow GPUs; never re-enables mid-session
+  // to avoid quality flicker during a presentation.
+  const [highQuality, setHighQuality] = useState(true);
+  const [dpr, setDpr] = useState(1.75);
   return (
     <Canvas
-      shadows
-      dpr={[1, 1.75]}
-      camera={{ position: start.pos, fov: 32, near: 1, far: 1600 }}
+      shadows="percentage"
+      dpr={dpr}
+      camera={{ position: start.pos, fov: CAMERA_FOV, near: 1, far: 1600 }}
       gl={{ antialias: true, powerPreference: 'high-performance' }}
       onCreated={({ gl }) => {
         gl.toneMapping = ACESFilmicToneMapping;
-        gl.toneMappingExposure = 1;
+        gl.toneMappingExposure = 1.05;
       }}
     >
-      <color attach="background" args={['#d7dee5']} />
-      <fog attach="fog" args={['#d7dee5', 380, 900]} />
+      <PerformanceMonitor
+        onDecline={() => {
+          setHighQuality(false);
+          setDpr(1);
+        }}
+        flipflops={1}
+      />
+      <color attach="background" args={['#d9e0e6']} />
+      <fog attach="fog" args={['#d9e0e6', 380, 900]} />
       <Lights />
       <Environment />
       <ShadowRefresher />
@@ -250,8 +366,11 @@ export default function Scene() {
         maxDistance={480}
         screenSpacePanning={false}
       />
+      <ResponsiveFov />
       <CameraRig />
       <ReadySignal />
+      <DevHandles />
+      {highQuality && <Effects />}
     </Canvas>
   );
 }

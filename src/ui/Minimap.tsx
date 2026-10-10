@@ -85,6 +85,7 @@ export function Minimap() {
           zone.rects.map((r, i) => (
             <rect
               key={zone.id + i}
+              className="mm-zone"
               {...rect(r)}
               fill={zone.color}
               fillOpacity={activeZone === zone.id ? 0.55 : 0.16}

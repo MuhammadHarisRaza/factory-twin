@@ -1,5 +1,5 @@
 import { useMemo } from 'react';
-import { SPRAY_TOWER } from '../data/layout';
+import { HALL, HALL_FRAMES, SPRAY_TOWER } from '../data/layout';
 import type { Vec2 } from '../data/types';
 import { useTwin } from '../store';
 import { BUILDING_FRAMES, type BuildingFrame } from './buildings/frames';
@@ -23,13 +23,25 @@ function frameMembers(b: BuildingFrame) {
   const cols: Instance[] = [];
   const members: Instance[] = [];
   const purlins: Instance[] = [];
+  const bases: Instance[] = [];
+  const eaves: Instance[] = [];
   const columnLines = [...new Set(b.spans.flat())];
   const { x } = b.rect;
   const length = x[1] - x[0];
   const cx = (x[0] + x[1]) / 2;
 
   for (const fx of b.frames) {
-    for (const z of columnLines) cols.push({ p: [fx, b.eave / 2, z], s: [0.45, b.eave, 0.45] });
+    for (const z of columnLines) {
+      // Universal-column I-section: web in the frame plane, flanges either side.
+      cols.push({ p: [fx, b.eave / 2, z], s: [0.04, b.eave, 0.42] });
+      for (const f of [-0.2, 0.2]) cols.push({ p: [fx, b.eave / 2, z + f], s: [0.32, b.eave, 0.04] });
+      bases.push({ p: [fx, 0.05, z], s: [0.7, 0.1, 0.7] });
+      // Knee braces from the column into the rafter / bottom chord.
+      for (const dir of [-1, 1]) {
+        if ((dir < 0 && z === columnLines[0]) || (dir > 0 && z === columnLines[columnLines.length - 1])) continue;
+        members.push(member(fx, [z, b.eave - 2.6], [z + dir * 1.8, b.eave - 0.3], 0.14));
+      }
+    }
     for (const [z0, z1] of b.spans) {
       const ridgeZ = (z0 + z1) / 2;
       const ridgeY = b.eave + b.rise;
@@ -69,10 +81,22 @@ function frameMembers(b: BuildingFrame) {
       }
     }
   }
-  // Eave beams / gutters
-  for (const z of columnLines) purlins.push({ p: [cx, b.eave - 0.2, z], s: [length, 0.4, 0.25] });
+  // Eave beams tie the frames together along each column line.
+  for (const z of columnLines) eaves.push({ p: [cx, b.eave - 0.2, z], s: [length, 0.4, 0.25] });
+  // Wind bracing in the end bays, on the closed north wall line only so the
+  // cut-away south side stays unobstructed.
+  for (const z of [columnLines[0]])
+    for (const [xa, xb] of [
+      [b.frames[0], b.frames[1]],
+      [b.frames[b.frames.length - 2], b.frames[b.frames.length - 1]],
+    ]) {
+      const len = Math.hypot(xb - xa, b.eave - 1);
+      const ang = Math.atan2(b.eave - 1, xb - xa);
+      for (const sgn of [1, -1])
+        eaves.push({ p: [(xa + xb) / 2, (b.eave + 1) / 2, z], s: [len, 0.07, 0.07], r: [0, 0, sgn * ang] });
+    }
 
-  return { cols, members, purlins };
+  return { cols, members, purlins, bases, eaves };
 }
 
 /** Steel frame of the spray-dryer tower: columns, ring beams, access decks and a stair stringer. */
@@ -114,9 +138,37 @@ function sprayTowerMembers() {
   return { cols, beams, decks };
 }
 
+/**
+ * Building services hung from the hall trusses: cable-tray runs along both process
+ * lines (with drop rods at every frame) and a grid of high-bay luminaires.
+ */
+function hallServices() {
+  const trays: Instance[] = [];
+  const rods: Instance[] = [];
+  const housings: Instance[] = [];
+  const lenses: Instance[] = [];
+  const x0 = HALL.rect.x[0] + 2;
+  const x1 = HALL.rect.x[1] - 2;
+  for (const z of [-5.5, 8.5]) {
+    const y = 8.4;
+    trays.push({ p: [(x0 + x1) / 2, y, z], s: [x1 - x0, 0.08, 0.6] });
+    for (const side of [-0.3, 0.3]) trays.push({ p: [(x0 + x1) / 2, y + 0.08, z + side], s: [x1 - x0, 0.16, 0.03] });
+    for (const fx of HALL_FRAMES)
+      if (fx > x0 && fx < x1)
+        for (const side of [-0.32, 0.32]) rods.push({ p: [fx, (y + 10.4) / 2, z + side], s: [0.03, 10.4 - y, 0.03] });
+  }
+  for (let x = HALL.rect.x[0] + 7.6; x < HALL.rect.x[1]; x += 15.2)
+    for (const z of [-22, -8, 8, 22]) {
+      housings.push({ p: [x, 9.95, z], s: [0.32, 0.35, 0.32] });
+      lenses.push({ p: [x, 9.76, z], s: [0.3, 0.03, 0.3] });
+    }
+  return { trays, rods, housings, lenses };
+}
+
 /** All primary steelwork, instanced per material; follows the structure layer. */
 export function Structure() {
   const visible = useTwin((s) => s.layers.structure);
+  const roofOn = useTwin((s) => s.layers.roof);
   const parts = useMemo(() => {
     const frames = BUILDING_FRAMES.map(frameMembers);
     const tower = sprayTowerMembers();
@@ -124,15 +176,27 @@ export function Structure() {
       cols: [...frames.flatMap((f) => f.cols), ...tower.cols],
       members: [...frames.flatMap((f) => f.members), ...tower.beams],
       purlins: frames.flatMap((f) => f.purlins),
+      bases: frames.flatMap((f) => f.bases),
+      eaves: frames.flatMap((f) => f.eaves),
       decks: tower.decks,
+      services: hallServices(),
     };
   }, []);
   return (
     <group visible={visible}>
       <Instances items={parts.cols} m={MAT.steel} />
       <Instances items={parts.members} m={MAT.truss} />
-      <Instances items={parts.purlins} m={MAT.steelLight} cast={false} />
+      <Instances items={parts.eaves} m={MAT.truss} cast={false} />
+      <Instances items={parts.bases} m={MAT.concreteWall} cast={false} />
+      {/* Purlins and luminaires hang from the roof build-up: hidden with the roof so the cutaway stays clean. */}
+      <group visible={roofOn}>
+        <Instances items={parts.purlins} m={MAT.steelLight} cast={false} />
+        <Instances items={parts.services.housings} m={MAT.machineDark} cyl cast={false} />
+        <Instances items={parts.services.lenses} m={MAT.lamp} cyl cast={false} />
+      </group>
       <Instances items={parts.decks} m={MAT.galvanised} />
+      <Instances items={parts.services.trays} m={MAT.cableTray} cast={false} />
+      <Instances items={parts.services.rods} m={MAT.cableTray} cast={false} />
     </group>
   );
 }

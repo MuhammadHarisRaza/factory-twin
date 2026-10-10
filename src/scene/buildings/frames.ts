@@ -38,7 +38,7 @@ export const BUILDING_FRAMES: BuildingFrame[] = [
     eave: HALL.eave,
     rise: HALL.ridge - HALL.eave,
     frames: HALL_FRAMES,
-    walls: { n: 'full', s: 'cut', e: 'cut', w: 'full' },
+    walls: { n: 'full', s: 'cut', e: 'cut', w: 'cut' },
     cutH: 2.6,
     trussed: true,
   },

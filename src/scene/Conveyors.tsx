@@ -14,6 +14,11 @@ type ConveyorDef = {
   kind: 'belt' | 'roller';
   /** Equipment id when this conveyor is selectable on its own. */
   select?: string;
+  /**
+   * When set, the belt is hung from the roof steel instead of standing on floor legs: drop rods
+   * run from the belt up to this height, with a cross-bearer under the belt at each hanger.
+   */
+  hangY?: number;
 };
 
 /** Builds instanced side rails, belt surfaces, rollers and legs for a set of conveyors. */
@@ -64,6 +69,17 @@ function buildConveyors(defs: ConveyorDef[]) {
         const f = j / spans;
         const lx = x0 + dx * f;
         const lz = z0 + dz * f;
+        if (def.hangY != null) {
+          const by = y0 + dy * f;
+          const rod = def.hangY - by;
+          for (const side of [-1, 1])
+            legs.push({
+              p: [lx + nx * side * (def.w / 2 + 0.12), by + rod / 2 - 0.1, lz + nz * side * (def.w / 2 + 0.12)],
+              s: [0.04, rod + 0.2, 0.04],
+            });
+          legs.push({ p: [lx, by - 0.24, lz], s: [def.w + 0.34, 0.08, 0.1], r: [0, yaw + Math.PI / 2, 0] });
+          continue;
+        }
         const legH = y0 + dy * f - 0.2;
         if (legH < 0.2) continue;
         for (const side of [-1, 1])
@@ -118,19 +134,21 @@ const CONVEYORS: ConveyorDef[] = [
   },
   {
     pts: [
-      [-35, 14.6, -28.4],
-      [-35, 14.6, -20.5],
+      [-35, 10, -28.4],
+      [-35, 10, -20.5],
     ],
     w: 0.8,
     kind: 'belt',
+    hangY: 12,
   },
   {
     pts: [
-      [-43, 14.6, -20.5],
-      [-27, 14.6, -20.5],
+      [-43, 10, -20.5],
+      [-27, 10, -20.5],
     ],
     w: 0.8,
     kind: 'belt',
+    hangY: 12,
   },
   {
     pts: [
@@ -143,12 +161,13 @@ const CONVEYORS: ConveyorDef[] = [
   },
   {
     pts: [
-      [-25, 10.4, -22.6],
-      [-1.5, 10.4, -22.6],
+      [-25, 10, -22.6],
+      [-1.5, 10, -22.6],
     ],
     w: 0.8,
     kind: 'belt',
     select: 'D-BELT',
+    hangY: 12,
   },
   ...PRESS_X.map(
     (x): ConveyorDef => ({
@@ -271,7 +290,7 @@ export function Conveyors() {
         <Selectable key={c.select} id={c.select!} layer="conveyors">
           <ConveyorSet defs={[c]} />
           {c.select === 'D-BELT' &&
-            PRESS_X.map((x) => <Pipe key={x} a={[x, 10.2, -22.6]} b={[x, 7.9, -22.6]} r={0.22} m={MAT.galvanised} />)}
+            PRESS_X.map((x) => <Pipe key={x} a={[x, 9.8, -22.6]} b={[x, 7.9, -22.6]} r={0.22} m={MAT.galvanised} />)}
         </Selectable>
       ))}
     </group>

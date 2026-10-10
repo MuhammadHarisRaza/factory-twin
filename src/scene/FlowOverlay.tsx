@@ -7,15 +7,15 @@ import { useTwin } from '../store';
 import { FLOW_COLORS, FLOW_PATHS, FLOW_STAGES } from '../data/layout';
 import type { FlowPath } from '../data/types';
 
-const ARROW_GEOMETRY = new ConeGeometry(0.9, 2.2, 12);
+const ARROW_GEOMETRY = new ConeGeometry(0.6, 1.6, 12);
 
-/** One route: soft glow line, marching dashed line and direction arrows every 14 m. */
+/** One route: soft glow line, marching dashed line and direction arrows every 16 m. */
 function FlowRoute({ pts, y, kind }: FlowPath) {
   const dashed = useRef<Line2>(null);
   const points = useMemo(() => pts.map(([x, z]) => new Vector3(x, y, z)), [pts, y]);
 
   useFrame((_, dt) => {
-    if (dashed.current) (dashed.current.material as LineMaterial).dashOffset -= dt * 6;
+    if (dashed.current) (dashed.current.material as LineMaterial).dashOffset -= dt * 4;
   });
 
   const arrows = useMemo(() => {
@@ -26,7 +26,7 @@ function FlowRoute({ pts, y, kind }: FlowPath) {
       const len = seg.length();
       if (len < 4) continue;
       const q = new Quaternion().setFromUnitVectors(new Vector3(0, 1, 0), seg.clone().normalize());
-      for (let t = Math.min(6, len / 2); t < len - 1; t += 14) {
+      for (let t = Math.min(6, len / 2); t < len - 1; t += 16) {
         out.push({ p: a.clone().add(seg.clone().multiplyScalar(t / len)), q });
       }
     }
@@ -43,9 +43,9 @@ function FlowRoute({ pts, y, kind }: FlowPath) {
       <Line
         points={points}
         color={FLOW_COLORS[kind]}
-        lineWidth={7}
+        lineWidth={8}
         transparent
-        opacity={0.25}
+        opacity={0.18}
         depthTest={false}
         renderOrder={20}
       />
@@ -53,10 +53,10 @@ function FlowRoute({ pts, y, kind }: FlowPath) {
         ref={dashed}
         points={points}
         color={FLOW_COLORS[kind]}
-        lineWidth={3.5}
+        lineWidth={3}
         dashed
-        dashSize={3}
-        gapSize={2}
+        dashSize={3.2}
+        gapSize={1.8}
         depthTest={false}
         renderOrder={21}
       />

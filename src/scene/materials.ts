@@ -103,6 +103,47 @@ export const concreteTexture = () =>
     [1, 1],
   );
 
+/**
+ * Sealed factory floor covering 24 × 24 m: fine aggregate speckle, broad trowel mottling,
+ * faint wheel tracks and saw-cut joints on a 6 m grid.
+ */
+export const floorTexture = () =>
+  canvasTexture(
+    1024,
+    (ctx, size) => {
+      speckle(ctx, size, [186, 187, 183], 26, 60000, 17);
+      const rand = seededRandom(23);
+      for (let i = 0; i < 90; i++) {
+        const light = rand() > 0.5;
+        ctx.fillStyle = light ? `rgba(214,214,208,${0.04 + rand() * 0.05})` : `rgba(120,118,110,${0.03 + rand() * 0.05})`;
+        ctx.beginPath();
+        ctx.ellipse(rand() * size, rand() * size, 40 + rand() * 160, 20 + rand() * 90, rand() * 3, 0, 7);
+        ctx.fill();
+      }
+      ctx.strokeStyle = 'rgba(70,70,68,0.06)';
+      for (let i = 0; i < 14; i++) {
+        ctx.lineWidth = 6 + rand() * 6;
+        const y = rand() * size;
+        ctx.beginPath();
+        ctx.moveTo(0, y);
+        ctx.bezierCurveTo(size * 0.3, y + (rand() - 0.5) * 80, size * 0.7, y + (rand() - 0.5) * 80, size, y);
+        ctx.stroke();
+      }
+      ctx.strokeStyle = 'rgba(88,90,92,0.5)';
+      ctx.lineWidth = 1.4;
+      for (let k = 0; k < 4; k++) {
+        const v = (k * size) / 4;
+        ctx.beginPath();
+        ctx.moveTo(v, 0);
+        ctx.lineTo(v, size);
+        ctx.moveTo(0, v);
+        ctx.lineTo(size, v);
+        ctx.stroke();
+      }
+    },
+    [1, 1],
+  );
+
 export const asphaltTexture = () =>
   canvasTexture(256, (ctx, size) => speckle(ctx, size, [70, 73, 77], 40, 9000, 3), [1, 1]);
 
@@ -150,50 +191,79 @@ const std = (
 
 const DOUBLE = 2; // THREE.DoubleSide
 
-/** Shared material palette. Reusing instances keeps draw-call state changes low. */
+/**
+ * Shared material palette. Reusing instances keeps draw-call state changes low.
+ *
+ * Colours follow a restrained industrial scheme: light-grey machine casings (≈RAL 7035),
+ * muted blue / green accents for drives and guarding, painted (non-metallic) structural
+ * steel, real metals only where metal is bare (stainless, galvanised, rollers).
+ */
 export const MAT = {
-  steel: std('#4b5561', 0.55, 0.5),
-  steelLight: std('#8a949f', 0.6, 0.42),
-  truss: std('#5d6873', 0.5, 0.5),
-  cladding: std('#c9ced3', 0.35, 0.55, { side: DOUBLE }),
-  claddingDark: std('#7f8892', 0.3, 0.6, { side: DOUBLE }),
-  roof: std('#aab2ba', 0.45, 0.5, { side: DOUBLE }),
+  // Structure and envelope
+  steel: std('#4a525b', 0.3, 0.6),
+  steelLight: std('#8d959c', 0.35, 0.5),
+  truss: std('#59636d', 0.3, 0.58),
+  cladding: std('#d2d5d5', 0.15, 0.68, { side: DOUBLE }),
+  claddingDark: std('#6c747c', 0.15, 0.65, { side: DOUBLE }),
+  roof: std('#b2b7bb', 0.3, 0.55, { side: DOUBLE }),
   skylight: new MeshPhysicalMaterial({
-    color: '#dfe9ef',
-    roughness: 0.15,
+    color: '#e3ecf0',
+    roughness: 0.2,
     transparent: true,
-    opacity: 0.45,
+    opacity: 0.4,
     side: DOUBLE,
   }),
-  concreteWall: std('#a7a39b', 0.05, 0.9),
-  plinth: std('#8d8a84', 0.05, 0.92),
-  door: std('#6c7b89', 0.5, 0.45),
-  doorFrame: std('#3c454f', 0.5, 0.5),
+  concreteWall: std('#aaa69e', 0.02, 0.9),
+  plinth: std('#8f8c86', 0.02, 0.92),
+  door: std('#76838f', 0.3, 0.5),
+  doorFrame: std('#3c434b', 0.3, 0.55),
   glass: new MeshPhysicalMaterial({
-    color: '#9fc0d0',
+    color: '#a9c4d0',
     roughness: 0.08,
     metalness: 0.1,
     transparent: true,
-    opacity: 0.35,
+    opacity: 0.32,
   }),
-  machine: std('#d4d8dc', 0.3, 0.45),
-  machineBlue: std('#2f5d8a', 0.35, 0.45),
-  machineDark: std('#3a434d', 0.45, 0.5),
-  stainless: std('#c3c8cd', 0.9, 0.28),
-  galvanised: std('#a9b0b6', 0.75, 0.4),
-  safety: std('#e0b12e', 0.25, 0.5),
-  safetyRed: std('#b8332e', 0.25, 0.55),
+  /** Tinted curtain-wall glazing for offices (reflective, opaque). */
+  curtainGlass: std('#40525e', 0.55, 0.16),
+  /** Clear polycarbonate machine guarding / inspection windows. */
+  polycarbonate: new MeshPhysicalMaterial({
+    color: '#d3e2e8',
+    roughness: 0.12,
+    transparent: true,
+    opacity: 0.22,
+    side: DOUBLE,
+    depthWrite: false,
+  }),
+
+  // Machinery
+  machine: std('#d9dad5', 0.12, 0.5),
+  machineBlue: std('#3f5d79', 0.15, 0.5),
+  machineGreen: std('#4d6b5e', 0.12, 0.55),
+  machineDark: std('#3a4046', 0.2, 0.55),
+  stainless: std('#c5c9cc', 0.9, 0.3),
+  galvanised: std('#a7aeb3', 0.7, 0.42),
+  /** Hot-dip galvanised cable trays and ladders. */
+  cableTray: std('#99a1a6', 0.65, 0.45),
+  /** Spiral ducting and sheet-metal hoods. */
+  duct: std('#b4babe', 0.6, 0.4),
+  safety: std('#d4a52c', 0.1, 0.55),
+  safetyRed: std('#a5352f', 0.1, 0.58),
   rubber: std('#1e2226', 0, 0.85),
   belt: std('#26292d', 0.05, 0.8),
   roller: std('#9aa2aa', 0.8, 0.35),
-  insulation: std('#b6b9bc', 0.15, 0.75),
-  kilnFrame: std('#59616a', 0.55, 0.45),
+  insulation: std('#cac8c1', 0.05, 0.82),
+  kilnFrame: std('#59616a', 0.3, 0.55),
+  /** Painted kiln casing panels. */
+  kilnShell: std('#8e9399', 0.2, 0.6),
   refractory: std('#c9b9a4', 0, 0.9),
-  copper: std('#b87333', 0.8, 0.35),
-  pipeBlue: std('#3c6e9b', 0.4, 0.45),
-  pipeGrey: std('#8e979f', 0.6, 0.4),
-  pipeYellow: std('#c9a22b', 0.4, 0.45),
-  greenWalk: std('#4f7a5c', 0, 0.9),
+  copper: std('#b07038', 0.8, 0.38),
+  pipeBlue: std('#4a6c8c', 0.2, 0.5),
+  pipeGrey: std('#8f979e', 0.5, 0.45),
+  pipeYellow: std('#c29a2e', 0.15, 0.5),
+  greenWalk: std('#557a62', 0, 0.9),
+
+  // Materials in process
   clay: std('#9a6b4f', 0, 1),
   feldspar: std('#d8d0c2', 0, 1),
   sand: std('#c7ab76', 0, 1),
@@ -202,40 +272,44 @@ export const MAT = {
   powder: std('#dccdb1', 0, 0.95),
   greenTile: std('#b19f88', 0, 0.8),
   glazedTile: std('#e9e7e1', 0.05, 0.35),
-  carton: std('#b0855a', 0, 0.9),
+  carton: std('#b38a60', 0, 0.9),
   pallet: std('#8b6a45', 0, 0.95),
-  wrap: new MeshPhysicalMaterial({ color: '#d9e4ea', roughness: 0.2, transparent: true, opacity: 0.55 }),
-  rackUpright: std('#2f5e9e', 0.4, 0.45),
-  rackBeam: std('#e2762d', 0.35, 0.45),
+  wrap: new MeshPhysicalMaterial({ color: '#d9e4ea', roughness: 0.2, transparent: true, opacity: 0.5 }),
+  rackUpright: std('#38597a', 0.2, 0.5),
+  rackBeam: std('#cc7434', 0.15, 0.5),
+
+  // Emissive accents (kept deliberately subtle)
   glowHot: new MeshStandardMaterial({
     color: '#ff9a4a',
     emissive: '#ff5a12',
-    emissiveIntensity: 1.6,
+    emissiveIntensity: 1.2,
     toneMapped: false,
   }),
   lamp: new MeshStandardMaterial({
     color: '#f4f8ff',
     emissive: '#e8f2ff',
-    emissiveIntensity: 1.4,
+    emissiveIntensity: 1.1,
     toneMapped: false,
   }),
-  screen: new MeshStandardMaterial({ color: '#0c1a24', emissive: '#1f6e8a', emissiveIntensity: 0.5 }),
-  marker: new MeshStandardMaterial({ color: '#36c3d9', emissive: '#1fa8c0', emissiveIntensity: 0.9 }),
-  truckCab: std('#e8eaec', 0.4, 0.4),
-  truckCabBlue: std('#2d5b8c', 0.4, 0.4),
-  trailer: std('#9aa3ab', 0.5, 0.45),
-  forklift: std('#e3a826', 0.3, 0.45),
-  loader: std('#d9a61e', 0.3, 0.5),
+  screen: new MeshStandardMaterial({ color: '#0c1a24', emissive: '#2a6c84', emissiveIntensity: 0.35 }),
+  marker: new MeshStandardMaterial({ color: '#7fa6b4', emissive: '#3c7f92', emissiveIntensity: 0.3 }),
+
+  // Vehicles and site
+  truckCab: std('#e8eaec', 0.3, 0.42),
+  truckCabBlue: std('#35587a', 0.3, 0.42),
+  trailer: std('#9aa3ab', 0.4, 0.48),
+  forklift: std('#d6a128', 0.15, 0.5),
+  loader: std('#cf9f28', 0.15, 0.55),
   car: [
     std('#7d8791', 0.6, 0.35),
     std('#e9ebee', 0.6, 0.35),
     std('#2b3138', 0.6, 0.35),
-    std('#7b2b2b', 0.6, 0.35),
+    std('#6e2e2e', 0.6, 0.35),
     std('#3b5a7a', 0.6, 0.35),
   ],
   grass: std('#7f8b68', 0, 1),
-  marking: new MeshBasicMaterial({ color: '#e7c330' }),
-  markingWhite: new MeshBasicMaterial({ color: '#eef0f2' }),
+  marking: new MeshBasicMaterial({ color: '#d9b938' }),
+  markingWhite: new MeshBasicMaterial({ color: '#e8eaec' }),
 };
 
 /** Unit geometries shared by every primitive; size comes from mesh scale. */

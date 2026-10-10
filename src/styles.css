@@ -429,6 +429,10 @@ kbd {
   width: 7px;
   height: 7px;
 }
+.insp-f > .muted {
+  flex: 1;
+  text-align: right;
+}
 .insp-f {
   justify-content: space-between;
   align-items: center;
@@ -544,6 +548,13 @@ kbd {
   cursor: crosshair;
   border-radius: 5px;
   display: block;
+}
+.minimap .mm-zone {
+  transition: fill-opacity 0.15s ease;
+}
+.minimap .mm-zone:hover {
+  fill-opacity: 0.45;
+  stroke: #ffffffb3;
 }
 .mm-h {
   letter-spacing: 0.07em;
@@ -717,6 +728,9 @@ kbd {
   border-radius: 50%;
   place-items: center;
   display: inline-grid;
+}
+.zone-tag {
+  transition: opacity 0.25s ease;
 }
 .zone-tag:hover,
 .zone-tag.on {

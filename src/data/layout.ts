@@ -175,14 +175,14 @@ export const ZONES: Zone[] = [
 export const ZONE_BY_ID: Record<string, Zone> = Object.fromEntries(ZONES.map((z) => [z.id, z]));
 
 export const VIEWS: Record<PresetId, CameraView> = {
-  full: { label: 'Full factory', pos: [96, 168, 222], target: [-34, 0, 6] },
+  full: { label: 'Full factory', pos: [112, 168, 224], target: [-18, 0, 8] },
   hall: { label: 'Production hall', pos: [34, 74, 96], target: [-6, 0, -2] },
   raw: { label: 'Raw materials', pos: [-58, 34, 24], target: [-92, 2, -24] },
-  pressglaze: { label: 'Pressing & glazing', pos: [46, 8.5, -1], target: [4, 2.5, -17] },
-  kiln: { label: 'Kiln & cooling', pos: [80, 11, 46], target: [28, 2, 15] },
+  pressglaze: { label: 'Pressing & glazing', pos: [56, 8, -2.5], target: [6, 1.5, -18] },
+  kiln: { label: 'Kiln & cooling', pos: [70, 10.5, 37], target: [28, 1.5, 14] },
   sorting: { label: 'Quality & sorting', pos: [2, 10.5, 40], target: [-24, 1.5, 14] },
   packaging: { label: 'Packaging', pos: [-34, 10.5, 40], target: [-60, 1.5, 15] },
-  warehouse: { label: 'Warehouse', pos: [-80, 15, 82], target: [-110, 3, 30] },
+  warehouse: { label: 'Warehouse', pos: [-82, 27, 86], target: [-108, 1.5, 36] },
   utilities: { label: 'Utilities & maintenance', pos: [104, 58, -98], target: [50, 2, -24] },
   site: { label: 'External site', pos: [176, 92, 196], target: [30, 0, 62] },
 };
@@ -231,74 +231,85 @@ export const GATE_X: Range = [80, 104];
 /** Guard house position [x, z] beside the main gate. */
 export const GUARD_HOUSE_POS: Vec2 = [70, 102];
 
+/**
+ * Intended material route, traced along the actual conveyors and machine positions
+ * (no backtracking). Heights keep each route above the equipment it passes over.
+ */
 export const FLOW_PATHS: FlowPath[] = [
   {
+    // Weighbridge → storage shed → box feeders → collecting belt → crusher → mill feed belt → mills.
     kind: 'raw',
     y: 3,
     pts: [
-      [-130, -28],
-      [-112, -28],
-      [-104, -36],
-      [-100, -20],
+      [-129, -28],
+      [-104, -28],
       [-104, -8],
       [-71, -8],
-      [-67, -8],
-      [-67, -17],
-      [-60, -17],
+      [-64.5, -8],
+      [-64.5, -17.5],
+      [-60, -17.5],
     ],
   },
   {
+    // Mill slip → slip tanks → slip main → spray dryer → powder belt and elevator → silos
+    // → silo discharge → press feed belt → press → collector → dryer → glaze line → kiln infeed.
     kind: 'intermediate',
     y: 4.5,
     pts: [
-      [-55, -17],
-      [-50, -17],
-      [-50, -27],
-      [-41, -33],
+      [-55, -17.5],
+      [-50, -17.5],
+      [-50, -34],
+      [-41, -40],
       [-35, -44],
-      [-35, -30],
-      [-35, -20],
-      [-30, -20],
-      [-11, -20],
+      [-35, -29],
+      [-35, -20.5],
+      [-26.2, -20.5],
+      [-26.2, -22.6],
+      [-11, -22.6],
       [-11, -12],
-      [2, -12],
-      [26, -12],
+      [1, -12],
+      [25, -12],
       [72, -12],
-      [72, 15],
-      [70, 15],
+      [73.5, -12],
+      [73.5, 15],
+      [70.5, 15],
     ],
   },
   {
+    // Through the kiln, east to west, above the kiln roof.
     kind: 'intermediate',
-    y: 5.5,
+    y: 6,
     pts: [
-      [70, 15],
-      [-4, 15],
+      [70.5, 15],
+      [-4.5, 15],
     ],
   },
   {
+    // Sorting → packing → palletiser → link conveyor → put-away → cross-aisle to staging
+    // → open dock → yard → perimeter road → main gate.
     kind: 'finished',
     y: 3.5,
     pts: [
-      [-4, 15],
-      [-36, 15],
-      [-62, 15],
-      [-69, 20],
+      [-4.5, 15],
+      [-38.5, 15],
+      [-61, 15],
+      [-63.5, 15],
+      [-63.5, 20],
       [-86, 20],
-      [-112, 20],
-      [-112, 50],
-      [-112, 62],
-      [-112, 84],
-      [-100, 96],
+      [-91, 20],
+      [-91, 52],
+      [-98, 52],
+      [-98, 66],
+      [-98, 96],
       [80, 96],
-      [80, 110],
+      [80, 108],
     ],
   },
 ];
 
 export const FLOW_STAGES: FlowStage[] = [
   { n: 1, label: 'Raw materials', at: [-104, -30] },
-  { n: 2, label: 'Preparation', at: [-62, -17] },
+  { n: 2, label: 'Preparation', at: [-62, -17.5] },
   { n: 3, label: 'Spray drying', at: [-35, -44] },
   { n: 4, label: 'Pressing', at: [-11, -20] },
   { n: 5, label: 'Drying', at: [13, -12] },
@@ -306,8 +317,8 @@ export const FLOW_STAGES: FlowStage[] = [
   { n: 7, label: 'Kiln', at: [33, 15] },
   { n: 8, label: 'Sorting', at: [-20, 15] },
   { n: 9, label: 'Packaging', at: [-55, 15] },
-  { n: 10, label: 'Warehouse', at: [-112, 30] },
-  { n: 11, label: 'Dispatch', at: [-112, 76] },
+  { n: 10, label: 'Warehouse', at: [-110, 32] },
+  { n: 11, label: 'Dispatch', at: [-98, 78] },
 ];
 
 export const FLOW_COLORS: Record<FlowPath['kind'], string> = {

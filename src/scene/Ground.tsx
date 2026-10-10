@@ -1,7 +1,6 @@
-import { useMemo, useRef } from 'react';
-import { useFrame } from '@react-three/fiber';
+import { useMemo } from 'react';
 import { Line } from '@react-three/drei';
-import { MeshStandardMaterial, type CanvasTexture, type Material, type MeshBasicMaterial } from 'three';
+import { Color, MeshStandardMaterial, type CanvasTexture, type Material } from 'three';
 import {
   HALL,
   LINK,
@@ -17,7 +16,7 @@ import {
 } from '../data/layout';
 import type { Rect } from '../data/types';
 import { useTwin } from '../store';
-import { MAT, asphaltTexture, concreteTexture, grassTexture } from './materials';
+import { MAT, asphaltTexture, concreteTexture, floorTexture, grassTexture } from './materials';
 import { Instances, type Instance } from './primitives';
 
 const centerX = (r: Rect) => (r.x[0] + r.x[1]) / 2;
@@ -34,10 +33,22 @@ function Slab({ r, mat, y = 0.02 }: { r: Rect; mat: Material; y?: number }) {
   );
 }
 
-/** Surface material whose texture repeats every `tile` metres over the rect. */
+const textureCache = new Map<() => CanvasTexture, CanvasTexture>();
+
+/**
+ * Surface material whose texture repeats every `tile` metres over the rect. The canvas
+ * is drawn once per texture kind; each surface gets a clone that shares the image.
+ */
 function surfaceMaterial(texture: () => CanvasTexture, r: Rect, tile: number, color = '#ffffff', roughness = 0.85) {
-  const map = texture();
+  let base = textureCache.get(texture);
+  if (!base) {
+    base = texture();
+    textureCache.set(texture, base);
+  }
+  const map = base.clone();
   map.repeat.set(width(r) / tile, depth(r) / tile);
+  // Offset each slab so joints and stains don't line up between buildings.
+  map.offset.set((r.x[0] * 0.037) % 1, (r.z[0] * 0.053) % 1);
   return new MeshStandardMaterial({ map, color, roughness, metalness: 0.02 });
 }
 
@@ -97,27 +108,18 @@ function FloorMarkings() {
   );
 }
 
-/** Pulsing tint and outline over the rects of the currently selected zone. */
+/** Static tint and outline over the rects of the currently selected zone. */
 function ZoneHighlight() {
   const zoneId = useTwin((s) => s.zone);
-  const materialRef = useRef<MeshBasicMaterial>(null);
-  useFrame(({ clock }) => {
-    if (materialRef.current) materialRef.current.opacity = 0.18 + Math.sin(clock.elapsedTime * 2.5) * 0.06;
-  });
   const zone = ZONES.find((z) => z.id === zoneId);
+  if (!zone) return null;
   return (
     <group>
-      {zone?.rects.map((r, i) => (
+      {zone.rects.map((r, i) => (
         <group key={i}>
           <mesh position={[centerX(r), 0.08, centerZ(r)]} rotation={[-Math.PI / 2, 0, 0]}>
             <planeGeometry args={[width(r), depth(r)]} />
-            <meshBasicMaterial
-              ref={i === 0 ? materialRef : undefined}
-              color={zone.color}
-              transparent
-              opacity={0.2}
-              depthWrite={false}
-            />
+            <meshBasicMaterial color={zone.color} transparent opacity={0.16} depthWrite={false} />
           </mesh>
           <Line
             points={[
@@ -128,12 +130,42 @@ function ZoneHighlight() {
               [r.x[0], 0.12, r.z[0]],
             ]}
             color={zone.color}
-            lineWidth={3}
+            lineWidth={2.5}
           />
         </group>
       ))}
     </group>
   );
+}
+
+/** Thin floor outlines of every zone in its colour; part of the labels layer. */
+function ZoneBoundaries() {
+  const visible = useTwin((s) => s.layers.labels);
+  const { points, colors } = useMemo(() => {
+    const pts: [number, number, number][] = [];
+    const cols: [number, number, number][] = [];
+    const c = new Color();
+    for (const zone of ZONES) {
+      c.set(zone.color);
+      for (const r of zone.rects) {
+        const corners: [number, number][] = [
+          [r.x[0], r.z[0]],
+          [r.x[1], r.z[0]],
+          [r.x[1], r.z[1]],
+          [r.x[0], r.z[1]],
+        ];
+        for (let i = 0; i < 4; i++) {
+          const [ax, az] = corners[i];
+          const [bx, bz] = corners[(i + 1) % 4];
+          pts.push([ax, 0.07, az], [bx, 0.07, bz]);
+          cols.push([c.r, c.g, c.b], [c.r, c.g, c.b]);
+        }
+      }
+    }
+    return { points: pts, colors: cols };
+  }, []);
+  if (!visible) return null;
+  return <Line points={points} vertexColors={colors} segments lineWidth={1.2} transparent opacity={0.55} />;
 }
 
 /** Grass, hardstanding, roads, parking, building floors, markings and the zone highlight. */
@@ -150,7 +182,8 @@ export function Ground() {
       }),
       floors: [HALL.rect, RAW_SHED.rect, WAREHOUSE.rect, WORKSHOP.rect, SPRAY_TOWER.rect, LINK.rect].map((r) => ({
         r,
-        m: surfaceMaterial(concreteTexture, r, 12),
+        // Sealed interior floors: slightly smoother so overhead light picks up a soft sheen.
+        m: surfaceMaterial(floorTexture, r, 24, '#ffffff', 0.62),
       })),
       paved: PAVED.map((r) => ({ r, m: surfaceMaterial(concreteTexture, r, 12, '#cfcfcb', 0.95) })),
       roads: ROADS.map((r) => ({ r, m: surfaceMaterial(asphaltTexture, r, 8) })),
@@ -180,6 +213,7 @@ export function Ground() {
       ))}
       <RoadMarkings />
       <FloorMarkings />
+      <ZoneBoundaries />
       <ZoneHighlight />
     </group>
   );

@@ -5,7 +5,7 @@ import type { Range, Vec3 } from '../data/types';
 import { useTwin } from '../store';
 import { BUILDING_FRAMES, type BuildingFrame, type WallMode } from './buildings/frames';
 import { MAT } from './materials';
-import { Box, Door } from './primitives';
+import { Box, Door, Instances, type Instance } from './primitives';
 
 /** Doors in the building envelopes. */
 const DOORS: { p: Vec3; w: number; h: number; rot: number; open?: boolean }[] = [
@@ -27,6 +27,28 @@ const DOORS: { p: Vec3; w: number; h: number; rot: number; open?: boolean }[] = 
   { p: [79, 0, 10], w: 5, h: 5, rot: Math.PI / 2, open: true },
 ];
 
+/** Vertical cladding pilasters, eave trim and seams for one wall face, instanced. */
+function wallTrim(
+  axis: 'x' | 'z',
+  at: number,
+  from: number,
+  to: number,
+  posts: number[],
+  h: number,
+  outward: number,
+  full: boolean,
+): Instance[] {
+  const out: Instance[] = [];
+  const face = at + outward * 0.13;
+  const along = (c: number, y: number, len: number, hh: number, t: number): Instance =>
+    axis === 'x' ? { p: [c, y, face], s: [len, hh, t] } : { p: [face, y, c], s: [t, hh, len] };
+  for (const c of posts) if (c > from + 0.5 && c < to - 0.5) out.push(along(c, 1.2 + (h - 1.2) / 2, 0.36, h - 1.2, 0.1));
+  // Horizontal panel seams.
+  for (let y = 3.6; y < h - 1; y += 2.4) out.push(along((from + to) / 2, y, to - from, 0.05, 0.05));
+  if (full) out.push(along((from + to) / 2, h - 0.25, to - from + 0.3, 0.5, 0.16));
+  return out;
+}
+
 /** Long wall running along x at `z`: plinth, cladding, window band (full) or capping (cut). */
 function WallX({
   z,
@@ -36,6 +58,7 @@ function WallX({
   eave,
   cutH,
   outward,
+  posts,
 }: {
   z: number;
   x0: number;
@@ -45,22 +68,23 @@ function WallX({
   cutH: number;
   /** -1 or 1: which side of the wall faces outside. */
   outward: number;
+  /** X positions of the portal frames (pilasters). */
+  posts: number[];
 }) {
+  const full = mode === 'full';
+  const h = full ? eave : cutH;
+  const trim = useMemo(() => wallTrim('x', z, x0, x1, posts, h, outward, full), [z, x0, x1, posts, h, outward, full]);
   if (mode === 'open') return null;
   const len = x1 - x0;
   const cx = (x0 + x1) / 2;
-  const h = mode === 'full' ? eave : cutH;
   return (
     <group>
       <Box p={[cx, 0.6, z]} s={[len, 1.2, 0.3]} m={MAT.plinth} />
       <Box p={[cx, 1.2 + (h - 1.2) / 2, z]} s={[len, h - 1.2, 0.18]} m={MAT.cladding} />
-      {mode === 'full' && (
-        <Box p={[cx, eave - 2.6, z + outward * 0.12]} s={[len - 1, 1.4, 0.06]} m={MAT.glass} cast={false} />
-      )}
-      {mode === 'full' && (
-        <Box p={[cx, 1.25, z + outward * 0.1]} s={[len, 0.1, 0.06]} m={MAT.claddingDark} cast={false} />
-      )}
-      {mode === 'cut' && <Box p={[cx, h + 0.05, z]} s={[len, 0.1, 0.3]} m={MAT.claddingDark} cast={false} />}
+      {full && <Box p={[cx, eave - 2.6, z + outward * 0.12]} s={[len - 1, 1.4, 0.06]} m={MAT.glass} cast={false} />}
+      {full && <Box p={[cx, 1.25, z + outward * 0.1]} s={[len, 0.1, 0.06]} m={MAT.claddingDark} cast={false} />}
+      {!full && <Box p={[cx, h + 0.05, z]} s={[len, 0.1, 0.3]} m={MAT.claddingDark} cast={false} />}
+      <Instances items={trim} m={MAT.claddingDark} cast={false} />
     </group>
   );
 }
@@ -99,18 +123,20 @@ function WallZ({
       }),
     [spans, rise],
   );
+  const full = mode === 'full';
+  const h = full ? eave : cutH;
+  // Gable posts: at span edges and mid-span (under the ridge).
+  const posts = useMemo(() => spans.flatMap(([a, b]) => [a, (a + b) / 2, b]), [spans]);
+  const trim = useMemo(() => wallTrim('z', x, z0, z1, posts, h, outward, full), [x, z0, z1, posts, h, outward, full]);
   if (mode === 'open') return null;
   const len = z1 - z0;
   const cz = (z0 + z1) / 2;
-  const h = mode === 'full' ? eave : cutH;
   return (
     <group>
       <Box p={[x, 0.6, cz]} s={[0.3, 1.2, len]} m={MAT.plinth} />
       <Box p={[x, 1.2 + (h - 1.2) / 2, cz]} s={[0.18, h - 1.2, len]} m={MAT.cladding} />
-      {mode === 'full' && (
-        <Box p={[x + outward * 0.12, eave - 2.6, cz]} s={[0.06, 1.4, len - 1]} m={MAT.glass} cast={false} />
-      )}
-      {mode === 'full' &&
+      {full && <Box p={[x + outward * 0.12, eave - 2.6, cz]} s={[0.06, 1.4, len - 1]} m={MAT.glass} cast={false} />}
+      {full &&
         gables.map((geo, i) => (
           <mesh
             key={i}
@@ -122,23 +148,25 @@ function WallZ({
             receiveShadow
           />
         ))}
-      {mode === 'cut' && <Box p={[x, h + 0.05, cz]} s={[0.3, 0.1, len]} m={MAT.claddingDark} cast={false} />}
+      {!full && <Box p={[x, h + 0.05, cz]} s={[0.3, 0.1, len]} m={MAT.claddingDark} cast={false} />}
+      <Instances items={trim} m={MAT.claddingDark} cast={false} />
     </group>
   );
 }
 
-/** The four walls of one portal-framed building. */
+/** The four walls of one portal-framed building (cut-away on the sides facing the viewer). */
 function BuildingWalls({ b }: { b: BuildingFrame }) {
   const { x, z } = b.rect;
+  const mode = (m: WallMode) => m;
   return (
     <group>
-      <WallX z={z[0]} x0={x[0]} x1={x[1]} mode={b.walls.n} eave={b.eave} cutH={b.cutH} outward={-1} />
-      <WallX z={z[1]} x0={x[0]} x1={x[1]} mode={b.walls.s} eave={b.eave} cutH={b.cutH} outward={1} />
+      <WallX z={z[0]} x0={x[0]} x1={x[1]} mode={mode(b.walls.n)} eave={b.eave} cutH={b.cutH} outward={-1} posts={b.frames} />
+      <WallX z={z[1]} x0={x[0]} x1={x[1]} mode={mode(b.walls.s)} eave={b.eave} cutH={b.cutH} outward={1} posts={b.frames} />
       <WallZ
         x={x[0]}
         z0={z[0]}
         z1={z[1]}
-        mode={b.walls.w}
+        mode={mode(b.walls.w)}
         eave={b.eave}
         cutH={b.cutH}
         spans={b.spans}
@@ -149,7 +177,7 @@ function BuildingWalls({ b }: { b: BuildingFrame }) {
         x={x[1]}
         z0={z[0]}
         z1={z[1]}
-        mode={b.walls.e}
+        mode={mode(b.walls.e)}
         eave={b.eave}
         cutH={b.cutH}
         spans={b.spans}
@@ -190,6 +218,10 @@ function BuildingRoof({ b }: { b: BuildingFrame }) {
           </group>
         );
       })}
+      {/* Eave and valley gutters along every column line. */}
+      {[...new Set(b.spans.flat())].map((z) => (
+        <Box key={'g' + z} p={[cx, b.eave + 0.2, z]} s={[width + 1.2, 0.35, 0.45]} m={MAT.claddingDark} cast={false} />
+      ))}
     </group>
   );
 }

@@ -1,4 +1,4 @@
-import { Crosshair, X } from 'lucide-react';
+import { Crosshair, Scan, X } from 'lucide-react';
 import { useTwin } from '../store';
 import { ZONE_BY_ID } from '../data/layout';
 import { EQUIPMENT, EQUIPMENT_BY_ID } from '../data/equipment';
@@ -33,6 +33,7 @@ export function Inspector() {
   const select = useTwin((s) => s.select);
   const selectZone = useTwin((s) => s.selectZone);
   const focusEquipment = useTwin((s) => s.focusEquipment);
+  const preset = useTwin((s) => s.preset);
 
   if (selected) {
     const item = EQUIPMENT_BY_ID[selected];
@@ -67,9 +68,13 @@ export function Inspector() {
         <Connections ids={item.upstream} label="Upstream" />
         <Connections ids={item.downstream} label="Downstream" />
         <div className="insp-f">
-          <button className="tb-btn" onClick={() => focusEquipment(item.id)}>
+          <button className="tb-btn" onClick={() => focusEquipment(item.id)} title="Frame this asset">
             <Crosshair size={15} />
             Focus
+          </button>
+          <button className="tb-btn" onClick={() => preset(zone.preset)} title={`Back to the ${zone.short} view`}>
+            <Scan size={15} />
+            Zone view
           </button>
           <span className="muted">Descriptive data only · no live values</span>
         </div>

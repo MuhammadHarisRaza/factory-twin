@@ -22,7 +22,6 @@
     "zustand": "^5.0.15"
   },
   "devDependencies": {
-    "@rolldown/binding-win32-x64-msvc": "^1.2.13",
     "@types/react": "^19.3.0",
     "@types/react-dom": "^19.3.0",
     "@types/three": "^0.186.0",
@@ -30,5 +29,8 @@
     "typescript": "^7.0.2",
     "vite": "^8.3.4",
     "vitest": "^3.2.7"
+  },
+  "optionalDependencies": {
+    "@rolldown/binding-win32-x64-msvc": "^1.2.13"
   }
 }

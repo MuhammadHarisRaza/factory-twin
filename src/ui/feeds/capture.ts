@@ -31,6 +31,7 @@ export type CaptureDeps<S extends CaptureSim> = {
 };
 
 export const READY_TIMEOUT_MS = 10_000;
+export const RENDER_TIMEOUT_MS = 8_000;
 const POLL_MS = 400;
 
 export const LIVE_PROVENANCE = (cameraId: string): Evidence['provenance'] => ({
@@ -76,7 +77,16 @@ export function createEvidenceCapturer<S extends CaptureSim>(deps: CaptureDeps<S
     let img: TwinRender | null = null;
     let error: string | null = null;
     try {
-      img = await deps.renderTwin(cam);
+      // A render that never settles (e.g. a lost WebGL context) must not stall the queue for good.
+      let timer: ReturnType<typeof setTimeout> | undefined;
+      const timeout = new Promise<never>((_, reject) => {
+        timer = setTimeout(() => reject(new Error('render timed out')), RENDER_TIMEOUT_MS);
+      });
+      try {
+        img = await Promise.race([deps.renderTwin(cam), timeout]);
+      } finally {
+        clearTimeout(timer);
+      }
     } catch (e) {
       error = e instanceof Error ? e.message : String(e);
     }

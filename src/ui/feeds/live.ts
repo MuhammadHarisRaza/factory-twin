@@ -8,11 +8,21 @@
  */
 import type { CameraSource } from '../../app/store';
 
-/** State of a configured stream. 'live' only after the media element actually plays / loads. */
-export type LiveState = 'loading' | 'live' | 'stale' | 'error' | 'unavailable';
+/**
+ * State of a configured stream. 'live' only after the media element actually plays / loads AND new
+ * frames can be seen arriving; 'unverified' = playing, but whether frames still arrive cannot be
+ * checked (an MJPEG / JPEG stream without CORS permission) — never shown or used as live.
+ */
+export type LiveState = 'loading' | 'live' | 'unverified' | 'stale' | 'error' | 'unavailable';
 
 /** No new frame (video time update / MJPEG change) for longer than this → stale. */
 export const STALE_AFTER_MS = 10_000;
+
+export const STALE_DETAIL = 'No new frame for more than 10 s';
+export const UNVERIFIED_DETAIL = 'Playing, but frame freshness cannot be checked without CORS permission — a frozen image would look the same';
+
+/** The media element is showing the stream (frames arriving, stale, or of unknown freshness). */
+export const isPlaying = (state: LiveState) => state === 'live' || state === 'stale' || state === 'unverified';
 
 export type ResolvedKind = 'video' | 'hls' | 'mjpeg';
 
@@ -84,11 +94,51 @@ export function planStream(src: CameraSource, env: { canPlayHls: boolean; pageHt
   return { ok: true, kind, guessed: src.kind === 'auto', warning };
 }
 
-/** State after a staleness check: a live stream with no new frame for > STALE_AFTER_MS is stale, and recovers when frames resume. */
+/**
+ * State after a staleness check of a playing stream: no new frame for > STALE_AFTER_MS → stale (and
+ * back to live when frames resume). `lastFrameAt` null = freshness cannot be verified → 'unverified',
+ * never kept as 'live'.
+ */
 export function staleness(state: LiveState, lastFrameAt: number | null, now: number): LiveState {
-  if (state !== 'live' && state !== 'stale') return state;
-  if (lastFrameAt == null) return state;
+  if (!isPlaying(state)) return state;
+  if (lastFrameAt == null) return 'unverified';
   return now - lastFrameAt > STALE_AFTER_MS ? 'stale' : 'live';
+}
+
+/**
+ * How the freshness of an MJPEG / JPEG stream shown in an <img> can be checked: by its pixels (the
+ * frame fingerprint is readable — same origin or CORS allowed), by per-part load events (the browser
+ * fired `load` more than once on the same element, as Firefox does for multipart streams), or not at
+ * all (a cross-origin stream without CORS in a browser that fires `load` once).
+ */
+export function mjpegFreshness(fingerprint: number | null, loads: number): 'pixels' | 'load-events' | 'unknown' {
+  if (fingerprint != null) return 'pixels';
+  return loads >= 2 ? 'load-events' : 'unknown';
+}
+
+/**
+ * State of a playing MJPEG / JPEG <img> stream from what can be observed: its current pixel
+ * fingerprint (null = unreadable), the load events seen on the element, and when a new frame was
+ * last seen (a changed fingerprint or a load event). Unknown freshness → 'unverified', never 'live'.
+ */
+export function mjpegState(
+  state: LiveState,
+  o: { fingerprint: number | null; loads: number; lastFrameAt: number | null; now: number },
+): LiveState {
+  const unknown = mjpegFreshness(o.fingerprint, o.loads) === 'unknown';
+  return staleness(state, unknown ? null : o.lastFrameAt, o.now);
+}
+
+/**
+ * Why no snapshot can be taken from a stream in this state, or null when its current frame can be
+ * grabbed. Only a live stream: a stale or unverified frame may be old, and would be stamped with the
+ * capture time.
+ */
+export function snapshotBlocked(state: LiveState): string | null {
+  if (state === 'live') return null;
+  if (state === 'stale') return 'No snapshot while the stream is stale — the frame shown is more than 10 s old';
+  if (state === 'unverified') return 'No snapshot — it cannot be checked that the frame shown is current';
+  return 'No frame to capture — the stream is not playing';
 }
 
 let hlsNative: boolean | null = null;

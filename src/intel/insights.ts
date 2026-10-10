@@ -27,6 +27,7 @@ import {
   type Period,
 } from '../sim/metrics';
 import { formatClock, formatDuration } from '../sim/time';
+import { lineGoodLostTiles } from './report';
 
 export type InsightSeverity = 'critical' | 'serious' | 'warning' | 'info' | 'positive';
 export type InsightKind = 'target' | 'stoppage' | 'bottleneck' | 'buffer' | 'quality' | 'health' | 'energy' | 'logistics' | 'shift';
@@ -51,6 +52,11 @@ export type Insight = {
   evidence: string[];
   /** Quantified effect, if any. */
   impact?: string;
+  /**
+   * Set when `impact` is a money estimate: the assumptions it rests on. Cards show it as
+   * "estimate · assumptions shown" with these lines (honesty rule for financial figures).
+   */
+  estimate?: string[];
   recommendation?: string;
   equipmentId?: string;
   links: InsightLink[];
@@ -129,7 +135,9 @@ function stoppageRule(s: SimState): Insight[] {
       const buf = outBuf ? BUFFERS.find((x) => x.id === outBuf) : null;
       const downstreamRate = STAGES.find((x) => x.inputBuffer === outBuf)?.machines.reduce((acc, m) => acc + (OPS_BY_ID[m].idealRatePerHour ?? 0), 0) ?? 0;
       const cover = buf && downstreamRate ? (s.buffers[buf.id] / downstreamRate) * 60 : null;
-      const lineLostM2 = m2(e.acc.constraintLostTiles * 0.975);
+      // Same figure as the event report (kiln tiles held up × 24 h first-pass yield before the event).
+      const lineLostM2 = m2(lineGoodLostTiles(s, e));
+      const ownKiln = id === 'H-KILN';
       return {
         id: `stop-${e.id}`,
         kind: 'stoppage' as const,
@@ -139,7 +147,9 @@ function stoppageRule(s: SimState): Insight[] {
         evidence: [
           ...e.facts.slice(0, 2),
           e.acc.constraintMin > 0
-            ? `The kiln (line constraint) has been held up ${Math.round(e.acc.constraintMin)} min because of it — ≈ ${lineLostM2} m² line output lost.`
+            ? ownKiln
+              ? `The kiln (line constraint) has been held up ${Math.round(e.acc.constraintMin)} min by this stop — ≈ ${lineLostM2} m² line output lost.`
+              : `The kiln (line constraint) has been held up ${Math.round(e.acc.constraintMin)} min, attributed to this stop (inferred · likely) — ≈ ${lineLostM2} m² line output lost.`
             : 'Line output not affected yet — the buffers between this asset and the kiln are absorbing it.',
           ...(cover != null && buf ? [`Buffer ${buf.name} covers ≈ ${Math.round(cover)} min of downstream demand.`] : []),
         ],
@@ -308,6 +318,10 @@ function energyRule(s: SimState, tariffs: Tariffs): Insight[] {
       summary: `${r.label} used ${Math.round(r.total).toLocaleString('en-GB')} kWh since ${formatClock(p.from)} against ${Math.round(r.expected).toLocaleString('en-GB')} kWh expected by the energy model for the same production.`,
       evidence: [`Excess ≈ ${Math.round(r.total - r.expected).toLocaleString('en-GB')} kWh (${tariffs.currency} ${(r.cost - r.expectedCost).toFixed(0)}).`],
       impact: `${tariffs.currency} ${excessPerH.toFixed(0)}/h · ≈ ${tariffs.currency} ${(excessPerH * 24 * 30).toLocaleString('en-GB', { maximumFractionDigits: 0 })}/month if sustained`,
+      estimate: [
+        energyTariffAssumption(tariffs),
+        `Excess = actual − model energy since ${formatClock(p.from)}, per hour; the monthly figure assumes it persists 24 h × 30 days.`,
+      ],
       recommendation: CONSUMER_BY_ID[r.id]?.thermal
         ? 'Check combustion air/gas ratio, burner tuning and flue-gas O₂; inspect for air ingress and insulation damage.'
         : 'Check for compressed-air leaks, motor load and power factor; compare against the last service readings.',
@@ -330,6 +344,7 @@ function energyRule(s: SimState, tariffs: Tariffs): Insight[] {
       summary: 'The kiln keeps firing when it is starved; every minute without input costs gas without output.',
       evidence: [`Starved/blocked kiln time this shift: ${Math.round(sumIdle(s, sh))} min.`],
       impact: `${tariffs.currency} ${(idle * tariffs.gas).toFixed(0)} of gas this shift`,
+      estimate: [energyTariffAssumption(tariffs), 'Idle burn = starved / blocked kiln minutes this shift × the kiln burner load of the energy model.'],
       recommendation: 'Reduce kiln starvation by protecting the glazing and decoration feed; use idle-mode firing setpoints for planned gaps.',
       equipmentId: 'H-KILN',
       links: [{ kind: 'equipment', id: 'H-KILN', label: 'Locate kiln' }],
@@ -337,6 +352,7 @@ function energyRule(s: SimState, tariffs: Tariffs): Insight[] {
     });
   return out;
 }
+const energyTariffAssumption = (t: Tariffs) => `Illustrative energy model; tariffs ${t.currency} ${t.electricity}/kWh electricity, ${t.currency} ${t.gas}/kWh gas.`;
 const sumIdle = (s: SimState, p: Period) => {
   let m = 0;
   for (let h = Math.floor(p.from / 60); h * 60 < p.to; h++) {

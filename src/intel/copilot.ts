@@ -29,8 +29,8 @@ import {
   STAGE_BY_ID,
   TARGET,
 } from '../model/plant';
-import type { AlertSeverity, DefectCategory, DowntimeEvent, EventCause, MonitoredStageId, OpEvent, StageId } from '../model/types';
-import type { SimState } from '../sim/engine';
+import type { AlertSeverity, DefectCategory, DowntimeEvent, EventCause, MonitoredStageId, OpEvent, QualityInspection, StageId } from '../model/types';
+import { minuteAt, type SimState } from '../sim/engine';
 import { DEFAULT_TARIFFS, type Tariffs } from '../sim/energy';
 import { EVENT_STATUS_LABEL, activeEvents, eventById, openEvents } from '../sim/events';
 import { DEFAULT_FINANCE, assumptionList, contributionPerM2, lostOutputValue, rejectCost, type Estimate, type FinanceAssumptions } from '../sim/finance';
@@ -66,7 +66,7 @@ import {
 import type { Metric, OeeResult } from '../sim/oee';
 import { formatClock, formatDateTime, formatDay, formatDuration, toIso } from '../sim/time';
 import { DEFECT_ACTIONS, REASON_ACTIONS, healthAssessments, insights, nextActions, type InsightLink } from './insights';
-import { buildEventReport, eventImpact, type EventReport } from './report';
+import { buildEventReport, eventImpact, fpyBefore, type EventReport, type ImpactRow } from './report';
 
 // ── Public types ──────────────────────────────────────────────────────────────
 
@@ -183,6 +183,51 @@ const inf = (confidence: EventCause['confidence'], text: string, basis?: string)
 const fmtCause = (c: EventCause) => inf(c.confidence, `${c.text}${c.relatedEventId ? ` (see ${c.relatedEventId})` : ''}`, c.basis);
 
 const SEV_RANK: Record<AlertSeverity, number> = { info: 0, warning: 1, serious: 2, critical: 3 };
+
+/** Basis of an inferred kiln attribution (the event engine links kiln starvation / blockage to its root event). */
+const KILN_ATTRIBUTION = 'kiln hold-up minutes attributed to the event by the event engine (inferred from machine states and buffer levels)';
+/**
+ * Kiln minutes of an event are an observation only when the event is the kiln's own condition (its stop,
+ * starvation, blockage or rate); for any other asset they are an attribution, i.e. an inference.
+ */
+const ownsKiln = (e: OpEvent) => e.asset.equipmentId === 'H-KILN';
+/** "kiln held up N min" for the kiln's own events, flagged as an attribution for any other asset. */
+const kilnMinutes = (e: OpEvent) => (ownsKiln(e) ? `kiln held up ${int(e.acc.constraintMin)} min` : `${int(e.acc.constraintMin)} min of kiln hold-up attributed (inferred)`);
+
+/**
+ * Minutes the kiln was down, starved or blocked in [from, to), read from its per-minute state log —
+ * an observation, independent of any attribution. null when the log (last LOG_MIN minutes) does not cover the window.
+ */
+function kilnHeldMinutes(s: SimState, from: number, to: number): number | null {
+  let n = 0;
+  for (let m = from; m < to; m++) {
+    const x = minuteAt(s, 'H-KILN', m);
+    if (!x) return null;
+    if (x.state === 'down' || x.state === 'starved' || x.state === 'blocked') n++;
+  }
+  return n;
+}
+
+/**
+ * How a reject record was produced: tunnel (vision) records carry a simulated classification confidence;
+ * gauge records are laser measurements checked against a tolerance — no classification, no confidence.
+ */
+const isGaugeRecord = (r: Pick<QualityInspection, 'stationId'>) => r.stationId === 'ST-GAUGE';
+const recordBasis = (r: QualityInspection) =>
+  isGaugeRecord(r)
+    ? `, simulated gauge measurement${r.measurement ? `: ${r.measurement}` : ''}`
+    : `${r.confidence != null ? `, simulated confidence ${pct(r.confidence, 0)}` : ''}${r.measurement ? `, ${r.measurement}` : ''}`;
+/** Method note for the records an answer cites (vision classifications vs gauge measurements). */
+function recordMethod(recs: Pick<QualityInspection, 'stationId'>[], fallbackStation?: string | null) {
+  const gauge = recs.length ? recs.some(isGaugeRecord) : fallbackStation === 'ST-GAUGE';
+  const vision = recs.length ? recs.some((r) => !isGaugeRecord(r)) : fallbackStation !== 'ST-GAUGE';
+  return [
+    vision ? 'Inspection frames are illustrative — simulated classification, no vision model; confidence values are simulated.' : null,
+    gauge ? 'Gauge records are simulated laser measurements checked against a tolerance — not classifications, so they carry no confidence.' : null,
+  ]
+    .filter(Boolean)
+    .join(' ');
+}
 
 /** Monitored stage (Production Monitoring) for a process stage id (decoration → glazing, palletising → packing). */
 export function monitoredStage(id: string | null | undefined): MonitoredStageId | null {
@@ -424,7 +469,7 @@ function belowTarget(c: Ctx, p: Period): CopilotAnswer {
     { label: 'Quality', value: pct(lm.oee.quality.value) },
     { label: 'OEE', value: pct(lm.oee.oee.value) },
   ];
-  const method = `Output = first-quality tiles accepted at sorting; plan = ${int(TARGET.goodPerHour)} good tiles per hour (${pct(TARGET.oeeTarget, 0)} OEE). Bands: ≥ 100 % ahead, ≥ 97 % on track, ≥ 90 % behind, below that well behind. Lost time is split at the kiln, the line constraint.`;
+  const method = `Output = first-quality tiles accepted at sorting; plan = ${int(TARGET.goodPerHour)} good tiles per planned hour (${pct(TARGET.oeeTarget, 0)} OEE). Bands: ≥ 100 % ahead, ≥ 97 % on track, ≥ 90 % behind, below that well behind. Lost time is split at the kiln, the line constraint.`;
   if (status === 'none')
     return compose('below-target', p.label, { observed: [`No production time has elapsed yet in ${inPeriod(p.label)} — there is nothing to compare with the plan.`], method: [method] }, { facts, links: [{ kind: 'workspace', id: 'production', label: 'Open OEE & Loss' }], followUps: ['What is the current OEE and how is it calculated?'] });
   const pareto = downtimePareto(s, p).slice(0, 3);
@@ -607,6 +652,9 @@ function machineDowntime(c: Ctx, p: Period): CopilotAnswer {
     .map((e) => eventImpact(s, e, finance, tariffs).estimate)
     .reduce((a, e) => a + (e?.lines.filter((l) => /Lost good output/.test(l.label)).reduce((x, l) => x + l.amount, 0) ?? 0), 0);
   const latest = [...top.stopEvents].sort((a, b) => b.start - a.start)[0];
+  const stopIds = top.stopEvents.map((e) => e.id).join(', ');
+  // Kiln minutes of another asset's stops are an attribution (inferred), so they never appear under Observed.
+  const conveyorsHolding = conveyors.filter((r) => r.constraintMin > 0 && r.id !== byLine?.id);
   return compose(
     'machine-downtime',
     p.label,
@@ -614,24 +662,30 @@ function machineDowntime(c: Ctx, p: Period): CopilotAnswer {
       observed: [
         `${top.id} (${nameOf(top.id)}) has the greatest downtime loss in ${inPeriod(p.label)}: ${int(top.minutes)} min of unplanned downtime over ${plural(top.events, 'stop')}, ≈ ${m2(top.lostTiles)} not made at its ideal rate${top.active ? ' — it is still down' : ''}.`,
         machines.length > 1 ? `Next: ${machines.slice(1, 3).map((r) => `${r.id} ${int(r.minutes)} min (${m2(r.lostTiles)})`).join(', ')}.` : null,
-        top.stopEvents.length ? `Its stop events (${top.stopEvents.map((e) => e.id).join(', ')}) held the kiln up ${int(top.constraintMin)} min.` : null,
-        conveyors.length ? `Conveyor downtime in the period: ${conveyors.map((r) => `${r.id} ${int(r.minutes)} min${r.constraintMin ? ` (kiln held up ${int(r.constraintMin)} min)` : ''}`).join(', ')}.` : null,
+        top.id === 'H-KILN' && top.stopEvents.length ? `Its stop events (${stopIds}) held the kiln up ${int(top.constraintMin)} min.` : null,
+        conveyors.length ? `Conveyor downtime in the period: ${conveyors.map((r) => `${r.id} ${int(r.minutes)} min`).join(', ')}.` : null,
       ],
       inferred: [
         top.id === 'H-KILN'
           ? inf('confirmed', 'the kiln is the line constraint: its downtime is line output lost one for one', 'line design')
           : top.constraintMin === 0
-            ? inf('likely', `the buffers between ${top.id} and the kiln absorbed its stops — no line output was lost because of it`, 'the kiln was not held up while it was down')
-            : inf('likely', `${top.id}'s stops reached the kiln and cost line output for ${int(top.constraintMin)} min`, 'event-engine attribution of kiln hold-up minutes'),
+            ? inf('likely', `the buffers between ${top.id} and the kiln absorbed its stops — no line output was lost because of it`, `no kiln hold-up minutes are attributed to its stop events${stopIds ? ` (${stopIds})` : ''} by the event engine`)
+            : inf('likely', `${top.id}'s stops${stopIds ? ` (${stopIds})` : ''} reached the kiln and held it up ${int(top.constraintMin)} min — line output lost`, KILN_ATTRIBUTION),
         byLine && byLine.constraintMin > 0 && byLine.id !== top.id
-          ? inf('likely', `for line output, ${byLine.id} (${nameOf(byLine.id)}) mattered more: its stops held the kiln up ${int(byLine.constraintMin)} min`, 'event-engine attribution of kiln hold-up minutes')
+          ? inf('likely', `for line output, ${byLine.id} (${nameOf(byLine.id)}) mattered more: its stops held the kiln up ${int(byLine.constraintMin)} min`, KILN_ATTRIBUTION)
+          : null,
+        conveyorsHolding.length
+          ? inf('likely', `conveyor stops that held the kiln up: ${conveyorsHolding.map((r) => `${r.id} ${int(r.constraintMin)} min`).join(', ')}`, KILN_ATTRIBUTION)
           : null,
       ],
       estimate: lineLoss > 0.005 ? [`Line output lost through ${top.id}'s stop events ≈ ${money(finance.currency, lineLoss)} of contribution (from the event estimates).`, assumptionsText(finance, ['output'])] : [],
       method: [method],
     },
     {
-      facts: machines.slice(0, 5).map((r) => ({ label: `${r.id} · ${nameOf(r.id)}`, value: `${int(r.minutes)} min · ${m2(r.lostTiles)} · kiln ${int(r.constraintMin)} min` })),
+      facts: machines.slice(0, 5).map((r) => ({
+        label: `${r.id} · ${nameOf(r.id)}`,
+        value: `${int(r.minutes)} min · ${m2(r.lostTiles)} · kiln ${int(r.constraintMin)} min${r.id === 'H-KILN' ? '' : ' (attributed)'}`,
+      })),
       links: [...equipmentLink(top.id), ...(latest ? [eventLink(latest)] : []), ...stageLink(OPS_BY_ID[top.id]?.stage), { kind: 'workspace', id: 'production', label: 'Open OEE & Loss' }],
       followUps: ['What caused the largest downtime loss?', 'What is the estimated cost of the current production loss?'],
       eventId: latest?.id,
@@ -678,6 +732,11 @@ function conveyorAnswer(c: Ctx, focus: string | null, p: Period): CopilotAnswer 
   const day = s.minute - 1440;
   const last24 = stops.filter((x) => x.start >= day);
   const cm = focus ? conveyorMetrics(s, focus, p) : null;
+  // Observed: the kiln's own state while the conveyor was stopped (state log). Inferred: how much of that the
+  // event engine attributes to this stop — an attribution, so it carries a confidence.
+  const kilnHeld = kilnHeldMinutes(s, d.start, d.end ?? s.minute);
+  const soFar = ongoing ? ' so far' : '';
+  const buffers = conv.bufferId ? `buffer ${conv.bufferId}` : 'the buffers';
   return compose(
     'conveyor-stop',
     focus && cm ? p.label : 'Simulated history',
@@ -685,10 +744,10 @@ function conveyorAnswer(c: Ctx, focus: string | null, p: Period): CopilotAnswer 
       observed: [
         `${d.equipmentId} (${conv.name}) ${focus ? 'last stopped' : 'stopped most recently'} on ${formatDay(d.start)} at ${clock(d.start)} — ${low1(reason.label)} (${d.reasonCode})${d.source === 'scenario' ? ', injected by a simulation scenario' : ''}. ${ongoing ? `It is still stopped: ${formatDuration(dur)} so far.` : `Running again since ${clock(d.end!)} after ${formatDuration(dur)}.`}`,
         into.length || outOf.length ? `While it is stopped, ${[into.length ? `${into.join(' and ')} receive${into.length > 1 ? '' : 's'} no tiles` : '', outOf.length ? `${outOf.join(' and ')} cannot discharge onto it` : ''].filter(Boolean).join('; ')}.` : null,
-        ev
-          ? ev.acc.constraintMin > 0
-            ? `Event ${ev.id}: the kiln (line constraint) was held up ${int(ev.acc.constraintMin)} min because of it.`
-            : `Event ${ev.id}: no kiln time lost${ongoing ? ' so far' : ''} — ${conv.bufferId ? `buffer ${conv.bufferId}` : 'the buffers'} covered the stop.`
+        kilnHeld != null
+          ? kilnHeld > 0
+            ? `While ${d.equipmentId} ${ongoing ? 'has been' : 'was'} stopped, the kiln (line constraint) was down, starved or blocked for ${int(kilnHeld)} min${soFar} (kiln state log).`
+            : `While ${d.equipmentId} ${ongoing ? 'has been' : 'was'} stopped, the kiln (line constraint) was never down, starved or blocked${soFar} (kiln state log).`
           : null,
         cm ? `In ${inPeriod(p.label)}: ${plural(cm.stops, 'stop')}, ${int(cm.downMin)} min down, running ${pct(cm.availability, 0)} of planned time, utilisation ${pct(cm.utilisation, 0)} of its ${int(conv.capacityPerHour)} tiles/h capacity.` : null,
         nowLine,
@@ -696,6 +755,11 @@ function conveyorAnswer(c: Ctx, focus: string | null, p: Period): CopilotAnswer 
       ],
       inferred: [
         ...(ev ? ev.causes.slice(0, 2).map(fmtCause) : []),
+        ev
+          ? ev.acc.constraintMin > 0
+            ? inf('likely', `${ev.id} held the kiln (line constraint) up ${int(ev.acc.constraintMin)} min${soFar}`, 'the kiln starvation / blockage is linked to this stop by the event engine (inferred from states and buffers)')
+            : inf('likely', `no kiln time is attributed to ${ev.id}${soFar}${kilnHeld ? '' : ` — ${buffers} covered the stop`}`, 'no kiln starvation or blockage was linked to this stop (inferred from states and buffers)')
+          : null,
         ...consequences.slice(0, 3).map((x) => inf('likely', `${x.id} (${x.title}) is a consequence of this stop`, 'the stopped conveyor is the first held-up asset in that direction (inferred from states and buffers)')),
       ],
       estimate: est && est.total > 0.005 ? [`${ev!.id} cost ≈ ${money(est.currency, est.total)}${ongoing ? ' so far' : ''}: ${estimateLines(est).join('; ')}.`, assumptionsText(finance, ['output'])] : [],
@@ -798,8 +862,11 @@ function oeeAnswer(c: Ctx, p: Period): CopilotAnswer {
 function capacityAnswer(c: Ctx, p: Period): CopilotAnswer {
   const { s, finance } = c;
   const cap = capacityBreakdown(s, p);
-  const ranked = [...cap.losses].sort((a, b) => b.m2 - a.m2);
-  const total = cap.losses.reduce((a, l) => a + l.m2, 0) || 1;
+  // Only real losses are ranked; tiles between the kiln and sorting are work in transit, reported apart.
+  const lossSteps = cap.losses.filter((l) => l.kind !== 'transit');
+  const transit = cap.losses.find((l) => l.kind === 'transit');
+  const ranked = [...lossSteps].sort((a, b) => b.m2 - a.m2);
+  const total = lossSteps.reduce((a, l) => a + l.m2, 0) || 1;
   const lm = lineMetrics(s, p);
   const k = lm.constraint.totals;
   const bn = bottleneck(s);
@@ -830,6 +897,7 @@ function capacityAnswer(c: Ctx, p: Period): CopilotAnswer {
         `Theoretical output for ${inPeriod(p.label)}: ${area(cap.theoreticalM2)} (kiln design rate × ${int(cap.calendarMin)} min). Plan ${area(cap.plannedM2)}, fired ${area(cap.actualM2)}, first-quality ${area(cap.goodM2)} — ${pct(cap.theoreticalM2 > 0 ? cap.goodM2 / cap.theoreticalM2 : null, 0)} of theoretical.`,
         `What separates good output from theoretical, largest first (${area(cap.capacityGapM2)} in total):`,
         ...ranked.map((l, i) => `${i + 1}. ${l.label}: ${area(l.m2)} (${pct(l.m2 / total, 0)}) — ${low1(l.basis)}.`),
+        ...(transit && Math.abs(transit.m2) >= 0.5 ? [`Not a loss: ${low1(transit.label)} ${area(Math.abs(transit.m2))} — ${low1(transit.basis)}.`] : []),
       ],
       inferred: ranked.filter((l) => l.m2 > 0.5).slice(0, 2).map((l) => explain(l.key)),
       estimate: [
@@ -999,10 +1067,12 @@ function defectReport(c: Ctx, focus: DefectCategory | null): CopilotAnswer {
         observed: [
           `No quality event has been raised for ${label} in the demo history, so there is no defect report yet.`,
           rec
-            ? `Latest reject record: ${rec.id} at ${clock(rec.time)} — ${rec.defect ? DEFECTS[rec.defect].label.toLowerCase() : 'reject'}${rec.severity ? ` (${rec.severity})` : ''}, simulated confidence ${pct(rec.confidence, 0)}${rec.measurement ? `, ${rec.measurement}` : ''}.`
+            ? `Latest reject record: ${rec.id} at ${clock(rec.time)} — ${rec.defect ? DEFECTS[rec.defect].label.toLowerCase() : 'reject'}${rec.severity ? ` (${rec.severity})` : ''}${recordBasis(rec)}.`
             : 'No reject record is available.',
         ],
-        method: ['Quality events are raised by the reject-rate, count, repeat, deterioration and critical-defect rules on simulated inspection records — no vision model.'],
+        method: [
+          `Quality events are raised by the reject-rate, count, repeat, deterioration and critical-defect rules on simulated inspection records — no vision model.${rec ? ` ${recordMethod([rec])}` : ''}`,
+        ],
       },
       { links: [{ kind: 'workspace', id: 'quality', label: 'Open Defect Monitoring' }], followUps: ['Which defect category has increased?'] },
     );
@@ -1024,7 +1094,7 @@ function defectReport(c: Ctx, focus: DefectCategory | null): CopilotAnswer {
         `${rep.summary.id} · ${rep.summary.title} — ${rep.summary.severity.toLowerCase()}, ${rep.summary.status.toLowerCase()}, condition ${rep.summary.condition.toLowerCase()}; detected ${formatDateTime(pick.start)} by rule ${rep.detection.rule} (${rep.detection.ruleLabel}).`,
         rep.summary.text,
         recs.length
-          ? `Inspection evidence: ${recs.map((r) => `${r.id} ${r.defect ? DEFECTS[r.defect].label.toLowerCase() : 'reject'}${r.severity ? ` (${r.severity})` : ''} at ${clock(r.time)}, simulated confidence ${pct(r.confidence, 0)}${r.measurement ? `, ${r.measurement}` : ''}`).join('; ')}.`
+          ? `Inspection evidence: ${recs.map((r) => `${r.id} ${r.defect ? DEFECTS[r.defect].label.toLowerCase() : 'reject'}${r.severity ? ` (${r.severity})` : ''} at ${clock(r.time)}${recordBasis(r)}`).join('; ')}.`
           : 'No individual inspection record falls in the event window.',
         counts.length ? `Counts in the window: ${counts.map((m) => `${low1(m.label)} ${m.value}${m.unit && m.unit !== '%' ? ` ${m.unit}` : ''}`).join(', ')}.` : null,
         ...cams.map((x) => `${x.title}: ${x.status === 'available' ? `captured — ${x.originLabel.toLowerCase()}` : x.status === 'pending' ? 'being captured' : `unavailable — ${x.unavailableReason ?? 'no view'}`}.`),
@@ -1032,7 +1102,7 @@ function defectReport(c: Ctx, focus: DefectCategory | null): CopilotAnswer {
       ],
       inferred: rep.diagnosis.causes.slice(0, 3).map(fmtCause),
       estimate: est && est.total > 0.005 ? [`Estimated impact ≈ ${money(est.currency, est.total)}: ${estimateLines(est).join('; ')}.`, `Assumptions: ${est.assumptions.join(' ')}`] : [],
-      method: [`Same report model as Events & Reports and the PDF export, built from the event record ${pick.id}. Inspection frames are illustrative — simulated classification, no vision model; confidence values are simulated.`],
+      method: [`Same report model as Events & Reports and the PDF export, built from the event record ${pick.id}. ${recordMethod(recs, pick.asset.stationId)}`],
     },
     {
       facts: [
@@ -1168,7 +1238,11 @@ function investigateFirst(c: Ctx): CopilotAnswer {
   const reasons = [
     `${top.severity} severity`,
     top.end == null ? `condition still active (${formatDuration(s.minute - top.start)})` : `condition cleared at ${when(s, top.end)} but not yet resolved`,
-    top.acc.constraintMin > 0 ? `it has held the kiln up ${int(top.acc.constraintMin)} min — line output lost` : null,
+    top.acc.constraintMin > 0
+      ? ownsKiln(top)
+        ? `it has held the kiln up ${int(top.acc.constraintMin)} min — line output lost`
+        : `the event engine attributes ${int(top.acc.constraintMin)} min of kiln hold-up to it (inferred from states and buffers) — line output lost`
+      : null,
     consOf(top).length ? `${plural(consOf(top).length, 'consequence event')} depend on it` : null,
   ].filter(Boolean);
   return compose(
@@ -1179,7 +1253,7 @@ function investigateFirst(c: Ctx): CopilotAnswer {
         `${plural(open.length, 'open event')}: ${activeN} with the condition still active, ${handled} acknowledged or under investigation.`,
         ...ranked.slice(0, 5).map(
           (e, i) =>
-            `${i + 1}. ${e.id} · ${cap1(e.severity)} · ${e.title} — ${e.end == null ? `active ${formatDuration(s.minute - e.start)}` : `cleared ${when(s, e.end)}`}${e.acc.constraintMin > 0 ? `, kiln held up ${int(e.acc.constraintMin)} min` : ''}${consOf(e).length ? `, +${plural(consOf(e).length, 'consequence')}` : ''} · ${EVENT_STATUS_LABEL[e.status].toLowerCase()} · updated ${when(s, e.lastUpdate)}.`,
+            `${i + 1}. ${e.id} · ${cap1(e.severity)} · ${e.title} — ${e.end == null ? `active ${formatDuration(s.minute - e.start)}` : `cleared ${when(s, e.end)}`}${e.acc.constraintMin > 0 ? `, ${kilnMinutes(e)}` : ''}${consOf(e).length ? `, +${plural(consOf(e).length, 'consequence')}` : ''} · ${EVENT_STATUS_LABEL[e.status].toLowerCase()} · updated ${when(s, e.lastUpdate)}.`,
         ),
       ],
       inferred: [`Recommended first: ${top.id} (${top.title}) — ${reasons.join('; ')}.`, ...top.causes.slice(0, 1).map((x) => fmtCause({ ...x, text: `suspected cause — ${low1(x.text)}` }))],
@@ -1404,12 +1478,23 @@ function eventAnswer(c: Ctx, id: string, sub: EventSub): CopilotAnswer {
         },
         extra,
       );
-    case 'impact':
+    case 'impact': {
+      // Kiln minutes (and the line output derived from them) of an event on another asset are attributed
+      // to it by the event engine — an inference, so they go under Inferred with a confidence.
+      const attributed = (r: ImpactRow) => ev.category === 'production' && !ownsKiln(ev) && (/\bheld up\b/i.test(r.label) || /^line good output lost/i.test(r.label));
+      const row = (r: ImpactRow) => `${r.label}: ${r.value} — ${low1(r.basis)}`;
       return compose(
         'event-impact',
         period,
         {
-          observed: [`${head} — impact (${ev.end == null ? 'so far' : 'final'}):`, ...rep.impact.rows.map((r) => `${r.label}: ${r.value} — ${low1(r.basis)}.`), ...rep.impact.notes],
+          observed: [`${head} — impact (${ev.end == null ? 'so far' : 'final'}):`, ...rep.impact.rows.filter((r) => !attributed(r)).map((r) => dot(row(r))), ...rep.impact.notes],
+          inferred: rep.impact.rows
+            .filter(attributed)
+            .map((r) =>
+              /attribut/i.test(r.basis)
+                ? inf('likely', `${r.label}: ${r.value}`, low1(r.basis))
+                : inf('likely', `${r.label}: ${r.value} (${low1(r.basis)})`, 'from the kiln minutes the event engine attributes to this event (inferred from states and buffers)'),
+            ),
           estimate: valued
             ? [`Estimated ≈ ${money(valued.currency, valued.total)}${ev.end == null ? ' so far' : ''}: ${estimateLines(valued).join('; ')}.`, `Assumptions: ${valued.assumptions.join(' ')}`, ...valued.missing.map((m) => `Not estimated: ${m}`)]
             : [`No money estimate for this event — ${est?.missing.length ? low1(joinSentences(est.missing)) : 'its impact is not valued in money'}.`],
@@ -1417,6 +1502,7 @@ function eventAnswer(c: Ctx, id: string, sub: EventSub): CopilotAnswer {
         },
         extra,
       );
+    }
     case 'action': {
       const next =
         ev.status === 'resolved'
@@ -1426,15 +1512,38 @@ function eventAnswer(c: Ctx, id: string, sub: EventSub): CopilotAnswer {
               ? 'Next step: acknowledge it or start an investigation in Events & Reports; it can be resolved once the condition clears.'
               : 'Next step: keep the investigation going — resolve it after recovery with a reason and the action taken.'
             : 'The condition has cleared — resolve it in Events & Reports with a reason and the action taken.';
-      const perMin = ev.category === 'production' && ev.end == null && !ev.consequenceOf && ev.acc.constraintMin > 0 ? lostOutputValue(finance, ev.acc.kilnTypicalRate * 0.975) : null;
+      // Value of a further minute: the kiln's current shortfall against its typical rate (all of it for a stop or
+      // full starvation, the actual gap for a below-rate event) × the first-pass yield the event report uses.
+      const losing = ev.category === 'production' && ev.end == null && !ev.consequenceOf && ev.acc.constraintMin > 0;
+      const kilnNow = losing ? minuteAt(s, 'H-KILN', s.minute - 1) : null;
+      const typical = ev.acc.kilnTypicalRate;
+      const shortfall = kilnNow ? Math.max(0, typical - kilnNow.rate) : 0;
+      // Same test as the event engine: the kiln is held up (down / starved / blocked) or more than 5 % below its typical rate.
+      // Planned kiln time is never valued as a loss.
+      const plannedNow = kilnNow?.state === 'planned';
+      const heldNow = kilnNow != null && !plannedNow && (kilnNow.state === 'down' || kilnNow.state === 'starved' || kilnNow.state === 'blocked' || shortfall > typical * 0.05);
+      // The first-pass yield the event report uses for this event (24 h before it), so both value a kiln minute alike.
+      const fpy = fpyBefore(s, ev.start);
+      const perMin = heldNow && shortfall > 0 ? lostOutputValue(finance, shortfall * fpy) : null;
       return compose(
         'event-action',
         period,
         {
-          observed: [`${head} is ${rep.summary.status.toLowerCase()}${ev.owner ? `, owner ${ev.owner}` : ', no owner yet'}; condition ${condition}.`, next],
+          observed: [
+            `${head} is ${rep.summary.status.toLowerCase()}${ev.owner ? `, owner ${ev.owner}` : ', no owner yet'}; condition ${condition}.`,
+            next,
+            kilnNow && !heldNow
+              ? plannedNow
+                ? 'The kiln is on a planned stop right now — planned time is not valued as lost output.'
+                : `The kiln is firing at ${int(kilnNow.rate * 60)} tiles/h right now against its typical ${int(typical * 60)} tiles/h — no further line output is being lost this minute.`
+              : null,
+          ],
           inferred: ev.recommendations.map((r, i) => `Recommended ${i + 1}: ${r}`),
           estimate: perMin
-            ? [`Every further minute the kiln stays held up ≈ ${money(finance.currency, perMin.amount)} of contribution (${int(ev.acc.kilnTypicalRate * 60)} tiles/h typical kiln rate × 97.5 % first-pass yield).`, assumptionsText(finance, ['output'])]
+            ? [
+                `Every further minute at the current kiln rate ≈ ${money(finance.currency, perMin.amount)} of contribution ((${int(typical * 60)} tiles/h typical − ${int(kilnNow!.rate * 60)} tiles/h now) ÷ 60 × ${pct(fpy)} first-pass yield of the 24 h before the event, as in its report).`,
+                assumptionsText(finance, ['output']),
+              ]
             : [],
           method: ['Recommendations are the standard first responses for this alarm, defect or vehicle rule (rule-based), stored on the event record and shown in its report.'],
         },
@@ -1447,6 +1556,10 @@ function eventAnswer(c: Ctx, id: string, sub: EventSub): CopilotAnswer {
       const pending = all.filter((x) => x.status === 'pending');
       // provenance.unavailable also lists items still being captured; those are reported as pending.
       const missing = rep.provenance.unavailable.filter((u) => !pending.some((x) => x.title === u.title));
+      const evRecs = all
+        .filter((x) => x.kind === 'inspection-image' && x.inspectionId)
+        .map((x) => s.inspections.find((r) => r.id === x.inspectionId))
+        .filter((r): r is QualityInspection => !!r);
       return compose(
         'event-evidence',
         period,
@@ -1459,7 +1572,7 @@ function eventAnswer(c: Ctx, id: string, sub: EventSub): CopilotAnswer {
             rep.provenance.sources.length ? `Signals used: ${rep.provenance.sources.join(', ')}.` : null,
           ],
           method: [
-            'Evidence is frozen when the event is detected and stored under the event id. Camera views are rendered from the digital twin (simulated feed, not a camera image); inspection frames are illustrative (simulated classification — no vision model). Missing evidence is listed with its reason instead of being invented.',
+            `Evidence is frozen when the event is detected and stored under the event id. ${available.some((x) => x.kind === 'camera-snapshot' && x.provenance.origin === 'live-camera') ? 'Camera frames marked "live camera" were grabbed from the configured stream; other camera views are rendered from the digital twin (not camera images).' : 'Camera views are rendered from the digital twin (simulated feed, not a camera image).'} ${recordMethod(evRecs, ev.asset.stationId)} Missing evidence is listed with its reason instead of being invented.`,
           ],
         },
         extra,

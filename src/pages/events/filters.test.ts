@@ -1,6 +1,6 @@
 import { beforeAll, describe, expect, it } from 'vitest';
 import { activateScenario, advance, createSim, type SimState } from '../../sim/engine';
-import { DEFAULT_FILTERS, facetCounts, filterEvents, inWindow, isDefault, matchesQuery, pageBounds, pageOf, searchText, windowRange, type EventFilters } from './filters';
+import { ALL_EVENTS_FILTERS, DEFAULT_FILTERS, PAGE_SIZE, facetCounts, filterEvents, inWindow, isDefault, matchesQuery, pageBounds, pageOf, searchText, windowRange, type EventFilters } from './filters';
 
 let s: SimState;
 const ctx = () => ({ now: s.minute, vehicleLabel: (id: string) => s.logistics.vehicles[id]?.label });
@@ -86,6 +86,24 @@ describe('event filters', () => {
     expect(pageOf(-1, 40)).toBe(0);
     expect(isDefault(DEFAULT_FILTERS)).toBe(true);
     expect(isDefault(f({ query: 'x' }))).toBe(false);
+  });
+
+  it("'Show all events' lists an open report older than 24 h, on a page after the first", () => {
+    // The deep-linked / related event the page reveals after widening (EventsPage: reveal → pageOf(index)).
+    const c = ctx();
+    const listed = new Set(filterEvents(s.events, DEFAULT_FILTERS, c).map((e) => e.id));
+    const all = filterEvents(s.events, ALL_EVENTS_FILTERS, c);
+    expect(all.length).toBe(s.events.length);
+    expect(all.length).toBeGreaterThan(PAGE_SIZE);
+    const i = all.findIndex((e) => !listed.has(e.id));
+    expect(i).toBeGreaterThanOrEqual(0);
+    const oldest = all.length - 1;
+    expect(listed.has(all[oldest].id)).toBe(false);
+    for (const idx of [i, oldest]) {
+      const pb = pageBounds(all.length, pageOf(idx));
+      expect(all.slice(pb.from, pb.to).map((e) => e.id)).toContain(all[idx].id);
+    }
+    expect(pageOf(oldest)).toBeGreaterThan(0);
   });
 });
 

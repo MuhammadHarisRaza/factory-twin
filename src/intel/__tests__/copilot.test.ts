@@ -7,12 +7,13 @@ import { beforeAll, describe, expect, it } from 'vitest';
 import { M2_PER_TILE, REASON_BY_CODE, TARGET } from '../../model/plant';
 import type { OpEvent } from '../../model/types';
 import { DEFAULT_TARIFFS } from '../../sim/energy';
-import { activateScenario, advance, createSim, DEFAULT_SEED, type SimState } from '../../sim/engine';
+import { activateScenario, advance, createSim, DEFAULT_SEED, minuteAt, type SimState } from '../../sim/engine';
 import { activeEvents, openEvents } from '../../sim/events';
-import { DEFAULT_FINANCE } from '../../sim/finance';
+import { DEFAULT_FINANCE, lostOutputValue } from '../../sim/finance';
 import { assess } from '../../sim/health';
 import { bottleneck, capacityBreakdown, clippedDuration, downtimePareto, lineMetrics, resolvePeriod } from '../../sim/metrics';
 import { EVENT_QUESTIONS, QUESTION_GROUPS, SUGGESTED_QUESTIONS, ask, eventQuestionsFor, type CopilotAnswer } from '../copilot';
+import { buildEventReport, fpyBefore } from '../report';
 
 const T = DEFAULT_TARIFFS;
 const int = (n: number) => Math.round(n).toLocaleString('en-GB');
@@ -29,6 +30,12 @@ let pressStop: SimState;
 let sortBn: SimState;
 /** Kiln stopped at 13:00, asked at 14:30 in shift B (review finding #4); yard congestion from 13:30 under a 40-min turnaround rule. */
 let kilnStop: SimState;
+/** Kiln-origin quality deterioration for 2 h: planarity events at the laser gauge (phase-2 review finding #14). */
+let gaugeQ: SimState;
+/** Press quality ×8 for 25 h (24 h FPY well below 97.5 %), then the kiln stopped 30 min (phase-2 review finding #29). */
+let lowFpy: SimState;
+/** Kiln at 60 % rate for 40 min: a below-rate event on the line constraint (phase-2 review finding #29). */
+let kilnSlow: SimState;
 
 /** Every answer produced in these tests, for the cross-cutting honesty checks. */
 const answers: CopilotAnswer[] = [];
@@ -56,7 +63,18 @@ beforeAll(() => {
   advance(kilnStop, kilnStop.minute + 30);
   activateScenario(kilnStop, { kind: 'yard-congestion', count: 10, end: null, label: 'Yard congestion · 10 trucks' });
   advance(kilnStop, kilnStop.minute + 60); // 14:30, shift B
-}, 120_000);
+  gaugeQ = createSim(DEFAULT_SEED);
+  activateScenario(gaugeQ, { kind: 'quality-deterioration', stage: 'KILN', factor: 6, end: null, label: 'Kiln quality deterioration' });
+  advance(gaugeQ, gaugeQ.minute + 120);
+  lowFpy = createSim(DEFAULT_SEED);
+  activateScenario(lowFpy, { kind: 'quality-deterioration', stage: 'PRESS', factor: 8, end: null, label: 'Press quality deterioration' });
+  advance(lowFpy, lowFpy.minute + 25 * 60);
+  activateScenario(lowFpy, { kind: 'machine-stop', equipmentId: 'H-KILN', end: null, label: 'Kiln breakdown' });
+  advance(lowFpy, lowFpy.minute + 30);
+  kilnSlow = createSim(DEFAULT_SEED);
+  activateScenario(kilnSlow, { kind: 'reduced-rate', equipmentId: 'H-KILN', factor: 0.6, end: null, label: 'Kiln at 60 %' });
+  advance(kilnSlow, kilnSlow.minute + 40);
+}, 180_000);
 
 describe('Suggested questions', () => {
   it('cover the four use cases with about ten questions', () => {
@@ -102,14 +120,14 @@ describe('Numbers match the metrics', () => {
     const a = q(conveyor, "Why is today's production below target?");
     expect(a.facts.find((f) => f.label === 'Output')!.value).toBe(`${int(lm.output * M2_PER_TILE)} m²`);
     expect(a.facts.find((f) => f.label === 'OEE')!.value).toBe(pct(lm.oee.oee.value!));
-    expect(a.text.join(' ')).toContain(`${int(TARGET.goodPerHour)} good tiles per hour`);
+    expect(a.text.join(' ')).toContain(`${int(TARGET.goodPerHour)} good tiles per planned hour`);
 
     const cap = capacityBreakdown(conveyor, resolvePeriod('shift', conveyor.minute));
     const c = q(conveyor, 'What prevents us from reaching theoretical output?');
     expect(c.facts.find((f) => f.label === 'Theoretical')!.value).toBe(`${int(cap.theoreticalM2)} m²`);
     // Losses are listed largest first.
     const listed = c.text.filter((t) => /^\d+\. /.test(t)).map((t) => Number(/: ([\d,]+) m²/.exec(t)![1].replace(/,/g, '')));
-    expect(listed.length).toBe(cap.losses.length);
+    expect(listed.length).toBe(cap.losses.filter((l) => l.kind !== 'transit').length);
     expect([...listed].sort((x, y) => y - x)).toEqual(listed);
   });
 
@@ -217,6 +235,122 @@ describe('Investigation of one event', () => {
   });
 });
 
+describe('Review findings, phase 2', () => {
+  const kilnHeld = (s: SimState, from: number, to: number) => {
+    let n = 0;
+    for (let m = from; m < to; m++) {
+      const x = minuteAt(s, 'H-KILN', m)!;
+      if (x.state === 'down' || x.state === 'starved' || x.state === 'blocked') n++;
+    }
+    return n;
+  };
+
+  it('#13 a kiln attribution to a conveyor stop is inferred with a confidence, never presented as observed', () => {
+    const ev = conveyor.events.find((e) => e.dedupeKey === 'stop:CV-KIN' && e.end == null)!;
+    expect(ev.acc.constraintMin).toBeGreaterThan(0);
+    const d = conveyor.downtime.find((x) => x.equipmentId === 'CV-KIN' && x.end == null)!;
+
+    const a = q(conveyor, 'Which conveyor stopped most recently?');
+    expect(a.eventId).toBe(ev.id);
+    const obs = ofKind(a, 'observed').join(' ');
+    expect(obs).not.toMatch(/because of it/);
+    expect(obs).not.toMatch(/held (the kiln|it) up/);
+    // Observed: what the kiln's own state log shows while the conveyor was stopped.
+    expect(obs).toContain(`the kiln (line constraint) was down, starved or blocked for ${int(kilnHeld(conveyor, d.start, conveyor.minute))} min so far (kiln state log)`);
+    // Inferred: the event engine's attribution, with its confidence.
+    expect(ofKind(a, 'inferred')).toContainEqual(expect.stringMatching(new RegExp(`^Likely: ${ev.id} held the kiln \\(line constraint\\) up ${int(ev.acc.constraintMin)} min so far — .*inferred`)));
+
+    // Same rule in the plant-wide answers that cite the attribution.
+    const md = q(conveyor, 'Which machine has the greatest downtime loss?');
+    expect(md.intent).toBe('machine-downtime');
+    expect(ofKind(md, 'observed').join(' ')).not.toMatch(/kiln held up|held the kiln up/);
+    expect(ofKind(md, 'inferred').filter((x) => x.includes('CV-KIN') && x.includes(`${int(ev.acc.constraintMin)} min`))).toEqual([expect.stringMatching(/^Likely: /)]);
+    const first = q(conveyor, 'What should the supervisor investigate first?');
+    const line = ofKind(first, 'observed').find((x) => x.includes(`${ev.id} ·`))!;
+    expect(line).toContain(`${int(ev.acc.constraintMin)} min of kiln hold-up attributed (inferred)`);
+    expect(line).not.toContain('kiln held up');
+
+    // The event's own impact answer: the kiln minutes and the line output derived from them move to Inferred.
+    const imp = q(conveyor, `What is the impact of ${ev.id}?`);
+    expect(ofKind(imp, 'observed').join(' ')).not.toMatch(/held up or slowed by this event|Line good output lost/);
+    const inferred = ofKind(imp, 'inferred');
+    expect(inferred.some((x) => x.startsWith(`Likely: Kiln (line constraint) held up or slowed by this event: ${int(ev.acc.constraintMin)} min`))).toBe(true);
+    expect(inferred.some((x) => x.startsWith('Likely: Line good output lost'))).toBe(true);
+  });
+
+  it('#13 the kiln stop event keeps its own kiln minutes under Observed', () => {
+    const ev = kilnStop.events.find((e) => e.dedupeKey === 'stop:H-KILN' && e.end == null)!;
+    const imp = q(kilnStop, `What is the impact of ${ev.id}?`);
+    expect(ofKind(imp, 'observed').some((x) => x.startsWith(`Kiln (line constraint) held up or slowed by this event: ${int(ev.acc.constraintMin)} min`))).toBe(true);
+    expect(ofKind(imp, 'inferred').some((x) => /held up or slowed/.test(x))).toBe(false);
+  });
+
+  it('#14 laser-gauge records are measurements: no classification confidence is shown for them', () => {
+    const a = q(gaugeQ, 'Show the report and evidence for the latest planarity defect');
+    expect(a.intent).toBe('defect-report');
+    const ev = gaugeQ.events.find((e) => e.id === a.eventId)!;
+    expect(ev.refs.defect).toBe('planarity');
+    expect(ev.asset.stationId).toBe('ST-GAUGE');
+    const obs = ofKind(a, 'observed').join(' ');
+    expect(obs).toMatch(/Inspection evidence: INS-\d+ planarity deviation .*simulated gauge measurement: /);
+    expect(obs).not.toMatch(/confidence/i);
+    const method = ofKind(a, 'method').join(' ');
+    expect(method).toContain('Gauge records are simulated laser measurements checked against a tolerance — not classifications');
+    expect(method).not.toMatch(/simulated classification/);
+    // The evidence answer of the same event says the same.
+    const evd = q(gaugeQ, `What evidence is available for ${ev.id}?`);
+    expect(ofKind(evd, 'method').join(' ')).toContain('Gauge records are simulated laser measurements');
+    expect(ofKind(evd, 'method').join(' ')).not.toMatch(/simulated classification/);
+    // A reject record without a quality event (fallback answer) is described the same way.
+    const dim = q(gaugeQ, 'Show the report and evidence for the latest dimensional defect');
+    if (!dim.eventId && /Latest reject record/.test(dim.text.join(' '))) {
+      expect(dim.text.join(' ')).toMatch(/simulated gauge measurement/);
+      expect(dim.text.join(' ')).not.toMatch(/simulated confidence/);
+    }
+  });
+
+  it('#14 tunnel (vision) records keep their simulated confidence', () => {
+    const a = q(gaugeQ, 'Show the report and evidence for the latest chip defect');
+    expect(a.intent).toBe('defect-report');
+    expect(gaugeQ.events.find((e) => e.id === a.eventId)?.asset.stationId).toBe('ST-VIS');
+    if (/Inspection evidence: INS-/.test(a.text.join(' '))) expect(ofKind(a, 'observed').join(' ')).toMatch(/simulated confidence \d+ %/);
+    expect(ofKind(a, 'method').join(' ')).toMatch(/simulated classification, no vision model; confidence values are simulated/);
+  });
+
+  it('#29 the per-minute estimate of a kiln stop uses the event report FPY, not 97.5 %', () => {
+    const ev = lowFpy.events.find((e) => e.dedupeKey === 'stop:H-KILN' && e.end == null)!;
+    const fpy = fpyBefore(lowFpy, ev.start);
+    expect(fpy).toBeLessThan(0.96);
+    const rep = buildEventReport(lowFpy, ev.id)!;
+    const repFpy = /first-pass yield ([\d.]+ %)/.exec(rep.impact.rows.find((r) => r.label === 'Line good output lost')!.basis)![1];
+    const a = q(lowFpy, `What should we do about ${ev.id}?`);
+    expect(a.intent).toBe('event-action');
+    const est = ofKind(a, 'estimate')[0];
+    expect(est).toMatch(/^Every further minute at the current kiln rate ≈ USD /);
+    expect(est).toContain(`× ${repFpy} first-pass yield`);
+    expect(est).not.toContain('97.5 %');
+    const now = minuteAt(lowFpy, 'H-KILN', lowFpy.minute - 1)!;
+    expect(now.state).toBe('down');
+    const v = lostOutputValue(DEFAULT_FINANCE, Math.max(0, ev.acc.kilnTypicalRate - now.rate) * fpy);
+    expect(est).toContain(`≈ USD ${v.amount.toFixed(2)} of contribution`);
+  });
+
+  it('#29 a below-rate kiln event is valued at its actual shortfall, not the full typical rate', () => {
+    const ev = kilnSlow.events.find((e) => e.dedupeKey === 'rate:H-KILN' && e.end == null)!;
+    expect(ev.acc.constraintMin).toBeGreaterThan(0);
+    const now = minuteAt(kilnSlow, 'H-KILN', kilnSlow.minute - 1)!;
+    expect(now.rate).toBeGreaterThan(0);
+    const fpy = fpyBefore(kilnSlow, ev.start);
+    const a = q(kilnSlow, `What should we do about ${ev.id}?`);
+    const est = ofKind(a, 'estimate')[0];
+    const shortfall = lostOutputValue(DEFAULT_FINANCE, (ev.acc.kilnTypicalRate - now.rate) * fpy);
+    const full = lostOutputValue(DEFAULT_FINANCE, ev.acc.kilnTypicalRate * fpy);
+    expect(est).toContain(`≈ USD ${shortfall.amount.toFixed(2)} of contribution`);
+    expect(est).not.toContain(`USD ${full.amount.toFixed(2)}`);
+    expect(est).toContain(`− ${int(now.rate * 60)} tiles/h now`);
+  });
+});
+
 describe('Estimates', () => {
   it('the cost of the current loss never adds consequence events', () => {
     const cons = activeEvents(conveyor).filter((e) => e.consequenceOf);
@@ -258,6 +392,11 @@ describe('Honesty', () => {
       expect(text, a.intent).not.toMatch(/real[- ]time|telemetry|\bLLM\b|\bGPT\b/i);
     }
     expect(q(plain, 'hello').text.join(' ')).toMatch(/rule-based/i);
+    // Phase-2 review #13 / #14: attributions are never observed facts; a missing confidence is never printed as one.
+    for (const a of answers) {
+      for (const x of ofKind(a, 'observed')) expect(x, a.intent).not.toMatch(/because of it/);
+      expect(a.text.join(' '), a.intent).not.toMatch(/simulated confidence —/);
+    }
     expect(q(plain, 'hello').text.join(' ')).toMatch(/no language model/i);
   });
 });

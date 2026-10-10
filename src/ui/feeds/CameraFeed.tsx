@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState, type CSSProperties, type ReactNode, type RefObject } from 'react';
-import { Camera, LoaderCircle, RefreshCw, VideoOff, WifiOff, type LucideIcon } from 'lucide-react';
+import { Camera, CirclePlay, LoaderCircle, RefreshCw, VideoOff, WifiOff, type LucideIcon } from 'lucide-react';
 import { useApp, type CameraSource } from '../../app/store';
 import { CAMERA_BY_ID, MONITORED_STAGE_BY_ID, STAGE_BY_ID } from '../../model/plant';
 import type { CameraDef, MonitoredStageId, StageId } from '../../model/types';
@@ -8,7 +8,19 @@ import { formatClockSec, formatDay } from '../../sim/time';
 import { renderTwinCamera, twinRendererReady, type TwinRender } from '../../twin/bridge';
 import { FEED_STATUS, FeedStatusBadge, StatusBadge, type Tone } from '../kit/Status';
 import { feedRenderSize, frameTimeOf } from './frames';
-import { RESOLVED_LABEL, browserEnv, planStream, staleness, urlSummary, type LiveState } from './live';
+import {
+  RESOLVED_LABEL,
+  STALE_DETAIL,
+  UNVERIFIED_DETAIL,
+  browserEnv,
+  isPlaying,
+  mjpegState,
+  planStream,
+  snapshotBlocked,
+  staleness,
+  urlSummary,
+  type LiveState,
+} from './live';
 import { registerLive, useLiveStatus } from './registry';
 import { frameFingerprint, grabFrame } from './snapshot';
 import { SnapshotViewer, type Snapshot } from './SnapshotViewer';
@@ -18,7 +30,9 @@ import './feeds.css';
  * Camera feed. Without a configured stream it shows the camera position's view rendered from the
  * digital twin, refreshed about every 2 s while on screen and labelled as simulated. With a stream
  * configured (Assets & Data → Camera sources) it plays the stream and shows "Live" only once the
- * media element actually plays; otherwise connecting / connection error / stale / unavailable.
+ * media element actually plays and new frames can be seen arriving; otherwise connecting / connection
+ * error / stale / unavailable, or "Playing · freshness unknown" when a frozen image could not be told
+ * apart from a moving one (an MJPEG / JPEG stream without CORS permission).
  */
 export type CameraFeedProps = {
   cameraId: string;
@@ -38,6 +52,8 @@ export const SIMULATED_LABEL = 'Simulated feed · rendered from the digital twin
 export const LIVE_BADGE: Record<LiveState, { tone: Tone; icon: LucideIcon; label: string }> = {
   loading: { tone: 'neutral', icon: LoaderCircle, label: 'Connecting' },
   live: FEED_STATUS.live,
+  // Playing, but a frozen image could not be told apart from a moving one (no CORS): never "Live".
+  unverified: { tone: 'neutral', icon: CirclePlay, label: 'Playing · freshness unknown' },
   stale: FEED_STATUS.stale,
   error: { ...FEED_STATUS.disconnected, label: 'Connection error' },
   unavailable: FEED_STATUS.unavailable,
@@ -305,20 +321,28 @@ function LiveFeed({
   const [cors, setCors] = useState<'anonymous' | 'none'>('anonymous');
   const [state, setState] = useState<LiveState>(plan.ok ? 'loading' : 'unavailable');
   const [detail, setDetail] = useState<string | null>(plan.ok ? null : plan.reason);
-  const [unverified, setUnverified] = useState(false);
   const [note, setNote] = useState<string | null>(null);
   const [, setTick] = useState(0);
   const stateRef = useRef(state);
-  const unverifiedRef = useRef(false);
   const mediaEl = useRef<HTMLVideoElement | HTMLImageElement | null>(null);
   const lastFrame = useRef<number | null>(null);
   const played = useRef(false);
+  /** `load` events seen on the current <img> (more than one = the browser fires one per MJPEG part). */
+  const loads = useRef<{ el: HTMLImageElement | null; n: number }>({ el: null, n: 0 });
+  const probeRef = useRef<HTMLCanvasElement | null>(null);
+  const probe = () => (probeRef.current ??= document.createElement('canvas'));
+  const loadsOf = (el: HTMLImageElement) => (loads.current.el === el ? loads.current.n : 0);
+  const unverified = state === 'unverified';
 
   const go = useCallback((next: LiveState, why: string | null) => {
     stateRef.current = next;
     setState(next);
     setDetail(why);
   }, []);
+  const goPlaying = useCallback(
+    (next: LiveState) => go(next, next === 'stale' ? STALE_DETAIL : next === 'unverified' ? UNVERIFIED_DETAIL : null),
+    [go],
+  );
 
   const report = useLiveStatus((s) => s.report);
   useEffect(() => {
@@ -337,7 +361,6 @@ function LiveFeed({
   useEffect(() => {
     if (!plan.ok) return;
     const started = Date.now();
-    const probe = document.createElement('canvas');
     let lastFp: number | null = null;
     const iv = setInterval(() => {
       const now = Date.now();
@@ -346,26 +369,37 @@ function LiveFeed({
         if (now - started > CONNECT_TIMEOUT_MS) go('error', 'No response from the stream within 20 s');
         return;
       }
-      if (kind === 'mjpeg' && (st === 'live' || st === 'stale') && mediaEl.current instanceof HTMLImageElement) {
-        const fp = frameFingerprint(mediaEl.current, probe);
-        unverifiedRef.current = fp == null;
-        setUnverified(fp == null);
+      const img = mediaEl.current;
+      let next: LiveState;
+      if (kind === 'mjpeg' && img instanceof HTMLImageElement) {
+        // Pixels readable: a changed fingerprint is a new frame. Not readable (no CORS): only repeated
+        // load events (one per part) show frames arriving; else freshness is unknown → never 'live'.
+        const fp = isPlaying(st) ? frameFingerprint(img, probe()) : null;
         if (fp != null && fp !== lastFp) {
           lastFp = fp;
           lastFrame.current = now;
         }
-      }
-      const next = staleness(st, unverifiedRef.current ? null : lastFrame.current, now);
-      if (next !== st) go(next, next === 'stale' ? 'No new frame for more than 10 s' : null);
+        next = mjpegState(st, { fingerprint: fp, loads: loadsOf(img), lastFrameAt: lastFrame.current, now });
+      } else next = staleness(st, lastFrame.current, now);
+      if (next !== st) goPlaying(next);
       setTick((n) => (n + 1) % 1_000_000);
     }, 1000);
     return () => clearInterval(iv);
-  }, [plan.ok, kind, cors, attempt, go]);
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- probe / loadsOf only read refs
+  }, [plan.ok, kind, cors, attempt, go, goPlaying]);
 
   const onLive = () => {
-    lastFrame.current = Date.now();
+    const now = Date.now();
+    lastFrame.current = now;
     played.current = true;
-    if (stateRef.current !== 'live') go('live', null);
+    let next: LiveState = 'live';
+    const img = mediaEl.current;
+    if (kind === 'mjpeg' && img instanceof HTMLImageElement) {
+      if (loads.current.el !== img) loads.current = { el: img, n: 0 };
+      loads.current.n += 1;
+      next = mjpegState('live', { fingerprint: frameFingerprint(img, probe()), loads: loads.current.n, lastFrameAt: now, now });
+    }
+    if (stateRef.current !== next) goPlaying(next);
   };
   const onError = () => {
     // Never played with CORS: the gateway may simply not send CORS headers — retry without (plays, but frames can't be read).
@@ -378,8 +412,7 @@ function LiveFeed({
   const retry = () => {
     lastFrame.current = null;
     played.current = false;
-    unverifiedRef.current = false;
-    setUnverified(false);
+    loads.current = { el: null, n: 0 };
     setCors('anonymous');
     setAttempt((a) => a + 1);
     go('loading', null);
@@ -388,8 +421,10 @@ function LiveFeed({
   const snapshot = () => {
     setNote(null);
     const el = mediaEl.current;
-    if (!el || (stateRef.current !== 'live' && stateRef.current !== 'stale')) {
-      setNote('No frame to capture — the stream is not playing.');
+    // Only a live frame: a stale / unverified one may be old but would be stamped with the capture time.
+    const blocked = snapshotBlocked(stateRef.current);
+    if (!el || blocked) {
+      setNote(`${blocked ?? 'No frame to capture — the stream is not playing'}.`);
       return;
     }
     const g = grabFrame(el, cam.id);
@@ -401,7 +436,7 @@ function LiveFeed({
   const elKey = `${cors}-${attempt}`;
   const crossOrigin = cors === 'anonymous' ? 'anonymous' : undefined;
   const alt = `Configured camera stream of ${cam.id}`;
-  const playing = state === 'live' || state === 'stale';
+  const playing = isPlaying(state);
   const media = !plan.ok ? (
     <Msg icon={VideoOff} title={plan.reason} text={plan.detail}>
       <button className="btn sm" onClick={onShowSimulated}>
@@ -477,11 +512,14 @@ function LiveFeed({
     : 'Configured stream · not playable in this browser';
   const hint =
     note ??
-    (playing && cors === 'none'
-      ? 'Playing without CORS permission: snapshots and event frames cannot be taken from this stream.'
-      : playing && unverified
-        ? 'Frame freshness cannot be checked without CORS permission.'
+    (unverified
+      ? cors === 'none'
+        ? 'Playing without CORS permission: whether new frames still arrive cannot be checked, so the feed is not shown as Live; snapshots and event frames cannot be taken from this stream.'
+        : 'Whether new frames still arrive cannot be checked for this stream, so it is not shown as Live.'
+      : playing && cors === 'none'
+        ? 'Playing without CORS permission: snapshots and event frames cannot be taken from this stream.'
         : null);
+  const blocked = snapshotBlocked(state);
 
   return (
     <FeedFrame
@@ -489,11 +527,18 @@ function LiveFeed({
       compact={compact}
       badge={<StatusBadge {...LIVE_BADGE[state]} />}
       time={time ? `${time}${compact ? '' : ' local'}` : null}
-      timeTitle="Local (wall-clock) time of the last frame received"
+      timeTitle={unverified ? 'Local (wall-clock) time the stream connected — frame freshness unknown' : 'Local (wall-clock) time of the last frame received'}
       mediaStyle={mediaStyle}
       media={media}
       label={<span title={url.split('?')[0]}>{label}</span>}
-      actions={<SnapshotButton onClick={snapshot} disabled={!playing} compact={compact} title="Snapshot of the current stream frame (opens a viewer with download)" />}
+      actions={
+        <SnapshotButton
+          onClick={snapshot}
+          disabled={blocked != null}
+          compact={compact}
+          title={blocked ?? 'Snapshot of the current stream frame (opens a viewer with download)'}
+        />
+      }
       note={hint}
     />
   );

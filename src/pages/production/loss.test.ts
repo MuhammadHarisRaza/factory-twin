@@ -42,7 +42,8 @@ describe('loss ledger', () => {
     expect(L.downM2 + L.constraintM2).toBeCloseTo(capLoss('availability'), 6);
     expect(L.speedM2).toBeCloseTo(capLoss('speed'), 6);
     expect(L.plannedStopM2).toBeCloseTo(capLoss('planned'), 6);
-    if (L.transitM2 >= 0) expect(L.qualityM2 + L.transitM2).toBeCloseTo(capLoss('quality'), 6);
+    expect(L.qualityM2).toBeCloseTo(capLoss('quality'), 6);
+    expect(L.transitM2).toBeCloseTo(capLoss('transit'), 6);
     // Theoretical − every step = good output: the waterfall closes.
     expect(L.theoreticalM2 - L.plannedStopM2 - L.downM2 - L.constraintM2 - L.speedM2 - L.qualityM2 - L.transitM2).toBeCloseTo(L.goodM2, 6);
     expect(L.capacityGapM2).toBeCloseTo(L.theoreticalM2 - L.goodM2, 9);
@@ -63,7 +64,8 @@ describe('loss ledger', () => {
   it('financial impact vs plan = shortfall at contribution + direct costs, never theoretical × price', () => {
     expect(L.impact.total).toBeCloseTo(sum(L.impact.lines.map((l) => l.amount)), 9);
     expect(L.impact.shortfallM2).toBeCloseTo(Math.max(0, L.planGapM2), 9);
-    expect(L.impact.lines[0].amount).toBeCloseTo(lostOutputValue(F, L.impact.shortfallM2 / M2_PER_TILE).amount, 9);
+    expect(L.impact.valuedShortfallM2).toBeCloseTo(Math.max(0, L.planGapM2 - L.lm.rejected * F.reworkShare * M2_PER_TILE), 9);
+    expect(L.impact.lines[0].amount).toBeCloseTo(lostOutputValue(F, L.impact.valuedShortfallM2 / M2_PER_TILE).amount, 9);
     expect(L.impact.total).toBeLessThan(L.theoreticalM2 * F.sellingPricePerM2);
   });
 
@@ -86,6 +88,42 @@ describe('loss ledger', () => {
     const k = L.lm.constraint.totals;
     const runRate = k.operating > 1 ? k.count / k.operating : 0;
     expect(w.gainTiles).toBeLessThanOrEqual((k.down + k.starved + k.blocked) * runRate * L.fpyUsed + 1e-6);
+  });
+});
+
+describe('financial impact vs plan with rejects (review #28)', () => {
+  const s = createSim(65, START);
+  const t0 = s.minute;
+  activateScenario(s, { kind: 'machine-stop', equipmentId: 'H-KILN', end: t0 + 90, label: 'Kiln stop' });
+  advance(s, t0 + 150);
+  const p = win(Math.floor(t0 / 60) * 60, s.minute);
+  const L = lossLedger(s, p, F, T);
+  const reworkedTiles = L.lm.rejected * F.reworkShare;
+
+  it('charges reworked rejects at rework cost only, not also as lost contribution', () => {
+    expect(L.lm.rejected).toBeGreaterThan(0);
+    // Behind plan by more than the reworked rejects: the whole reworked share sits inside the shortfall.
+    expect(L.planGapM2).toBeGreaterThan(reworkedTiles * M2_PER_TILE);
+    expect(L.impact.shortfallM2).toBeCloseTo(L.planGapM2, 9);
+    expect(L.impact.valuedShortfallM2).toBeCloseTo(L.planGapM2 - reworkedTiles * M2_PER_TILE, 9);
+    const shortfall = L.impact.lines[0];
+    expect(shortfall.amount).toBeCloseTo(lostOutputValue(F, L.planGapM2 / M2_PER_TILE - reworkedTiles).amount, 9);
+    expect(shortfall.basis).toMatch(/reworked rejects/);
+    // With nothing reworked, the same shortfall is valued in full: the difference is exactly the
+    // contribution of the reworked tiles, which the impact no longer charges on top of rework.
+    const none = lossLedger(s, p, { ...F, reworkShare: 0 }, T);
+    expect(none.impact.valuedShortfallM2).toBeCloseTo(none.impact.shortfallM2, 9);
+    expect(none.impact.lines[0].amount - shortfall.amount).toBeCloseTo(lostOutputValue(F, reworkedTiles).amount, 9);
+    // Per reworked tile the impact changes by rework − scrap − contribution vs scrapping it.
+    const area = reworkedTiles * M2_PER_TILE;
+    const contribution = lostOutputValue(F, reworkedTiles).amount;
+    expect(L.impact.total - none.impact.total).toBeCloseTo(area * (F.reworkCostPerM2 - F.scrapCostPerM2) - contribution, 6);
+  });
+
+  it('keeps the plan gap (attainment) unchanged', () => {
+    const cap = capacityBreakdown(s, p);
+    expect(L.planGapM2).toBeCloseTo(cap.planGapM2, 9);
+    expect(L.impact.shortfallM2).toBeCloseTo(Math.max(0, cap.planGapM2), 9);
   });
 });
 
@@ -141,6 +179,30 @@ describe('constraint attribution and equipment contribution', () => {
     expect(eq.headline).toContain(c[0].equipmentId ?? c[0].label);
     expect(eq.links.length).toBeGreaterThan(0);
     for (const a of answers) expect(a.copilot.length).toBeGreaterThan(5);
+  });
+});
+
+describe('stage-level flow events in the equipment drill-down (review #7)', () => {
+  const s = createSim(63, START);
+  const t0 = s.minute;
+  activateScenario(s, { kind: 'conveyor-stop', equipmentId: 'E-COL', end: null, label: 'Collector stop' });
+  advance(s, t0 + 60);
+  const p = win(Math.floor(t0 / 60) * 60, s.minute);
+
+  it('lists the press stage blockage for every press, not only the first', () => {
+    const block = s.events.find((e) => e.type === 'blockage' && e.asset.stage === 'PRESS' && e.start >= t0);
+    expect(block, 'press blockage raised').toBeDefined();
+    const L = lossLedger(s, p, F, T);
+    const rows = machineRows(s, p, equipmentContribution(s, p, L));
+    for (const id of ['E-PRS1', 'E-PRS2', 'E-PRS3']) {
+      expect(assetEvents(s, id, p).map((e) => e.id), id).toContain(block!.id);
+      expect(rows.find((r) => r.id === id)!.events, id).toBeGreaterThanOrEqual(1);
+    }
+    // Not on machines of other stages, and an asset's own events are still listed once.
+    expect(assetEvents(s, 'F-DRY', p).some((e) => e.id === block!.id)).toBe(false);
+    const own = assetEvents(s, 'E-COL', p);
+    expect(own.some((e) => e.type === 'conveyor-stop')).toBe(true);
+    expect(new Set(own.map((e) => e.id)).size).toBe(own.length);
   });
 });
 

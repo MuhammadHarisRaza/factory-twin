@@ -13,7 +13,7 @@ import type { jsPDF } from 'jspdf';
 import type { UserOptions } from 'jspdf-autotable';
 import { axisFormat } from './format';
 import { A4, LAYOUT, chartRange, columnWidth, contentHeight, contentWidth, fitBox, labelIndices, lineHeightMm, pageLabel, placeBlock, splitLines } from './layout';
-import { PRODUCT_NAME, type PdfBlock, type PdfChart, type PdfDocModel, type PdfFigure, type PdfSection } from './model';
+import { BAND_NOTE, PRODUCT_NAME, type PdfBlock, type PdfChart, type PdfDocModel, type PdfFigure, type PdfSection } from './model';
 import { pdfText } from './text';
 
 export type AutoTableFn = (doc: jsPDF, options: UserOptions) => void;
@@ -521,7 +521,7 @@ class Renderer {
       doc.rect(px, 4.6, pw, 5.6, 'F');
       doc.text(label, px + 3, 8.5);
       this.font(6.6, 'normal', C.bandMuted);
-      doc.text('Demonstration · no live plant data', A4.w - LAYOUT.mr, 14.2, { align: 'right' });
+      doc.text(pdfText(this.m.bandNote ?? BAND_NOTE), A4.w - LAYOUT.mr, 14.2, { align: 'right' });
       // Footer.
       this.stroke(C.line, 0.25);
       doc.line(LAYOUT.ml, LAYOUT.footerY, A4.w - LAYOUT.mr, LAYOUT.footerY);

@@ -125,7 +125,7 @@ export const EVENT_RULE_DEFS: {
   { id: 'Q-COUNT', type: 'defect-count', category: 'quality', label: 'Defect count above threshold', description: 'Rejected tiles of one category in the last 30 min.', threshold: 'defectCount30Max', available: true },
   { id: 'Q-REPEAT', type: 'defect-repeat', category: 'quality', label: 'Repeated defect', description: 'Consecutive reject records of the same category at one station.', threshold: 'defectRepeatRecords', available: true },
   { id: 'Q-DET', type: 'defect-deterioration', category: 'quality', label: 'Deterioration from baseline', description: 'Category rate over the last 2 h vs the 24 h before.', threshold: 'deteriorationRatio', available: true },
-  { id: 'Q-CRIT', type: 'critical-defect', category: 'quality', label: 'Critical defect requiring review', description: 'Reject record classified critical; grouped per station within 30 min.', available: true },
+  { id: 'Q-CRIT', type: 'critical-defect', category: 'quality', label: 'Critical defect requiring review', description: 'Reject record classified critical (vision) or measured critically out of tolerance (gauge); grouped per station within 30 min.', available: true },
   { id: 'L-WAIT', type: 'truck-waiting', category: 'logistics', label: 'Truck waiting beyond threshold', description: 'Time in the holding area waiting for a dock.', threshold: 'truckWaitMax', available: true },
   { id: 'L-DOCK', type: 'dock-overstay', category: 'logistics', label: 'Dock occupied too long', description: 'One truck at the same dock longer than the threshold.', threshold: 'dockStayMax', available: true },
   { id: 'L-YARD', type: 'yard-congestion', category: 'logistics', label: 'Yard congestion', description: 'Trucks waiting for a dock at or above the threshold.', threshold: 'yardQueueMax', available: true },
@@ -198,6 +198,9 @@ function tick(I: EventInternal, key: string, held: boolean, t: number) {
 }
 
 const REOPEN_MIN = 10;
+/** Inspection frames (and record refs) a critical-defect group keeps. */
+const MAX_CRIT_FRAMES = 8;
+const INSPECTION_FRAME_LABEL = 'Illustrative frame of a simulated inspection record — no camera image, no vision model';
 export const DEMO_USER = 'Demo presenter';
 const RANK: Record<AlertSeverity, number> = { info: 0, warning: 1, serious: 2, critical: 3 };
 const seqOf = (id: string) => Number(id.slice(id.lastIndexOf('-') + 1)) || 0;
@@ -213,6 +216,16 @@ const STATE_WORD: Record<MachineState, string> = {
 };
 const stageOf = (id: string): StageId | undefined => OPS_BY_ID[id]?.stage ?? CONVEYOR_BY_ID[id]?.to ?? undefined;
 const zoneOf = (id: string) => OPS_BY_ID[id]?.zone ?? CONVEYOR_BY_ID[id]?.zone;
+/**
+ * Stage an event on an asset is filed under. A conveyor belongs to the monitored stage that lists it
+ * (preferring the stage it feeds) — the same rule as the monitoring views — so its events appear on
+ * that stage and the report names it. Machines use their process stage.
+ */
+export function eventStageOf(id: string): MonitoredStageId | undefined {
+  const conv = CONVEYOR_BY_ID[id];
+  if (!conv) return stageOf(id);
+  return (MONITORED_STAGES.find((m) => m.conveyors.includes(id) && m.id === conv.to) ?? MONITORED_STAGES.find((m) => m.conveyors.includes(id)))?.id ?? stageOf(id);
+}
 
 export const eventById = (s: SimState, id: string): OpEvent | undefined => {
   const I = s.internal.ev;
@@ -274,6 +287,8 @@ function raise(s: SimState, t: number, spec: Spec): OpEvent {
   if (recent && t - recent.at <= REOPEN_MIN) {
     const ev = eventById(s, recent.id);
     if (ev && ev.resolution?.by !== 'user') {
+      // A quality event's counts cover its whole window: add the minutes between clearing and reopening.
+      if (ev.category === 'quality' && recent.at < t) addQualityWindow(s, ev, recent.at, t);
       ev.end = null;
       ev.lastUpdate = t;
       if (ev.status === 'resolved') {
@@ -636,10 +651,11 @@ function refreshOnClear(s: SimState, ev: OpEvent, t: number) {
 const HELD: MachineState[] = ['down', 'starved', 'blocked'];
 
 function initAcc(s: SimState, ev: OpEvent, t: number) {
-  // Kiln typical rate: its average output over the last hour while running (fallback 94 % of ideal).
+  // Kiln typical rate: its average output while running over the hour before the condition began —
+  // not the event's own degraded minutes (fallback 94 % of ideal when the log does not cover it).
   let sum = 0;
   let n = 0;
-  for (let m = t - 60; m < t; m++) {
+  for (let m = ev.start - 60; m < ev.start; m++) {
     const x = minuteAt(s, 'H-KILN', m);
     if (x && (x.state === 'running' || x.state === 'reduced')) {
       sum += x.rate;
@@ -648,17 +664,33 @@ function initAcc(s: SimState, ev: OpEvent, t: number) {
   }
   const ideal = OPS_BY_ID['H-KILN'].idealRatePerHour! / 60;
   ev.acc.kilnTypicalRate = n >= 10 ? sum / n : ideal * 0.94;
-  if (ev.category === 'quality') ev.acc.referenceRejectRate = referenceRejectRate(s, t);
+  // The same reference the detection rule uses (per category when the event is about one defect).
+  if (ev.category === 'quality') ev.acc.referenceRejectRate = referenceRejectRate(s, t, ev.refs.defect);
+}
+
+/** Adds the quality minute log over [from, to − 1] to a quality event's counts. */
+function addQualityWindow(s: SimState, ev: OpEvent, from: number, to: number) {
+  if (to <= from) return;
+  const w = qualityWindow(s, to - 1, to - from, ev.refs.defect);
+  ev.acc.inspected += w.inspected;
+  ev.acc.rejects += w.rejected;
 }
 
 /**
  * Events are dated from when their condition began (often a few minutes before the rule fired):
  * fill the accumulators for that window from the minute log so the impact covers the whole event.
  * Kiln (constraint) minutes are only credited when the event is the kiln's own condition, or a kiln
- * starvation / blockage — which also credits its root event.
+ * starvation / blockage — which also credits its root event. Quality events get the inspected and
+ * rejected counts of [start, t − 1]; accumulate() adds minute t onwards, so a cleared event's counts
+ * are final and never depend on when the report is built.
  */
 function backfill(s: SimState, ev: OpEvent, t: number) {
-  if (ev.category !== 'production' || ev.start >= t) return;
+  if (ev.start >= t) return;
+  if (ev.category === 'quality') {
+    addQualityWindow(s, ev, ev.start, t);
+    return;
+  }
+  if (ev.category !== 'production') return;
   const asset = ev.asset.equipmentId;
   const ideal = asset ? OPS_BY_ID[asset]?.idealRatePerHour : null;
   const typical = ideal ? (ideal / 60) * 0.945 : asset && CONVEYOR_BY_ID[asset] ? ev.acc.kilnTypicalRate : 0;
@@ -867,7 +899,8 @@ function openStopEvent(s: SimState, t: number, d: DowntimeEvent) {
     severity,
     title: conv ? `${name} stopped` : isFault ? `${name} fault: ${reason.label.toLowerCase()}` : `${name} stopped`,
     summary: `${id} stopped at ${clock(d.start)} (${reason.label}).${conv ? ' Tiles stop moving at this transfer.' : ''}`,
-    asset: { equipmentId: id, stage, zone: zoneOf(id) },
+    // Buffer context and severity use the process stage; the event is filed under its monitored stage.
+    asset: { equipmentId: id, stage: eventStageOf(id), zone: zoneOf(id) },
     trigger: {
       kind: d.source === 'scenario' ? 'scenario' : 'signal',
       ruleId: conv ? 'R-CONV' : 'R-STOP',
@@ -1141,7 +1174,7 @@ function feedRules(s: SimState, t: number) {
         severity: 'warning',
         title: `${nameOf(id)}: counter not updating (data stale)`,
         summary: `${counter} has not changed for ${t - f.since} min while the last reported state was ${STATE_WORD[f.lastState ?? 'running']}. The asset's status is unknown until data resumes.`,
-        asset: { equipmentId: id, stage: stageOf(id), zone: zoneOf(id) },
+        asset: { equipmentId: id, stage: eventStageOf(id), zone: zoneOf(id) },
         trigger: {
           kind: f.scenarioId ? 'scenario' : 'rule',
           ruleId: 'R-COUNTER',
@@ -1293,7 +1326,8 @@ function qualityRules(s: SimState, t: number) {
         severity: 'warning',
         title: `${DEFECTS[d].label}: ${Math.round(w30.rejected)} rejects in 30 min`,
         summary: `${Math.round(w30.rejected)} tiles rejected for ${DEFECTS[d].label.toLowerCase()} at ${st.name} in the last 30 min (threshold ${R.defectCount30Max}).`,
-        asset: { equipmentId: st.equipmentId, stationId: station, stage: 'SORT', zone: 'I' },
+        // Like the other per-category rules: filed under the defect's origin stage (sorting still lists it by its station).
+        asset: { equipmentId: st.equipmentId, stationId: station, stage: DEFECTS[d].origin, zone: 'I' },
         trigger: {
           kind: scen ? 'scenario' : 'rule',
           ruleId: 'Q-COUNT',
@@ -1378,7 +1412,7 @@ function captureQuality(s: SimState, ev: OpEvent, t: number, d: DefectCategory |
       title: `${r.id} · ${r.defect ? DEFECTS[r.defect].label : 'Reject'} · ${clock(r.time)}`,
       capturedAt: r.time,
       inspectionId: r.id,
-      provenance: { origin: 'simulation', sourceId: station, label: 'Illustrative frame of a simulated inspection record — no camera image, no vision model' },
+      provenance: { origin: 'simulation', sourceId: station, label: INSPECTION_FRAME_LABEL },
       status: 'available',
     });
   if (!recs.length)
@@ -1471,7 +1505,20 @@ function inspectionRecordRules(s: SimState, t: number) {
       I.lastSeen[critKey] = r.time;
       const open = openEvent(s, critKey);
       if (open) {
-        open.refs.inspectionIds = [...(open.refs.inspectionIds ?? []), r.id].slice(-8);
+        // Every referenced record carries its frame, so the report, the PDF and the Quality page show
+        // the same records (up to MAX_CRIT_FRAMES; later ones are listed in the facts).
+        const ids = open.refs.inspectionIds ?? [];
+        if (!ids.includes(r.id) && ids.length < MAX_CRIT_FRAMES) {
+          open.refs.inspectionIds = [...ids, r.id];
+          addEvidence(s, open, {
+            kind: 'inspection-image',
+            title: `${r.id} · ${DEFECTS[r.defect].label} · ${clock(r.time)}`,
+            capturedAt: r.time,
+            inspectionId: r.id,
+            provenance: { origin: 'simulation', sourceId: r.stationId, label: INSPECTION_FRAME_LABEL },
+            status: 'available',
+          });
+        }
         open.facts.push(`${clock(r.time)}: ${r.id} — ${DEFECTS[r.defect].label} (critical)${r.measurement ? `, ${r.measurement}` : ''}.`);
         open.lastUpdate = t;
       } else {
@@ -1481,12 +1528,14 @@ function inspectionRecordRules(s: SimState, t: number) {
           type: 'critical-defect',
           severity: 'warning',
           title: `Critical ${DEFECTS[r.defect].label.toLowerCase()} — review required`,
-          summary: `${r.id} at ${st.name} was classified critical (${DEFECTS[r.defect].label.toLowerCase()}${r.measurement ? `, ${r.measurement}` : ''}). A quality engineer should review the tile and its batch ${r.batchId}.`,
+          summary: `${r.id} at ${st.name} ${r.stationId === 'ST-VIS' ? 'was classified critical' : 'measured outside tolerance (critical)'} (${DEFECTS[r.defect].label.toLowerCase()}${r.measurement ? `, ${r.measurement}` : ''}). A quality engineer should review the tile and its batch ${r.batchId}.`,
           asset: { equipmentId: st.equipmentId, stationId: r.stationId, stage: DEFECTS[r.defect].origin, zone: 'I' },
           trigger: {
-            kind: 'model',
+            // Vision records are (simulated) classifications; gauge records are laser measurements vs tolerance.
+            kind: r.stationId === 'ST-VIS' ? 'model' : 'rule',
             ruleId: 'Q-CRIT',
-            description: 'Reject record classified critical (simulated classification)',
+            description:
+              r.stationId === 'ST-VIS' ? 'Reject record classified critical (simulated classification)' : 'Gauge measurement outside tolerance — critical (simulated gauge)',
             observed: [
               { label: 'Record', value: r.id },
               { label: 'Class', value: DEFECTS[r.defect].label },

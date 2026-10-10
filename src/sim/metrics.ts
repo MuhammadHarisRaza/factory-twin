@@ -170,6 +170,19 @@ export function targetStatus(attainment: number | null): TargetStatus {
   return attainment >= 0.9 ? 'behind' : 'well-behind';
 }
 
+/**
+ * Planned production minutes of the line in a period: calendar minutes minus the planned stops at
+ * the kiln (line constraint), from its time accounting. The plan (target) is set per planned hour,
+ * so a planned stop lowers the target instead of showing up as a shortfall.
+ */
+export function plannedProductionMin(s: SimState, p: Period, kilnTotals: HourBucket = sumBuckets(s, 'H-KILN', p)) {
+  const minutes = periodMinutes(p);
+  return Math.max(0, minutes - Math.min(minutes, kilnTotals.plannedStop));
+}
+
+/** The production plan (target good tiles) for a period: TARGET.goodPerHour × planned production hours. */
+export const planTiles = (s: SimState, p: Period, kilnTotals?: HourBucket) => (TARGET.goodPerHour * plannedProductionMin(s, p, kilnTotals)) / 60;
+
 export function lineMetrics(s: SimState, p: Period): LineMetrics {
   const constraint = machineMetrics(s, LINE.designConstraint === 'KILN' ? 'H-KILN' : 'H-KILN', p);
   const q = qualityIn(s, p);
@@ -186,7 +199,8 @@ export function lineMetrics(s: SimState, p: Period): LineMetrics {
   });
   const oee = combineOee(atConstraint.availability, atConstraint.performance, quality(q.accepted, q.inspected));
   const output = lineGoodIn(s, p);
-  const target = (TARGET.goodPerHour * periodMinutes(p)) / 60;
+  // Plan per planned hour: planned stops at the kiln reduce the target (they are not a shortfall).
+  const target = planTiles(s, p, constraint.totals);
   const events = downtimeIn(s, p).filter((d) => d.category !== 'Starved' && d.category !== 'Blocked' && d.category !== 'Planned');
   return {
     period: p,
@@ -365,7 +379,7 @@ export function hourlyTrend(s: SimState, p: Period): HourPoint[] {
       hour: h,
       start: h * 60,
       output: lm.output,
-      target: (TARGET.goodPerHour * Math.max(0, hp.to - hp.from)) / 60,
+      target: lm.target,
       oee: lm.oee.oee.status === 'ok' ? lm.oee.oee.value : null,
       rejects: lm.rejected,
     };
@@ -790,10 +804,11 @@ export function stageIO(s: SimState, id: MonitoredStageId, p: Period): StageIO {
 
 /**
  * Capacity comparison at the line constraint (kiln), all in m² of tile for the period:
- * theoretical = design rate × calendar time; planned = the production plan (target);
- * actual = tiles fired; good = first-quality tiles accepted at sorting. The gap is split into
+ * theoretical = design rate × calendar time; planned = the production plan (target per planned
+ * hour); actual = tiles fired; good = first-quality tiles accepted at sorting. The gap is split into
  * planned stops, availability, speed and quality losses at the constraint — each lost unit is
- * counted once, at the constraint, never per machine.
+ * counted once, at the constraint, never per machine — plus a signed `transit` step (kind
+ * 'transit', not a loss: tiles between the kiln and sorting). Rank or share only kind 'loss'.
  */
 export function capacityBreakdown(s: SimState, p: Period) {
   const lm = lineMetrics(s, p);
@@ -807,7 +822,11 @@ export function capacityBreakdown(s: SimState, p: Period) {
   const speedLoss = m2(ideal * k.totals.operating - k.totals.count);
   const fired = m2(k.totals.count);
   const good = m2(lm.good);
-  const qualityLoss = Math.max(0, fired - good);
+  // Quality = tiles rejected at sorting in the period. Fired − inspected is work in transit between
+  // the kiln and sorting (signed: the outfeed buffer can also be drawn down), so the steps close
+  // exactly to good output: theoretical − planned − availability − speed − quality − transit = good.
+  const qualityLoss = m2(lm.rejected);
+  const transitTiles = k.totals.count - lm.inspected;
   return {
     period: p,
     calendarMin: calendar,
@@ -818,10 +837,17 @@ export function capacityBreakdown(s: SimState, p: Period) {
     capacityGapM2: theoretical - good,
     planGapM2: lm.targetM2 - good,
     losses: [
-      { key: 'planned', label: 'Planned stops', m2: plannedStopLoss, basis: `${Math.round(k.totals.plannedStop)} min of planned stops at the kiln × design rate` },
-      { key: 'availability', label: 'Downtime (availability)', m2: availabilityLoss, basis: `${Math.round(k.totals.planned - k.totals.operating)} min the kiln was down, starved or blocked × design rate` },
-      { key: 'speed', label: 'Speed (performance)', m2: Math.max(0, speedLoss), basis: 'Kiln running below its design rate' },
-      { key: 'quality', label: 'Quality (rejects)', m2: qualityLoss, basis: 'Fired tiles rejected at sorting (first pass)' },
+      { key: 'planned', label: 'Planned stops', m2: plannedStopLoss, basis: `${Math.round(k.totals.plannedStop)} min of planned stops at the kiln × design rate`, kind: 'loss' as const },
+      { key: 'availability', label: 'Downtime (availability)', m2: availabilityLoss, basis: `${Math.round(k.totals.planned - k.totals.operating)} min the kiln was down, starved or blocked × design rate`, kind: 'loss' as const },
+      { key: 'speed', label: 'Speed (performance)', m2: Math.max(0, speedLoss), basis: 'Kiln running below its design rate', kind: 'loss' as const },
+      { key: 'quality', label: 'Quality (rejects)', m2: qualityLoss, basis: 'Fired tiles rejected at sorting (first pass)', kind: 'loss' as const },
+      {
+        key: 'transit',
+        label: transitTiles >= 0 ? 'Fired, not yet sorted' : 'Sorted from the kiln outfeed buffer',
+        m2: m2(transitTiles),
+        basis: transitTiles >= 0 ? 'Tiles fired in the period still between the kiln and sorting (not a loss)' : 'Tiles sorted in the period that were fired before it (not a gain)',
+        kind: 'transit' as const,
+      },
     ],
     assumptions: [
       `Design rate of the line constraint H-KILN: ${k.idealRatePerHour} tiles/h (${(k.idealRatePerHour * M2_PER_TILE).toFixed(0)} m²/h).`,

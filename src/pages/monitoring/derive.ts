@@ -36,6 +36,7 @@ import type {
 } from '../../model/types';
 import { LOG_MIN, TRACKED_ASSETS, minuteAt, type SimState } from '../../sim/engine';
 import { eventById } from '../../sim/events';
+import { lineGoodLostTiles } from '../../intel/report';
 import { HEALTH_BY_ID, sensorHistory } from '../../sim/health';
 import { bottleneck, operationalState, stageIO, sumBuckets, type Period, type PeriodKey, type StageIO } from '../../sim/metrics';
 import { signalValue } from '../../sim/signals';
@@ -474,7 +475,7 @@ export type LossRow = {
   speedLossTiles: number | null;
   /** Minutes the kiln was held up with one of this asset's events as the root cause. */
   constraintMin: number;
-  /** Kiln output lost in those minutes (tiles). */
+  /** Good line output lost in those minutes (tiles): kiln tiles × first-pass yield, as in the event report. */
   constraintLostTiles: number;
   /** Root events counted for the constraint figures. */
   eventIds: string[];
@@ -508,7 +509,7 @@ export function stageLosses(s: SimState, ms: MonitoredStage, p: Period): LossRow
       lostTiles: lost,
       speedLossTiles: lost != null ? Math.max(0, lost - held) : null,
       constraintMin: roots.reduce((a, e) => a + e.acc.constraintMin, 0),
-      constraintLostTiles: roots.reduce((a, e) => a + e.acc.constraintLostTiles, 0),
+      constraintLostTiles: roots.reduce((a, e) => a + lineGoodLostTiles(s, e), 0),
       eventIds: roots.filter((e) => e.acc.constraintMin > 0).map((e) => e.id),
       isConstraint: OPS_BY_ID[id]?.stage === LINE.designConstraint,
     };

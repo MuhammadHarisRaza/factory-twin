@@ -64,7 +64,15 @@ function InsightCard({ insight: i, open, onToggle }: { insight: Insight; open: b
           {i.impact && (
             <>
               <dt>Impact</dt>
-              <dd>{i.impact}</dd>
+              <dd>
+                {i.impact}
+                {i.estimate?.length ? (
+                  <span className="tag sim" title={i.estimate.join(' ')} style={{ marginLeft: 6 }}>
+                    estimate · assumptions shown
+                  </span>
+                ) : null}
+                {i.estimate?.length ? <small className="muted" style={{ display: 'block' }}>{i.estimate.join(' ')}</small> : null}
+              </dd>
             </>
           )}
           {i.recommendation && (

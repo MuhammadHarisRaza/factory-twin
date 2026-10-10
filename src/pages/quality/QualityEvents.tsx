@@ -6,18 +6,18 @@
 import { focusEventInTwin } from '../../scene/events/focus';
 import { useState } from 'react';
 import { Box, CircleCheck, CircleX, Eye, FileText, MessageSquareText, Search } from 'lucide-react';
-import type { OpEvent } from '../../model/types';
+import type { Evidence, OpEvent } from '../../model/types';
 import { openEvent, useApp } from '../../app/store';
 import { EVENT_TYPE_LABEL, eventById, evidenceOf } from '../../sim/events';
 import { useSim, useSimValue } from '../../sim/store';
 import { formatClock, formatDateTime, formatDuration } from '../../sim/time';
-import { getImage } from '../../twin/bridge';
+import { getImage, type TwinRender } from '../../twin/bridge';
 import { EventList } from '../../ui/events/EventList';
 import { DataTable, type Column } from '../../ui/kit/DataTable';
 import { Empty, Panel } from '../../ui/kit/Panel';
 import { EventStatusBadge, SeverityBadge, SourceTag } from '../../ui/kit/Status';
 import { EventReportView } from '../../ui/report/EventReportView';
-import { eventImpact } from '../../intel/report';
+import { cameraName, eventImpact } from '../../intel/report';
 import { eventRule, fmtMoney, impactFigures } from './derive';
 import { FrameThumb } from './FrameArt';
 import { frameById } from './frames';
@@ -128,6 +128,38 @@ export function QualityEvents({ open, resolved, impacts, focusId, focusAuto, per
   );
 }
 
+/**
+ * The event's camera snapshot, labelled by its provenance: a frame grabbed from a configured stream
+ * is a camera frame; everything else is a digital-twin render and never presented as a camera image.
+ */
+export function SnapshotEvidence({ x, img }: { x: Evidence; img: TwinRender | null }) {
+  const live = x.provenance.origin === 'live-camera';
+  const at = `${x.cameraId ? cameraName(x.cameraId) : 'the asset'} at ${formatClock(x.image?.frameTime ?? x.capturedAt)}`;
+  return (
+    <div className="q-ev-snap">
+      {x.status === 'available' && img ? (
+        <img src={img.dataUrl} alt={live ? `Camera frame of ${at}` : `Digital-twin render of ${at} — simulated view, not a camera image`} />
+      ) : null}
+      <span>
+        <b>{x.title}</b>
+        <span className="dim">
+          {x.status === 'available'
+            ? img
+              ? live
+                ? ` · Camera frame · ${x.provenance.label}`
+                : ' · Simulated feed · rendered from the digital twin — not a camera image'
+              : live
+                ? ' · Camera frame not kept in this browser session'
+                : ' · Rendered view not kept in this browser session'
+            : x.status === 'pending'
+              ? ' · Being captured'
+              : ` · Unavailable — ${x.unavailableReason ?? 'no reason recorded'}`}
+        </span>
+      </span>
+    </div>
+  );
+}
+
 function EventFocus({ id, auto, impact: given, onPinRecord }: { id: string; auto: boolean; impact: ImpactFigures | null; onPinRecord: (id: string) => void }) {
   const openCopilot = useApp((s) => s.openCopilot);
   const finance = useApp((s) => s.finance);
@@ -231,25 +263,7 @@ function EventFocus({ id, auto, impact: given, onPinRecord }: { id: string; auto
           <p className="muted">{d.missing[0]?.unavailableReason ? `Unavailable — ${d.missing[0].unavailableReason}` : 'No inspection frame is linked to this event.'}</p>
         )}
         <p className="q-ev-note">Illustrative frames of simulated records · simulated classification — no vision model.</p>
-        {d.snap && (
-          <div className="q-ev-snap">
-            {d.snap.status === 'available' && d.snapImg ? (
-              <img src={d.snapImg.dataUrl} alt={`${d.snap.title} — rendered from the digital twin`} />
-            ) : null}
-            <span>
-              <b>{d.snap.title}</b>
-              <span className="dim">
-                {d.snap.status === 'available'
-                  ? d.snapImg
-                    ? ' · Rendered from the digital twin — not a camera image'
-                    : ' · Rendered view not in this browser session'
-                  : d.snap.status === 'pending'
-                    ? ' · Being captured'
-                    : ` · Unavailable — ${d.snap.unavailableReason ?? 'no reason recorded'}`}
-              </span>
-            </span>
-          </div>
-        )}
+        {d.snap && <SnapshotEvidence x={d.snap} img={d.snapImg} />}
       </section>
 
       <div className="q-actions">

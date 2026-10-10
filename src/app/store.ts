@@ -3,6 +3,10 @@
  * switching never resets anything; cross-workspace links (event → report, event → machine,
  * inspection → station, vehicle → site position, stage → monitoring view) go through the
  * helpers here. Deep links: #/events/EV-00012, #/monitoring/KILN.
+ *
+ * Browser history: a user step (workspace, stage or event opened by a click or link) adds a
+ * history entry, so Back / Forward move between them; automatic corrections (the newest event
+ * opened on arrival, arrow-key moves, the post-reset clear) rewrite the current entry instead.
  */
 import { create } from 'zustand';
 import { INSPECTION_STATIONS, MONITORED_STAGE_BY_ID } from '../model/plant';
@@ -10,7 +14,11 @@ import type { MonitoredStageId } from '../model/types';
 import type { PeriodKey } from '../sim/metrics';
 import { DEFAULT_TARIFFS, type Tariffs } from '../sim/energy';
 import { DEFAULT_FINANCE, type FinanceAssumptions } from '../sim/finance';
+import { useSim } from '../sim/store';
 import { useTwin } from '../store';
+
+/** How a navigation is recorded: 'push' adds a browser-history entry (user step), 'replace' rewrites the current one (automatic correction). */
+export type NavMode = 'push' | 'replace';
 
 export type WorkspaceId =
   | 'twin'
@@ -108,7 +116,8 @@ type AppState = {
   copilotPrompt: string | null;
   /** Event the copilot conversation is about (event-specific investigation). */
   copilotEventId: string | null;
-  go: (w: WorkspaceId) => void;
+  /** Opens a workspace (a user step by default: Back returns to the previous one). */
+  go: (w: WorkspaceId, mode?: NavMode) => void;
   setTariffs: (t: Partial<Tariffs>) => void;
   setFinance: (f: Partial<FinanceAssumptions>) => void;
   resetFinance: () => void;
@@ -118,14 +127,27 @@ type AppState = {
   setNavCollapsed: (v: boolean) => void;
   setPeriod: (p: PeriodKey) => void;
   setScenariosOpen: (v: boolean) => void;
-  selectEvent: (id: string | null) => void;
-  selectStage: (id: MonitoredStageId | null) => void;
+  /** Selects the event of Events & Reports. 'push' (default) for a user's pick; 'replace' for automatic selections. */
+  selectEvent: (id: string | null, mode?: NavMode) => void;
+  /** Opens a stage in Production Monitoring (null = overview). 'push' (default) for a user's pick. */
+  selectStage: (id: MonitoredStageId | null, mode?: NavMode) => void;
 };
 
-const writeHash = (r: Route) => {
-  if (typeof location === 'undefined') return;
+/**
+ * History entries carry the Reset Demo epoch they were written in: event ids restart after a
+ * reset, so an older entry's event id would name a different (or no) event.
+ */
+type HistoryState = { waiEpoch: number };
+const epoch = () => useSim.getState().resets;
+const hasHistory = () => typeof location !== 'undefined' && typeof history !== 'undefined';
+
+const writeHash = (r: Route, mode: NavMode) => {
+  if (!hasHistory()) return;
   const h = hashFor(r);
-  if (location.hash !== h) history.replaceState(null, '', h);
+  if (location.hash === h) return;
+  const state: HistoryState = { waiEpoch: epoch() };
+  if (mode === 'push') history.pushState(state, '', h);
+  else history.replaceState(state, '', h);
 };
 
 const initial = parseHash();
@@ -157,36 +179,63 @@ export const useApp = create<AppState>((set, get) => ({
   openCopilot: (prompt, ctx) =>
     set((s) => ({ copilotOpen: true, copilotPrompt: prompt ?? null, copilotEventId: ctx ? (ctx.eventId ?? null) : prompt ? null : s.copilotEventId })),
   closeCopilot: () => set({ copilotOpen: false, copilotPrompt: null }),
-  go: (workspace) => {
+  go: (workspace, mode = 'push') => {
     set({ workspace });
     const s = get();
-    writeHash({ workspace, eventId: s.selectedEventId, stage: s.monitoringStage });
+    writeHash({ workspace, eventId: s.selectedEventId, stage: s.monitoringStage }, mode);
   },
   setNavCollapsed: (navCollapsed) => set({ navCollapsed }),
   setPeriod: (period) => set({ period }),
   setScenariosOpen: (scenariosOpen) => set({ scenariosOpen }),
-  selectEvent: (selectedEventId) => {
+  selectEvent: (selectedEventId, mode = 'push') => {
     set({ selectedEventId });
     const s = get();
-    if (s.workspace === 'events') writeHash({ workspace: 'events', eventId: selectedEventId, stage: null });
+    if (s.workspace === 'events') writeHash({ workspace: 'events', eventId: selectedEventId, stage: null }, mode);
   },
-  selectStage: (monitoringStage) => {
+  selectStage: (monitoringStage, mode = 'push') => {
     set({ monitoringStage });
     const s = get();
-    if (s.workspace === 'monitoring') writeHash({ workspace: 'monitoring', eventId: null, stage: monitoringStage });
+    if (s.workspace === 'monitoring') writeHash({ workspace: 'monitoring', eventId: null, stage: monitoringStage }, mode);
   },
 }));
 
-if (typeof window !== 'undefined')
-  window.addEventListener('hashchange', () => {
-    const r = parseHash();
-    useApp.setState({
-      workspace: r.workspace,
-      ...(r.eventId ? { selectedEventId: r.eventId } : {}),
-      // #/monitoring without a stage is the overview — clear the stage so Back does not strand it.
-      ...(r.workspace === 'monitoring' ? { monitoringStage: r.stage } : {}),
-    });
-  });
+/**
+ * Applies the address bar to the store: Back / Forward (popstate), a typed or followed hash
+ * (hashchange; browsers fire both for one traversal, which is harmless — the second is a no-op).
+ */
+export function applyLocation() {
+  const r = parseHash();
+  const entry = hasHistory() ? (history.state as Partial<HistoryState> | null) : null;
+  // An entry written before a Reset Demo: its event id now names a different event (or none).
+  const stale = r.eventId != null && typeof entry?.waiEpoch === 'number' && entry.waiEpoch !== epoch();
+  const cur = useApp.getState();
+  const next = {
+    workspace: r.workspace,
+    selectedEventId: r.eventId && !stale ? r.eventId : cur.selectedEventId,
+    // #/monitoring without a stage is the overview — clear the stage so Back does not strand it.
+    monitoringStage: r.workspace === 'monitoring' ? r.stage : cur.monitoringStage,
+  };
+  if (next.workspace !== cur.workspace || next.selectedEventId !== cur.selectedEventId || next.monitoringStage !== cur.monitoringStage) useApp.setState(next);
+  if (stale) writeHash({ workspace: 'events', eventId: next.selectedEventId, stage: null }, 'replace');
+}
+
+if (typeof window !== 'undefined') {
+  // Tag the landing entry (deep link or not) with the current epoch, keeping its URL.
+  try {
+    if (hasHistory()) history.replaceState({ waiEpoch: epoch() } satisfies HistoryState, '');
+  } catch {
+    /* history unavailable (sandboxed frame): navigation still works, without Back / Forward */
+  }
+  window.addEventListener('popstate', applyLocation);
+  window.addEventListener('hashchange', applyLocation);
+}
+
+// Reset Demo replays the plant and event ids restart: a kept selection would later open a different
+// event under the reused id. Clear it on every completed reset, whichever workspace is open; the
+// #/events/<id> hash is rewritten in place when Events & Reports is showing (it then opens the newest event).
+useSim.subscribe((s, prev) => {
+  if (s.resets !== prev.resets && useApp.getState().selectedEventId != null) useApp.getState().selectEvent(null, 'replace');
+});
 
 /** Open the Factory Twin with an equipment item selected and framed. */
 export function openEquipment(id: string) {

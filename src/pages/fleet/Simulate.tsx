@@ -11,6 +11,8 @@ import { CONGESTION_TRUCKS, DOCK_HOLD_MIN, RESTRICTED_VEHICLE, type DockHoldTarg
 
 type Def = Omit<ScenarioActivation, 'id' | 'start'>;
 
+const RESETTING = 'Demo is resetting';
+
 /** First vehicle injected by a scenario (the earliest arrival of a congestion burst). */
 function scenarioTruck(scenarioId: string): string | null {
   const L = useSim.getState().sim.logistics;
@@ -31,9 +33,12 @@ export function SimulateBar({
   onSelect: (id: string) => void;
 }) {
   const activate = useSim((s) => s.activate);
+  const resetting = useSim((s) => s.resetting);
   const [done, setDone] = useState<string | null>(null);
 
   const run = (def: Def, select: (sc: ScenarioActivation) => string | null, what: string) => {
+    // Reset Demo swaps in a rebuilt state when it completes: an activation now would be discarded.
+    if (useSim.getState().resetting) return;
     const sc = activate(def);
     const id = select(sc);
     if (id) onSelect(id);
@@ -45,7 +50,8 @@ export function SimulateBar({
       <span className="fv-sim-k">Simulate</span>
       <button
         className="btn sm"
-        title="An additional outbound truck arrives at the main gate now (scenario)"
+        disabled={resetting}
+        title={resetting ? RESETTING : 'An additional outbound truck arrives at the main gate now (scenario)'}
         onClick={() => run({ kind: 'truck-arrival', end: null, label: 'Additional truck arrival' }, (sc) => scenarioTruck(sc.id), 'arriving at the gate')}
       >
         <Truck size={14} aria-hidden />
@@ -53,11 +59,13 @@ export function SimulateBar({
       </button>
       <button
         className="btn sm"
-        disabled={!hold}
+        disabled={resetting || !hold}
         title={
-          hold
-            ? `Holds ${hold.truckId} at ${hold.name} for an extra ${DOCK_HOLD_MIN} min after loading (documentation hold)${hold.held ? ' — this truck is already held; the hold is extended' : ''}`
-            : 'No truck is at a dock right now — nothing to hold'
+          resetting
+            ? RESETTING
+            : hold
+              ? `Holds ${hold.truckId} at ${hold.name} for an extra ${DOCK_HOLD_MIN} min after loading (documentation hold)${hold.held ? ' — this truck is already held; the hold is extended' : ''}`
+              : 'No truck is at a dock right now — nothing to hold'
         }
         onClick={() =>
           hold &&
@@ -73,7 +81,8 @@ export function SimulateBar({
       </button>
       <button
         className="btn sm"
-        title={`${CONGESTION_TRUCKS} outbound trucks arrive two minutes apart (scenario)`}
+        disabled={resetting}
+        title={resetting ? RESETTING : `${CONGESTION_TRUCKS} outbound trucks arrive two minutes apart (scenario)`}
         onClick={() =>
           run({ kind: 'yard-congestion', count: CONGESTION_TRUCKS, end: null, label: `Yard congestion · ${CONGESTION_TRUCKS} trucks` }, (sc) => scenarioTruck(sc.id), `${CONGESTION_TRUCKS} trucks due two minutes apart`)
         }
@@ -83,11 +92,13 @@ export function SimulateBar({
       </button>
       <button
         className="btn sm"
-        disabled={!restricted.ok}
+        disabled={resetting || !restricted.ok}
         title={
-          restricted.ok
-            ? `Forklift ${RESTRICTED_VEHICLE} takes its next empty-pallet run across the hall pedestrian walkway (no-entry zone); the geofence rule checks its simulated position`
-            : restricted.reason
+          resetting
+            ? RESETTING
+            : restricted.ok
+              ? `Forklift ${RESTRICTED_VEHICLE} takes its next empty-pallet run across the hall pedestrian walkway (no-entry zone); the geofence rule checks its simulated position`
+              : restricted.reason
         }
         onClick={() =>
           run(
@@ -100,9 +111,10 @@ export function SimulateBar({
         <ShieldAlert size={14} aria-hidden />
         Simulate restricted-zone entry ({RESTRICTED_VEHICLE})
       </button>
+      {resetting && <span className="fv-why">{RESETTING} — simulate actions resume when the rebuilt plant is ready</span>}
       {!hold && <span className="fv-why">No dock occupied — dock stay unavailable</span>}
       {!restricted.ok && <span className="fv-why">{restricted.reason}</span>}
-      {done && (
+      {done && !resetting && (
         <span className="fv-sim-done" role="status">
           <CircleCheck size={13} aria-hidden /> {done}
         </span>

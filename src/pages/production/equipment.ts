@@ -6,7 +6,6 @@
 import { CONVEYORS, M2_PER_TILE, PROCESS_MACHINES, STAGE_BY_ID } from '../../model/plant';
 import type { OpEvent, OperationalState, StageId } from '../../model/types';
 import type { SimState } from '../../sim/engine';
-import { eventsFor } from '../../sim/events';
 import { conveyorMetrics, machineMetrics, operationalState, type MachineMetrics, type Period } from '../../sim/metrics';
 import { machineLoss } from './derive';
 import type { Contribution } from './loss';
@@ -51,9 +50,18 @@ export type ConveyorRow = {
 
 const lineLoss = (contributions: Contribution[], id: string) => contributions.find((c) => c.equipmentId === id)?.m2 ?? 0;
 
-/** Events on one asset that overlap the period: active first, then newest. */
+const FLOW_TYPES = new Set<OpEvent['type']>(['starvation', 'blockage']);
+
+/**
+ * Events on one asset that overlap the period: active first, then newest. Its own events, plus the
+ * starvation / blockage event of the stage it belongs to — raised once per stage on its first
+ * machine, but every machine of the stage was held up (the same rule as the twin's assetEvents).
+ */
 export function assetEvents(s: SimState, id: string, p: Period): OpEvent[] {
-  return eventsFor(s, { equipmentId: id, from: p.from, to: p.to }).sort((a, b) => (a.end == null ? 0 : 1) - (b.end == null ? 0 : 1) || b.start - a.start);
+  const inStage = (stage: string | undefined) => !!stage && !!STAGE_BY_ID[stage as StageId]?.machines.includes(id);
+  return s.events
+    .filter((e) => (e.asset.equipmentId === id || (FLOW_TYPES.has(e.type) && inStage(e.asset.stage))) && (e.end ?? s.minute) >= p.from && e.start <= p.to)
+    .sort((a, b) => (a.end == null ? 0 : 1) - (b.end == null ? 0 : 1) || b.start - a.start);
 }
 
 /** Events elsewhere that the event engine linked as consequences of this asset's events (e.g. the kiln starved). */

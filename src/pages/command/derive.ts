@@ -10,7 +10,7 @@ import { CONVEYOR_BY_ID, M2_PER_TILE, MONITORED_STAGES, OPS_BY_ID, PRODUCTS, REA
 import type { AlertSeverity, EventCategory, MonitoredStageId, OperationalState, OpEvent, Product, ProductionBatch, RecordSource, ScenarioActivation } from '../../model/types';
 import { TRACKED_ASSETS, batchAt, findDowntime, scenariosActive, type SimState } from '../../sim/engine';
 import type { Tariffs } from '../../sim/energy';
-import { openEvents } from '../../sim/events';
+import { canResolve, openEvents } from '../../sim/events';
 import { lostOutputValue, type FinanceAssumptions } from '../../sim/finance';
 import { HEALTH_ASSETS, assess, type HealthLevel } from '../../sim/health';
 import {
@@ -127,8 +127,11 @@ export type EventAction = {
   ev: OpEvent;
   /** First recommendation of the record (rule-based). */
   action: string;
-  /** Lifecycle step offered from the Command Center. */
-  next: 'acknowledge' | 'investigate' | 'resolve';
+  /**
+   * Lifecycle step offered from the Command Center. 'resolve' only once the condition has cleared
+   * (canResolve); an event under investigation whose condition is still active offers its 'report'.
+   */
+  next: 'acknowledge' | 'investigate' | 'resolve' | 'report';
 };
 
 /** One action per open event, in priority order: what to do and the next lifecycle step. */
@@ -136,7 +139,7 @@ export function eventActions(s: SimState): EventAction[] {
   return prioritisedEvents(s).map((ev) => ({
     ev,
     action: ev.recommendations[0] ?? 'Open the event report and review the evidence.',
-    next: ev.status === 'active' ? 'acknowledge' : ev.status === 'acknowledged' ? 'investigate' : 'resolve',
+    next: ev.status === 'active' ? 'acknowledge' : ev.status === 'acknowledged' ? 'investigate' : canResolve(ev).ok ? 'resolve' : 'report',
   }));
 }
 

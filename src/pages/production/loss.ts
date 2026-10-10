@@ -220,8 +220,10 @@ export type LossLedger = {
    * Estimated financial impact against the plan: the shortfall of good output valued at contribution,
    * plus the direct costs of the period (reject scrap / rework, energy above the model, truck detention).
    * Losses vs the design rate are deliberately not in it — theoretical capacity is not revenue.
+   * shortfallM2 is the gap to plan (as attainment shows it); valuedShortfallM2 is the part valued at
+   * contribution — reworked rejects are recovered output, charged at rework cost only (never twice).
    */
-  impact: { lines: MoneyLine[]; total: number; shortfallM2: number };
+  impact: { lines: MoneyLine[]; total: number; shortfallM2: number; valuedShortfallM2: number };
   assumptions: string[];
   missing: string[];
 };
@@ -393,10 +395,21 @@ export function lossLedger(s: SimState, p: Period, f: FinanceAssumptions, tariff
   const totalMoney = rows.reduce((a, r) => a + (r.money ?? 0), 0);
 
   // Financial impact vs the plan: shortfall of good output (already good tiles — no FPY) + direct costs.
+  // Reworked rejects are regraded and sold: recovered output, charged at rework cost (rejectCost) only,
+  // so the contribution is valued on the shortfall of good + reworked output, not on the plan gap.
   const shortfallM2 = Math.max(0, cap.planGapM2);
-  const shortLine = lostOutputValue(f, shortfallM2 / M2);
+  const reworkedM2 = lm.rejected * f.reworkShare * M2;
+  const valuedShortfallM2 = Math.max(0, cap.plannedM2 - (cap.goodM2 + reworkedM2));
+  const shortLine = lostOutputValue(f, valuedShortfallM2 / M2);
+  const recovered = shortfallM2 - valuedShortfallM2;
+  const shortBasis =
+    shortfallM2 <= 0
+      ? 'Good output at or above plan — no shortfall'
+      : valuedShortfallM2 <= 0
+        ? `${m2s(shortfallM2)} short of plan, all covered by ${m2s(reworkedM2)} of reworked rejects (recovered output, charged at rework cost only)`
+        : `${shortLine.basis}${recovered > 0.05 ? ` · ${m2s(shortfallM2)} short of plan less ${m2s(recovered)} of reworked rejects (recovered output, charged at rework cost only)` : ''}`;
   const impactLines: MoneyLine[] = [
-    { label: 'Shortfall vs plan (lost contribution)', amount: shortLine.amount, basis: shortfallM2 > 0 ? shortLine.basis : 'Good output at or above plan — no shortfall' },
+    { label: 'Shortfall vs plan (lost contribution)', amount: shortLine.amount, basis: shortBasis },
     ...rejectCost(f, lm.rejected),
     { label: 'Energy above the model', amount: energyExcessCost, basis: `${n0.format(energyExcessKwh)} kWh above the illustrative model at the configured tariffs` },
     waitLine,
@@ -432,10 +445,10 @@ export function lossLedger(s: SimState, p: Period, f: FinanceAssumptions, tariff
     energyExcessKwh,
     truckWaitMin,
     attribution: att,
-    impact: { lines: impactLines, total: total(impactLines), shortfallM2 },
+    impact: { lines: impactLines, total: total(impactLines), shortfallM2, valuedShortfallM2 },
     assumptions: [
       `Theoretical capacity = design rate of the line constraint H-KILN (${n0.format(idealPerHour)} tiles/h, ${n0.format(idealPerHour * M2)} m²/h) × ${minS(calendarMin)} of calendar time. It is a ceiling, not a target and not revenue.`,
-      `Plan = ${n0.format(TARGET.goodPerHour)} good tiles per hour (${pctS(TARGET.oeeTarget)} OEE target); it allows ${pctS(1 - TARGET.goodPerHour / idealPerHour)} of design capacity for normal losses.`,
+      `Plan = ${n0.format(TARGET.goodPerHour)} good tiles per planned hour (${pctS(TARGET.oeeTarget)} OEE target); it allows ${pctS(1 - TARGET.goodPerHour / idealPerHour)} of design capacity for normal losses.`,
       'Every loss is measured once, at the kiln: time lost elsewhere counts only for the minutes it held the kiln up (event records), so machine losses are never added to it.',
       `Lost kiln tiles are converted into lost good tiles with the period's first-pass yield (${pctS(fpyUsed, 1)}${fpy == null ? ', baseline value — nothing sorted yet' : ''}).`,
       'One tile format (60×60 cm, 0.36 m²) for all products.',

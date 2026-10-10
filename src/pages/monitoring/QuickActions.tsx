@@ -11,6 +11,7 @@ import type { MonitoredStage } from '../../model/types';
 import { useSim, useSimValue } from '../../sim/store';
 import { formatClock } from '../../sim/time';
 import { Panel } from '../../ui/kit/Panel';
+import { isClearable, scenarioStatus } from '../scenarios/catalogue';
 import {
   QUICK_HINT,
   WH_HOLD_DEF,
@@ -49,7 +50,8 @@ export function QuickActions({ ms }: { ms: MonitoredStage }) {
   const d = useSimValue(
     (s) => ({
       now: s.minute,
-      inEffect: stageScenarios(s, ms),
+      // Clear only what the rest of the app clears: condition-based maintenance is left to complete.
+      inEffect: stageScenarios(s, ms).map((sc) => ({ sc, clearable: isClearable(s, sc), st: scenarioStatus(s, sc) })),
       running: asset ? runningScenario(s, kind, asset) : null,
       docked: DOCKS.find((k) => s.logistics.docks[k.id]?.vehicleId) ?? null,
     }),
@@ -57,6 +59,7 @@ export function QuickActions({ ms }: { ms: MonitoredStage }) {
   );
 
   const start = (def: ScenarioDef) => {
+    if (useSim.getState().resetting) return;
     const sc = useSim.getState().activate(def);
     setFeedback({ ok: true, text: `Started ${sc.id} at ${formatClock(sc.start)} — ${sc.label}. States, counts and events of this stage follow from the next simulated minute.` });
   };
@@ -148,23 +151,36 @@ export function QuickActions({ ms }: { ms: MonitoredStage }) {
         <div className="kpi-label">In effect on this stage</div>
         {d.inEffect.length ? (
           <ul>
-            {d.inEffect.map((sc) => (
+            {d.inEffect.map(({ sc, clearable, st }) => (
               <li key={sc.id}>
                 <span className="tag scenario">Simulated</span>
                 <span className="mon-qa-label" title={`${sc.id} · since ${formatClock(sc.start)}${sc.end != null ? ` · until ${formatClock(sc.end)}` : ' · until cleared'}`}>
                   {sc.label}
                 </span>
-                <span className="muted num">{sc.end != null ? `until ${formatClock(sc.end)}` : 'until cleared'}</span>
-                <button
-                  className="btn sm ghost"
-                  onClick={() => {
-                    useSim.getState().clear(sc.id);
-                    setFeedback({ ok: true, text: `Cleared ${sc.id} — ${sc.label}.` });
-                  }}
-                  title="End this scenario now"
-                >
-                  <X size={12} aria-hidden /> Clear
-                </button>
+                {clearable ? (
+                  <>
+                    <span className="muted num">{sc.end != null ? `until ${formatClock(sc.end)}` : 'until cleared'}</span>
+                    <button
+                      className="btn sm ghost"
+                      disabled={resetting}
+                      onClick={() => {
+                        if (useSim.getState().resetting) return;
+                        useSim.getState().clear(sc.id);
+                        setFeedback({ ok: true, text: `Cleared ${sc.id} — ${sc.label}.` });
+                      }}
+                      title={resetting ? 'Demo is resetting' : 'End this scenario now'}
+                    >
+                      <X size={12} aria-hidden /> Clear
+                    </button>
+                  </>
+                ) : (
+                  <span
+                    className="muted num"
+                    title={sc.kind === 'maintenance' ? 'Condition-based maintenance is left to complete; it is not cleared like a scenario' : (st.note ?? st.label)}
+                  >
+                    {sc.kind === 'maintenance' ? (sc.end != null ? `in progress until ${formatClock(sc.end)}` : 'in progress') : st.label}
+                  </span>
+                )}
               </li>
             ))}
           </ul>

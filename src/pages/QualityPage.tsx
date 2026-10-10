@@ -8,12 +8,12 @@
  * lifecycle actions, the root-cause hypotheses and the scrap / rework impact. Records, classes,
  * boxes and confidences are simulated by deterministic rules — no camera or vision model runs.
  */
-import { useRef, useState, useMemo } from 'react';
+import { useCallback, useMemo, useRef, useState } from 'react';
 import { BellRing, Cpu, FlaskConical, Info, Locate, Ruler, X } from 'lucide-react';
 import { openStation, useApp } from '../app/store';
 import { eventImpact } from '../intel/report';
 import { BASE_REJECT_RATE, DEFECTS, DEFECT_ORDER, INSPECTION_STATIONS, STAGE_BY_ID } from '../model/plant';
-import type { DefectCategory, ProductionBatch, QualityInspection, ScenarioActivation } from '../model/types';
+import type { DefectCategory, ProductionBatch } from '../model/types';
 import { defectTrend, qualityIn, resolvePeriod } from '../sim/metrics';
 import type { Metric } from '../sim/oee';
 import { useSim, useSimValue } from '../sim/store';
@@ -22,8 +22,7 @@ import { RankedBars, StackedColumns, type RankedRow } from '../ui/kit/charts';
 import { DataTable, type Column } from '../ui/kit/DataTable';
 import { fmtInt, fmtM2, fmtPct } from '../ui/kit/format';
 import { Empty, Panel } from '../ui/kit/Panel';
-import { MetricText, SourceBadge, SourceTag } from '../ui/kit/Status';
-import { DefectSeverity, ResultBadge } from './quality/badges';
+import { MetricText, SourceBadge } from '../ui/kit/Status';
 import {
   GAUGE_CLASSES,
   SIM_MODEL,
@@ -35,12 +34,13 @@ import {
   impactFigures,
   inspectionEventLinks,
   inspectionMethod,
-  isVisionRecord,
   periodQualityImpact,
   qualityEventsIn,
   ruleChecks,
 } from './quality/derive';
 import { affectingScenario, frameById, isFrameStation, viewerFrame, type FeedMode } from './quality/frames';
+import { keepUnchanged, periodRecords, scenarioAffected, useStable, type HistoryInputs } from './quality/history';
+import { HistoryTable } from './quality/HistoryTable';
 import { PRODUCT_BY_SKU, STATION_BY_ID } from './quality/lookup';
 import { QualityEvents, type ImpactFigures } from './quality/QualityEvents';
 import { RecordDetail } from './quality/RecordDetail';
@@ -56,6 +56,7 @@ const DEFECT_COLOR = Object.fromEntries(DEFECT_ORDER.map((d, i) => [d, `var(--se
 /** Inline stations count every tile; the QC bench only checks samples. */
 const INLINE = (id: string) => (STATION_BY_ID[id]?.detects.length ?? 0) > 0;
 const HISTORY_LIMIT = 500;
+const scrollTo = (el: HTMLElement | null) => el?.scrollIntoView({ behavior: 'smooth', block: 'start' });
 
 type StationRow = { id: string; inspected: number; rejected: number; rate: number | null; samples: boolean };
 type BatchRow = { batch: ProductionBatch; rejectedTiles: number; topDefect: DefectCategory | null; affectedTiles: number };
@@ -76,7 +77,7 @@ function QualityWorkspace() {
     (s) => {
       const p = resolvePeriod(periodKey, s.minute);
       const q = qualityIn(s, p);
-      const records = s.inspections.filter((r) => r.time >= p.from && r.time < p.to);
+      const records = periodRecords(s, p);
 
       const stations: StationRow[] = INSPECTION_STATIONS.map((st) => {
         if (INLINE(st.id)) {
@@ -106,11 +107,7 @@ function QualityWorkspace() {
         .reverse();
 
       // Records raised by a quality-deterioration scenario (defect origin = scenario stage).
-      const affected = new Map<string, ScenarioActivation>();
-      for (const r of records) {
-        const sc = affectingScenario(s, r);
-        if (sc) affected.set(r.id, sc);
-      }
+      const affected = scenarioAffected(s, records);
 
       // Events: the same OpEvent records as Events & Reports; impact = the report's EventImpact.
       const links = inspectionEventLinks(s);
@@ -119,12 +116,16 @@ function QualityWorkspace() {
       for (const e of [...events.open, ...events.resolved]) impacts.set(e.id, impactFigures(eventImpact(s, e, finance, tariffs)));
       const impact = periodQualityImpact(s, p, finance, useSim.getState().baseline);
 
-      return { p, q, records: records.reverse(), stations, trend, bucketMin, batches, affected, links, events, impacts, impact };
+      return { p, q, records, stations, trend, bucketMin, batches, affected, links, events, impacts, impact };
     },
     [periodKey, finance, tariffs],
   );
 
   const { q, stations, trend, bucketMin, batches, events, impact } = data;
+  // Record table inputs keep their identity while their content is unchanged, so the memoised
+  // 500-row table skips the simulated minutes that add no record or link (review2 finding #30).
+  const fresh = useMemo((): HistoryInputs => ({ records: data.records, affected: data.affected, links: data.links }), [data]);
+  const hist = useStable(fresh, keepUnchanged);
 
   // ── Selection: one record / frame drives the viewer, workflow, detail and event focus ──────
   const [mode, setMode] = useState<FeedMode>('all');
@@ -134,13 +135,12 @@ function QualityWorkspace() {
   const [focus, setFocus] = useState<string | null>(null);
   const visionRef = useRef<HTMLDivElement>(null);
   const eventsRef = useRef<HTMLDivElement>(null);
-  const scrollTo = (el: HTMLElement | null) => el?.scrollIntoView({ behavior: 'smooth', block: 'start' });
 
   /** Selecting a record lets its quality event take the focus. */
-  const selectRecord = (id: string | null) => {
+  const selectRecord = useCallback((id: string | null) => {
     setSelected(id);
     setFocus(null);
-  };
+  }, []);
 
   // ── History filters ───────────────────────────────────────────────────────
   const [fStation, setFStation] = useState('');
@@ -153,20 +153,20 @@ function QualityWorkspace() {
 
   const filtered = useMemo(
     () =>
-      data.records.filter(
+      hist.records.filter(
         (r) =>
           (!fStation || r.stationId === fStation) &&
           (!fDefect || r.defect === fDefect) &&
           (!fResult || r.result === fResult) &&
           (!fSeverity || r.severity === fSeverity) &&
           (!fBatch || r.batchId === fBatch) &&
-          (!fAffected || data.affected.has(r.id)) &&
-          (!fEvent || data.links.has(r.id)),
+          (!fAffected || hist.affected.has(r.id)) &&
+          (!fEvent || hist.links.has(r.id)),
       ),
-    [data.records, data.affected, data.links, fStation, fDefect, fResult, fSeverity, fBatch, fAffected, fEvent],
+    [hist, fStation, fDefect, fResult, fSeverity, fBatch, fAffected, fEvent],
   );
-  const shown = filtered.slice(0, HISTORY_LIMIT);
-  const inEvents = useMemo(() => data.records.reduce((a, r) => a + (data.links.has(r.id) ? 1 : 0), 0), [data.records, data.links]);
+  const shown = useMemo(() => filtered.slice(0, HISTORY_LIMIT), [filtered]);
+  const inEvents = useMemo(() => hist.records.reduce((a, r) => a + (hist.links.has(r.id) ? 1 : 0), 0), [hist]);
   const anyFilter = fStation || fDefect || fResult || fSeverity || fBatch || fAffected || fEvent;
   const clearFilters = () => {
     setFStation('');
@@ -199,10 +199,10 @@ function QualityWorkspace() {
         batch: s.batches.find((b) => b.id === batchId) ?? null,
         pinned: !!selected && (!!selRec || frame?.id === selected),
         rules: ruleChecks(s, { time, rec }),
-        events: rec ? eventsOfRecord(s, data.links, rec.id) : [],
+        events: rec ? eventsOfRecord(s, hist.links, rec.id) : [],
       };
     },
-    [selected, mode, data.links],
+    [selected, mode, hist.links],
   );
 
   const detail = useSimValue(
@@ -216,18 +216,18 @@ function QualityWorkspace() {
         frame: frameById(s, rec.id),
         scenario: affectingScenario(s, rec),
         states: contextStates(s, rec),
-        events: eventsOfRecord(s, data.links, rec.id),
+        events: eventsOfRecord(s, hist.links, rec.id),
       };
     },
-    [selected, data.links],
+    [selected, hist.links],
   );
 
   const autoFocus = (flow?.pinned ? flow.events[0]?.id : undefined) ?? events.open[0]?.id ?? events.resolved[0]?.id ?? null;
   const focusId = focus ?? autoFocus;
-  const showEvent = (id: string) => {
+  const showEvent = useCallback((id: string) => {
     setFocus(id);
     scrollTo(eventsRef.current);
-  };
+  }, []);
   const pinRecord = (id: string) => {
     setFocus(focusId);
     setSelected(id);
@@ -325,73 +325,6 @@ function QualityWorkspace() {
         </button>
       ),
     },
-  ];
-
-  const historyCols: Column<QualityInspection>[] = [
-    { key: 'time', header: 'Time', render: (r) => formatDateTime(r.time), sort: (r) => r.time },
-    { key: 'id', header: 'Record', render: (r) => <span className="mono">{r.id}</span> },
-    { key: 'station', header: 'Station', render: (r) => STATION_BY_ID[r.stationId]?.name ?? r.stationId, sort: (r) => r.stationId },
-    { key: 'batch', header: 'Batch', render: (r) => <span className="mono">{r.batchId}</span>, sort: (r) => r.batchId },
-    { key: 'result', header: 'Result', render: (r) => <ResultBadge result={r.result} />, sort: (r) => r.result },
-    {
-      key: 'defect',
-      header: 'Defect',
-      render: (r) => {
-        const sc = data.affected.get(r.id);
-        if (!r.defect) return <span className="muted">—</span>;
-        return (
-          <>
-            {DEFECTS[r.defect].label}
-            {sc && (
-              <span className="q-aff" title={`Raised by scenario: ${sc.label}`}>
-                <FlaskConical size={11} aria-hidden />
-                <span className="q-sr">Scenario-affected</span>
-              </span>
-            )}
-          </>
-        );
-      },
-      sort: (r) => (r.defect ? DEFECTS[r.defect].label : null),
-    },
-    {
-      key: 'conf',
-      header: 'Sim. conf.',
-      numeric: true,
-      title: 'Simulated classification confidence (vision tunnel only — gauge results are measurements)',
-      render: (r) => (isVisionRecord(r) && r.confidence != null ? fmtPct(r.confidence, 1) : <span className="muted">{r.stationId === 'ST-GAUGE' && r.defect ? 'gauge' : '—'}</span>),
-      sort: (r) => (isVisionRecord(r) ? r.confidence : null),
-    },
-    {
-      key: 'sev',
-      header: 'Severity',
-      render: (r) => <DefectSeverity severity={r.severity} />,
-      sort: (r) => (r.severity ? ['minor', 'major', 'critical'].indexOf(r.severity) : null),
-    },
-    { key: 'meas', header: 'Measurement', render: (r) => <span title={r.measurement ?? undefined}>{r.measurement ?? '—'}</span> },
-    { key: 'tiles', header: 'Tiles', numeric: true, render: (r) => fmtInt(r.tiles), sort: (r) => r.tiles },
-    {
-      key: 'event',
-      header: 'Event',
-      render: (r) => {
-        const ids = data.links.get(r.id);
-        if (!ids?.length) return <span className="muted">—</span>;
-        return (
-          <button
-            className="row-link mono"
-            onClick={(e) => {
-              e.stopPropagation();
-              showEvent(ids[0]);
-            }}
-            title={`Part of ${ids.join(', ')} — show the event and its evidence`}
-          >
-            {ids[0]}
-            {ids.length > 1 && <span className="muted"> +{ids.length - 1}</span>}
-          </button>
-        );
-      },
-      sort: (r) => data.links.get(r.id)?.[0] ?? null,
-    },
-    { key: 'src', header: 'Source', render: (r) => <SourceTag source={r.source} /> },
   ];
 
   const batchCols: Column<BatchRow>[] = [
@@ -554,14 +487,14 @@ function QualityWorkspace() {
               >
                 <BellRing size={12} /> In an event {fmtInt(inEvents)}
               </button>
-              {(fAffected || data.affected.size > 0) && (
+              {(fAffected || hist.affected.size > 0) && (
                 <button
                   className={`btn sm ${fAffected ? 'on' : ''}`}
                   aria-pressed={fAffected}
                   onClick={() => setFAffected(!fAffected)}
                   title="Only records raised by a quality-deterioration scenario"
                 >
-                  <FlaskConical size={12} /> Scenario-affected {fmtInt(data.affected.size)}
+                  <FlaskConical size={12} /> Scenario-affected {fmtInt(hist.affected.size)}
                 </button>
               )}
               <select className="select" value={fStation} onChange={(e) => setFStation(e.target.value)} aria-label="Filter by station">
@@ -599,13 +532,13 @@ function QualityWorkspace() {
             </div>
           }
         >
-          <DataTable
-            columns={historyCols}
+          <HistoryTable
             rows={shown}
-            rowKey={(r) => r.id}
-            onRowClick={(r) => selectRecord(r.id === selected ? null : r.id)}
-            selectedKey={selected}
-            maxHeight={480}
+            selected={selected}
+            links={hist.links}
+            affected={hist.affected}
+            onSelect={selectRecord}
+            onShowEvent={showEvent}
             empty={anyFilter ? 'No records match the filters' : 'No inspection records in this period'}
           />
         </Panel>

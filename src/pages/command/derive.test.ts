@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import { MONITORED_STAGES } from '../../model/plant';
-import { acknowledgeEvent } from '../../sim/events';
-import { activateScenario, advance, createSim } from '../../sim/engine';
+import { acknowledgeEvent, investigateEvent } from '../../sim/events';
+import { activateScenario, advance, clearScenario, createSim } from '../../sim/engine';
 import { DEFAULT_TARIFFS } from '../../sim/energy';
 import { DEFAULT_FINANCE } from '../../sim/finance';
 import { downtimePareto, resolvePeriod } from '../../sim/metrics';
@@ -45,6 +45,27 @@ describe('command center derivations', () => {
     expect(c.unacknowledged).toBe(after.filter((e) => e.status === 'active').length);
     expect(prioritisedEvents(t, 'unacknowledged').every((e) => e.status === 'active')).toBe(true);
     expect(prioritisedEvents(t, 'condition').every((e) => e.end == null)).toBe(true);
+  });
+
+  it('offers Resolve only once the condition of an investigated event has cleared', () => {
+    // Review finding #22: an investigated conveyor stop still in effect cannot be resolved yet.
+    const t = createSim(5, 2 * 1440 + 300);
+    const sc = activateScenario(t, { kind: 'conveyor-stop', equipmentId: 'CV-PACK', end: null, label: 'Packing belt stop' });
+    advance(t, t.minute + 3);
+    const ev = prioritisedEvents(t).find((e) => e.asset.equipmentId === 'CV-PACK' && e.end == null)!;
+    expect(ev).toBeDefined();
+    const next = () => eventActions(t).find((a) => a.ev.id === ev.id)?.next;
+    expect(next()).toBe('acknowledge');
+    expect(acknowledgeEvent(t, ev.id).ok).toBe(true);
+    expect(next()).toBe('investigate');
+    expect(investigateEvent(t, ev.id).ok).toBe(true);
+    expect(ev.status).toBe('investigating');
+    expect(next()).toBe('report');
+    // Clearing the stop ends the condition: now it can be resolved.
+    clearScenario(t, sc.id);
+    advance(t, t.minute + 2);
+    expect(ev.end).not.toBeNull();
+    expect(next()).toBe('resolve');
   });
 
   it('builds a newest-first timeline from events and scenario inputs', () => {

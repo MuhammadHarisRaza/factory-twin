@@ -3,7 +3,20 @@ import type { Evidence } from '../../model/types';
 import { DEFAULT_START } from '../../sim/time';
 import { LIVE_PROVENANCE, createEvidenceCapturer, type CaptureDeps, type CaptureSim } from './capture';
 import { feedRenderSize, frameTimeOf, tagFrameTime } from './frames';
-import { HLS_REASON, RTSP_REASON, STALE_AFTER_MS, guessKind, planStream, staleness, urlSummary } from './live';
+import {
+  HLS_REASON,
+  RTSP_REASON,
+  STALE_AFTER_MS,
+  guessKind,
+  isPlaying,
+  mjpegFreshness,
+  mjpegState,
+  planStream,
+  snapshotBlocked,
+  staleness,
+  urlSummary,
+  type LiveState,
+} from './live';
 import { cameraStrip, localStamp, simulatedStrip, snapshotFileName, stripFontPx } from './overlay';
 
 const env = { canPlayHls: false, pageHttps: false };
@@ -69,8 +82,68 @@ describe('stream states', () => {
     expect(staleness('loading', 1000, 2000)).toBe('loading');
     expect(staleness('error', 1000, 2000)).toBe('error');
     expect(staleness('unavailable', 1000, 2000)).toBe('unavailable');
-    // Unknown freshness keeps the state.
-    expect(staleness('live', null, 1e9)).toBe('live');
+    // Unknown freshness is never kept as live (review #9).
+    expect(staleness('live', null, 1e9)).toBe('unverified');
+    expect(staleness('stale', null, 1e9)).toBe('unverified');
+    expect(staleness('unverified', null, 1e9)).toBe('unverified');
+    // Once freshness can be checked again, the clock decides.
+    expect(staleness('unverified', 1000, 2000)).toBe('live');
+    expect(staleness('unverified', 1000, 1001 + STALE_AFTER_MS)).toBe('stale');
+    expect(isPlaying('unverified')).toBe(true);
+    expect(isPlaying('loading')).toBe(false);
+  });
+
+  it('checks MJPEG freshness by pixels, else by repeated load events, else not at all', () => {
+    expect(mjpegFreshness(12345, 1)).toBe('pixels');
+    expect(mjpegFreshness(null, 1)).toBe('unknown');
+    expect(mjpegFreshness(null, 0)).toBe('unknown');
+    expect(mjpegFreshness(null, 2)).toBe('load-events');
+  });
+
+  // Review #9: an MJPEG / snapshot URL served without CORS (pixels unreadable) and a browser that fires
+  // `load` once. It loads at 14:02:11, then freezes. It must never read "Live" — before or after.
+  it('never shows a no-CORS MJPEG stream with a single load event as live, even an hour later', () => {
+    const t0 = 1_000_000;
+    // The player's onLoad handler: first load event, fingerprint unreadable.
+    let st: LiveState = mjpegState('live', { fingerprint: null, loads: 1, lastFrameAt: t0, now: t0 });
+    expect(st).toBe('unverified');
+    // The player's 1 s interval for the next hour: nothing changes (no load event, pixels unreadable).
+    for (let now = t0 + 1000; now <= t0 + 3_600_000; now += 1000) {
+      st = mjpegState(st, { fingerprint: null, loads: 1, lastFrameAt: t0, now });
+      expect(st).not.toBe('live');
+    }
+    expect(st).toBe('unverified');
+  });
+
+  it('uses per-part load events (as Firefox fires them) as freshness for a no-CORS MJPEG stream', () => {
+    const t0 = 1_000_000;
+    expect(mjpegState('live', { fingerprint: null, loads: 1, lastFrameAt: t0, now: t0 })).toBe('unverified');
+    // Second part arrives: load events prove frames are arriving.
+    let st = mjpegState('unverified', { fingerprint: null, loads: 2, lastFrameAt: t0 + 200, now: t0 + 200 });
+    expect(st).toBe('live');
+    // The stream freezes after the 50th part: stale 10 s later.
+    const last = t0 + 5000;
+    st = mjpegState(st, { fingerprint: null, loads: 50, lastFrameAt: last, now: last + STALE_AFTER_MS });
+    expect(st).toBe('live');
+    st = mjpegState(st, { fingerprint: null, loads: 50, lastFrameAt: last, now: last + STALE_AFTER_MS + 1000 });
+    expect(st).toBe('stale');
+  });
+
+  it('turns a CORS-readable MJPEG stream whose pixels stop changing stale', () => {
+    const t0 = 1_000_000;
+    expect(mjpegState('live', { fingerprint: 42, loads: 1, lastFrameAt: t0, now: t0 })).toBe('live');
+    expect(mjpegState('live', { fingerprint: 42, loads: 1, lastFrameAt: t0, now: t0 + STALE_AFTER_MS + 1000 })).toBe('stale');
+    // Not playing: left alone.
+    expect(mjpegState('error', { fingerprint: null, loads: 1, lastFrameAt: t0, now: t0 + 1e6 })).toBe('error');
+    expect(mjpegState('loading', { fingerprint: null, loads: 0, lastFrameAt: null, now: t0 })).toBe('loading');
+  });
+
+  // Review #11: a snapshot of a stale (frozen) stream would be stamped with the capture time.
+  it('allows a snapshot only from a live stream', () => {
+    expect(snapshotBlocked('live')).toBeNull();
+    expect(snapshotBlocked('stale')).toMatch(/stale .* more than 10 s old/);
+    expect(snapshotBlocked('unverified')).toMatch(/cannot be checked/);
+    for (const s of ['loading', 'error', 'unavailable'] as const) expect(snapshotBlocked(s)).toMatch(/not playing/);
   });
 });
 

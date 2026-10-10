@@ -210,7 +210,8 @@ export function CamerasTab() {
             </li>
             <li>
               <b>"Live" means playing.</b> A configured stream shows Live only after the browser actually plays it; otherwise Connecting, Connection error,
-              Stale (no new frame for more than 10 s) or Unavailable.
+              Stale (no new frame for more than 10 s) or Unavailable. A stream served without CORS shows "Playing · freshness unknown", because the
+              browser cannot read its frames to tell whether it has stalled.
             </li>
             <li>
               <b>Stored in this browser only.</b> URLs are kept in this browser's local storage, not shared with other users or devices. Avoid credentials in

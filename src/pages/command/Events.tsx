@@ -142,7 +142,7 @@ export function EventActions() {
                     Investigate
                   </button>
                 ) : null}
-                <button type="button" className="btn sm" onClick={() => openEvent(ev.id)} title={next === 'resolve' ? 'Open the report to resolve the event' : 'Open the event report'}>
+                <button type="button" className="btn sm" onClick={() => openEvent(ev.id)} title={next === 'resolve' ? 'Open the report to resolve the event' : next === 'report' ? 'Open the event report — it can be resolved once the condition clears' : 'Open the event report'}>
                   <ClipboardList size={12} aria-hidden />
                   {next === 'resolve' ? 'Resolve…' : 'Report'}
                 </button>

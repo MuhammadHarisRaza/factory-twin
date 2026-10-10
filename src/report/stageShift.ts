@@ -3,7 +3,8 @@
  * report. Everything comes from the shared state: stage I/O from its counting points (stageIO),
  * equipment states (operationalState + machine / conveyor metrics for the shift), the stage's events
  * of the shift (the same OpEvent records, by id) and their impact (eventImpact — consequence events
- * report their loss under the root event, so nothing is counted twice).
+ * report their loss under the root event, and quality events are listed but not added to the cost
+ * total because several quality rules can describe the same rejects, so nothing is counted twice).
  */
 import { EQUIPMENT_BY_ID } from '../data/equipment';
 import { eventInMonitoredStage } from '../sim/events';
@@ -18,7 +19,7 @@ import { OPERATIONAL_STATE_LABEL, clippedDuration, conveyorMetrics, machineMetri
 import type { Metric } from '../sim/oee';
 import { formatDate, formatDateTime, formatDuration, shiftAt } from '../sim/time';
 import { LABELS, fmtMoney, plantClock, plantTime, wallClock } from './format';
-import { FOOTER_DISCLAIMER, type PdfBlock, type PdfDocModel, type PdfSection } from './model';
+import { BAND_NOTE, STAGE_FOOTER_DISCLAIMER, type PdfBlock, type PdfDocModel, type PdfSection } from './model';
 import { fileSafe, sanitizeDeep } from './text';
 
 /** Process stages folded into a monitored stage (GLAZE = glazing + decoration, PACK = packing + palletising). */
@@ -48,6 +49,16 @@ export function stageEvents(s: SimState, stageId: MonitoredStageId, p: Period) {
     .filter((e) => eventInStage(e, stageId) && e.start < p.to && (e.end ?? s.minute) >= p.from)
     .sort((a, b) => b.start - a.start || b.id.localeCompare(a.id));
 }
+
+/** Why quality events are not summed into a stage cost total (same wording as the copilot). */
+export const QUALITY_NOT_ADDED = 'several quality rules can describe the same rejects';
+
+/**
+ * Whether a root event's estimate is added to the stage's cost total. Production, logistics and
+ * energy estimates value distinct quantities; quality events can overlap (the reject-rate, defect-count
+ * and defect-rate rules all count the same rejected tiles), so they are listed but not added.
+ */
+export const isAddedToStageTotal = (e: OpEvent) => !e.consequenceOf && e.category !== 'quality';
 
 const pct = (m: Metric) => (m.status === 'ok' ? `${(m.value! * 100).toFixed(1)} %` : m.status === 'invalid' ? 'Invalid' : '—');
 const n0 = (v: number | null | undefined) => (v == null || !Number.isFinite(v) ? '—' : Math.round(v).toLocaleString('en-GB'));
@@ -187,8 +198,23 @@ export function stageShiftModel(
     byReason.set(k, r);
   }
   const roots = events.filter((e) => !e.consequenceOf);
-  const impacts = roots.map((e) => ({ e, imp: eventImpact(s, e, finance, tariffs) }));
-  const total = impacts.reduce((a, x) => a + (x.imp.estimate?.total ?? 0), 0);
+  // Quality events are listed per event but never added: several quality rules (reject rate, defect
+  // count, defect rate) can describe the same rejected tiles, so their sum would value them repeatedly.
+  const impacts = roots.map((e) => ({ e, imp: eventImpact(s, e, finance, tariffs), added: isAddedToStageTotal(e) }));
+  const total = impacts.reduce((a, x) => a + (x.added ? (x.imp.estimate?.total ?? 0) : 0), 0);
+  const nAdded = impacts.filter((x) => x.added).length;
+  const pricedQuality = impacts.filter((x) => !x.added && (x.imp.estimate?.total ?? 0) > 0);
+  const plural = (n: number, w: string) => `${n} ${w}${n === 1 ? '' : 's'}`;
+  const costRows: string[][] = [
+    [
+      'Estimated cost of root events',
+      fmtMoney(finance.currency, total),
+      `${plural(nAdded, 'production / logistics / energy root event')}; quality events are listed per event, not added; consequence events are valued under their root, never twice`,
+    ],
+    ...(pricedQuality.length
+      ? [['Quality events (not added)', `${plural(pricedQuality.length, 'event')} · see Estimated cost by event`, `Valued per event, not added to the total: ${QUALITY_NOT_ADDED}`]]
+      : []),
+  ];
   const kilnMin = roots.reduce((a, e) => a + (e.category === 'production' ? e.acc.constraintMin : 0), 0);
   const gap = expected != null && io.output != null ? Math.max(0, expected - io.output) : null;
   sec(
@@ -201,7 +227,7 @@ export function stageShiftModel(
           ['Output below expected', gap != null ? `${n0(gap)} ${unit}${unit === 'tiles' ? ` (${n1(gap * M2_PER_TILE)} m²)` : ''}` : 'Not defined', 'Ideal rate × planned time − actual output, at this stage — a line loss only if it held up the kiln'],
           ['Stage down / starved / blocked', `${n0(io.downMin)} / ${n0(io.starvedMin)} / ${n0(io.blockedMin)} min`, 'Average over the stage machines, shift to date'],
           ['Kiln held up by root events of the stage', `${n0(kilnMin)} min`, 'Minutes the line constraint was down, starved or blocked with these events as the cause'],
-          ['Estimated cost of root events', fmtMoney(finance.currency, total), `${roots.length} root event${roots.length === 1 ? '' : 's'}; consequence events are valued under their root, never twice`],
+          ...costRows,
         ],
         widths: [52, 38, 'auto'],
       },
@@ -218,10 +244,15 @@ export function stageShiftModel(
             { kind: 'subhead', text: 'Estimated cost by event' },
             {
               kind: 'table',
-              head: ['Event', 'Title', 'Estimate'],
-              rows: impacts.filter((x) => (x.imp.estimate?.total ?? 0) > 0).map((x) => [x.e.id, x.e.title, fmtMoney(finance.currency, x.imp.estimate!.total)]),
-              widths: [22, 'auto', 32],
+              head: ['Event', 'Title', 'Estimate', 'In the total'],
+              rows: impacts
+                .filter((x) => (x.imp.estimate?.total ?? 0) > 0)
+                .map((x) => [x.e.id, x.e.title, fmtMoney(finance.currency, x.imp.estimate!.total), x.added ? 'Added' : 'Not added (quality rule)']),
+              widths: [22, 'auto', 30, 30],
             },
+            ...(pricedQuality.length
+              ? ([{ kind: 'text', text: `Quality events are not added to the total: ${QUALITY_NOT_ADDED}. Each is valued on its own in its event report.`, tone: 'muted' }] as PdfBlock[])
+              : []),
           ] as PdfBlock[])
         : []),
       { kind: 'subhead', text: 'Assumptions' },
@@ -235,7 +266,7 @@ export function stageShiftModel(
     {
       kind: 'list',
       items: [
-        'All values are simulated by the deterministic simulation of a representative plant — no PLC, SCADA, MES or camera is connected.',
+        'All values are simulated by the deterministic simulation of a representative plant — no PLC, SCADA or MES is connected, and no camera feeds these figures.',
         'Quantities without a counting point at this stage are shown as not measured rather than inferred.',
         'Financial figures are estimates from the stated assumptions, not verified business losses.',
       ],
@@ -253,6 +284,7 @@ export function stageShiftModel(
     generatedAtPlant: `${formatDateTime(s.minute)} (plant time)`,
     sections,
     fileName: `wAI-stage-${fileSafe(st.id)}-shift-${shiftAt(p.from).id}-${formatDate(p.from)}.pdf`,
-    disclaimer: FOOTER_DISCLAIMER,
+    disclaimer: STAGE_FOOTER_DISCLAIMER,
+    bandNote: BAND_NOTE,
   });
 }

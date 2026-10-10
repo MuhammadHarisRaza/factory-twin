@@ -49,10 +49,17 @@ Each camera position (`CAMERAS` in `src/model/plant.ts`) has a **simulated feed 
 burnt-in labelled *SIMULATED VIEW*. A real stream can be configured per camera in *Assets & Data → Camera
 sources*; it is used only if the browser can play it:
 
-- Browsers cannot open **RTSP / ONVIF** streams. Use a gateway that restreams to **WebRTC (WHEP), HLS or MJPEG**
-  (e.g. MediaMTX, go2rtc, the VMS vendor's web gateway) on an HTTPS origin the app can reach.
-- Event snapshots from a real stream need the gateway to allow **CORS**; otherwise the browser blocks reading the
-  frame and the evidence says so.
+- Browsers cannot open **RTSP / ONVIF** streams. Use a gateway that restreams to **HLS** (only where the browser
+  plays it natively), **MJPEG / JPEG** or **MP4 / WebM** over http(s) (e.g. MediaMTX, go2rtc, the VMS vendor's web
+  gateway) on an origin the app can reach (https when the app is served over https). **WebRTC / WHEP** needs the
+  gateway's own player and is **not played by this release** — a WHEP endpoint configured here ends in a
+  connection error.
+- Event snapshots from a real stream need the gateway to allow **CORS** (`Access-Control-Allow-Origin` for this
+  page). Without it the stream may still play, but the browser does not let the app read its frames: the event
+  evidence then falls back to the labelled digital-twin render (provenance *Rendered from the digital twin
+  (simulated camera view)*), and the evidence does not record that the stream was blocked. A manual snapshot
+  from the feed reports the cross-origin block. Without CORS the app also cannot check an MJPEG / JPEG stream's pixels for new frames, so
+  it is not shown as *Live* unless freshness can be confirmed another way.
 - Video segments linked to events need an **NVR / VMS** integration (segment URLs by camera and time); not part
   of this release — reports show *Video segment: not available*.
 
@@ -75,7 +82,10 @@ The browser-only build is enough for a deterministic demonstration. These requir
 - **Live connectivity** — OPC UA / MQTT clients cannot run in a browser; a gateway service normalises signals to
   the ids above and streams them (WebSocket/SSE) to the UI.
 - **Persistence** of events, evidence (images, signal snapshots), acknowledgements and resolution history beyond
-  the in-memory session; file storage for images and PDFs.
+  the in-memory session; file storage for images and PDFs. In this release snapshot images live only in browser
+  memory (`src/twin/bridge.ts`, keyed by evidence id): the store is cleared on Reset Demo, capped at
+  `MAX_IMAGE_CHARS` (≈ 48 MB, oldest dropped first), and `retainImagesFor(sim.evidence)` releases the images of
+  evidence the engine has pruned from its eight-day history. A view whose image is gone says it was not kept.
 - **Multiple users** sharing state, scenario logs and event ownership; authentication and roles.
 - **Audit** of configuration changes (signal mappings, counting points, ideal cycle times, targets, rule
   thresholds, financial assumptions).

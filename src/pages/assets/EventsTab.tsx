@@ -10,6 +10,7 @@ import { DataTable, type Column } from '../../ui/kit/DataTable';
 import { fmtInt } from '../../ui/kit/format';
 import { Panel, Segmented } from '../../ui/kit/Panel';
 import { SeverityBadge, SourceTag } from '../../ui/kit/Status';
+import { RESTRICTED_FORKLIFT } from '../scenarios/catalogue';
 
 type EventType = 'alert' | 'downtime' | 'gate' | 'dock' | 'restricted' | 'scenario';
 type TypeFilter = EventType | 'all';
@@ -23,7 +24,7 @@ const TYPE_LABEL: Record<EventType, string> = {
   scenario: 'Scenario',
 };
 
-type EventRow = {
+export type EventRow = {
   key: string;
   time: number;
   type: EventType;
@@ -48,13 +49,23 @@ const DOCK_KIND: Record<string, string> = { assigned: 'Dock assigned', docked: '
 const downtimeSeverity = (equipmentId: string): AlertSeverity =>
   equipmentId === 'H-KILN' ? 'critical' : OPS_BY_ID[equipmentId]?.stage === 'PRESS' ? 'serious' : 'warning';
 
-function scenarioTarget(sc: ScenarioActivation): Pick<EventRow, 'equipmentId' | 'subject' | 'subjectSub'> {
+/**
+ * Where a scenario (and its subject-less alert) is located. A restricted-zone entry follows its
+ * forklift while it is on site and otherwise opens the packaging floor beside the hall walkway;
+ * yard congestion opens the holding area; only dock scenarios open the dispatch docks.
+ */
+function scenarioTarget(sc: ScenarioActivation): Pick<EventRow, 'equipmentId' | 'vehicleId' | 'subject' | 'subjectSub'> {
   if (sc.equipmentId) return { equipmentId: sc.equipmentId, subject: sc.equipmentId, subjectSub: EQUIPMENT_BY_ID[sc.equipmentId]?.name };
   if (sc.stage) {
     const st = STAGE_BY_ID[sc.stage];
     return { equipmentId: st.machines[0], subject: st.name, subjectSub: sc.stage };
   }
   if (sc.kind === 'truck-arrival') return { equipmentId: 'A-GATE', subject: 'Main gate', subjectSub: 'A-GATE' };
+  if (sc.kind === 'restricted-entry') {
+    const id = sc.vehicleId ?? RESTRICTED_FORKLIFT;
+    return { vehicleId: id, equipmentId: 'J-PAL', subject: id, subjectSub: GEOFENCE_NAME['GF-WALK'] ?? 'Hall pedestrian walkway' };
+  }
+  if (sc.kind === 'yard-congestion') return { equipmentId: 'A-HOLD', subject: 'Holding area', subjectSub: 'A-HOLD' };
   return { equipmentId: 'K-DOCK', subject: sc.dockId ? (DOCK_NAME[sc.dockId] ?? sc.dockId) : 'Dispatch yard', subjectSub: 'K-DOCK' };
 }
 
@@ -64,7 +75,7 @@ function scenarioOfAlert(s: SimState, a: SimState['alerts'][number]): ScenarioAc
   return candidates.find((x) => x.start === a.time) ?? candidates[candidates.length - 1];
 }
 
-function buildEvents(s: SimState): EventRow[] {
+export function buildEvents(s: SimState): EventRow[] {
   const out: EventRow[] = [];
   const now = s.minute;
   const vLabel = (id: string) => s.logistics.vehicles[id]?.label ?? id;
@@ -84,7 +95,7 @@ function buildEvents(s: SimState): EventRow[] {
       severity: a.severity,
       source: a.source,
       equipmentId: a.equipmentId ?? tgt?.equipmentId,
-      vehicleId: a.vehicleId,
+      vehicleId: a.vehicleId ?? tgt?.vehicleId,
       fallback: a.vehicleId ? 'K-DOCK' : undefined,
     });
   }
@@ -149,6 +160,14 @@ function buildEvents(s: SimState): EventRow[] {
   return out.sort((a, b) => b.time - a.time || (a.key < b.key ? 1 : -1));
 }
 
+/** What a row click opens: its vehicle while on site, else its equipment, else the area it left from. */
+export function eventTarget(r: EventRow, active: Set<string>): { type: 'vehicle' | 'equipment'; id: string } | null {
+  if (r.vehicleId && active.has(r.vehicleId)) return { type: 'vehicle', id: r.vehicleId };
+  if (r.equipmentId) return { type: 'equipment', id: r.equipmentId };
+  if (r.fallback) return { type: 'equipment', id: r.fallback };
+  return null;
+}
+
 export function EventsTab() {
   const [type, setType] = useState<TypeFilter>('all');
   const { rows, total, active } = useSimValue(
@@ -161,9 +180,9 @@ export function EventsTab() {
   );
 
   const navigate = (r: EventRow) => {
-    if (r.vehicleId && active.has(r.vehicleId)) openVehicle(r.vehicleId);
-    else if (r.equipmentId) openEquipment(r.equipmentId);
-    else if (r.fallback) openEquipment(r.fallback);
+    const t = eventTarget(r, active);
+    if (t?.type === 'vehicle') openVehicle(t.id);
+    else if (t) openEquipment(t.id);
   };
 
   const columns: Column<EventRow>[] = [

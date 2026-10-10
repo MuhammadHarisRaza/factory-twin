@@ -10,7 +10,7 @@
 import { useEffect } from 'react';
 import { pendingSnapshots } from '../sim/events';
 import { useSim } from '../sim/store';
-import { putImage, renderTwinCamera, twinRendererReady } from '../twin/bridge';
+import { putImage, renderTwinCamera, retainImagesFor, twinRendererReady } from '../twin/bridge';
 import { createEvidenceCapturer } from '../ui/feeds/capture';
 import { liveElement } from '../ui/feeds/registry';
 import { grabFrame } from '../ui/feeds/snapshot';
@@ -43,7 +43,11 @@ export function EvidenceCapture() {
     };
     kick();
     const unsubscribe = useSim.subscribe((st, prev) => {
-      if (st.version !== prev.version || st.sim !== prev.sim) kick();
+      if (st.version !== prev.version || st.sim !== prev.sim) {
+        // Images of evidence pruned from the history are released (a no-op while the array is unchanged).
+        retainImagesFor(st.sim.evidence);
+        kick();
+      }
     });
     return unsubscribe;
   }, []);

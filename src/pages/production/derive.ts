@@ -11,6 +11,7 @@ import {
   hourlyTrend,
   lineGoodIn,
   lineMetrics,
+  planTiles,
   qualityIn,
   sumBuckets,
   type ParetoRow,
@@ -150,6 +151,21 @@ export function cumulativeVsPlan(s: SimState, key: PeriodKey, p: Period): Cumula
   const step = end - p.from > 26 * 60 ? 60 : 1;
   const actualTo = Math.min(now, p.to);
   const planPerMin = (TARGET.goodPerHour / 60) * M2_PER_TILE;
+  // Planned stops at the kiln are not production time: the plan does not accrue during them (as in
+  // lineMetrics / planTiles). Hour buckets are spread evenly over the part of the hour simulated so far.
+  const kilnStops = (t: number) => {
+    let m = 0;
+    for (let h = Math.floor(p.from / 60); h * 60 < Math.min(t, now); h++) {
+      const b = s.hours['H-KILN']?.get(h);
+      if (!b || !b.plannedStop) continue;
+      const hs = h * 60;
+      const covered = Math.max(1, Math.min(now, hs + 60) - hs);
+      const overlap = Math.max(0, Math.min(t, hs + 60, now) - Math.max(p.from, hs));
+      m += b.plannedStop * Math.min(1, overlap / covered);
+    }
+    return m;
+  };
+  const planAt = (t: number) => planPerMin * Math.max(0, t - p.from - kilnStops(t));
 
   // Prefix sums of hourly good output from the period start.
   const h0 = Math.floor(p.from / 60);
@@ -190,13 +206,14 @@ export function cumulativeVsPlan(s: SimState, key: PeriodKey, p: Period): Cumula
     tickEvery,
     step,
     actual: times.map((t) => (t <= actualTo ? cumTiles(t) * M2_PER_TILE : null)),
-    plan: times.map((t) => planPerMin * (t - p.from)),
+    plan: times.map((t) => planAt(t)),
     projection: times.map((t) => (rateM2PerMin == null || t < now ? null : actualNowM2 + rateM2PerMin * (t - now))),
     end,
     actualTo,
     actualNowM2,
-    planNowM2: planPerMin * (actualTo - p.from),
-    planEndM2: planPerMin * (end - p.from),
+    planNowM2: planAt(actualTo),
+    // Planned stops still to come are not known in advance: the rest of the period is planned in full.
+    planEndM2: planAt(actualTo) + planPerMin * Math.max(0, end - actualTo),
     projectedEndM2: rateM2PerMin == null ? null : actualNowM2 + rateM2PerMin * (end - now),
     projectionRateM2h: rateM2PerMin == null ? null : rateM2PerMin * 60,
     projects,
@@ -323,7 +340,8 @@ export function shiftProjection(s: SimState, outputTiles: number) {
   if (elapsed < 15) return null;
   const perMin = outputTiles / elapsed;
   const projected = outputTiles + perMin * (sh.end - s.minute);
-  const target = (TARGET.goodPerHour * (sh.end - sh.start)) / 60;
+  // Plan so far (planned kiln stops excluded) + the rest of the shift in full.
+  const target = planTiles(s, { from: sh.start, to: s.minute, label: '' }) + (TARGET.goodPerHour * Math.max(0, sh.end - s.minute)) / 60;
   return { projectedM2: projected * M2_PER_TILE, targetM2: target * M2_PER_TILE, attainment: projected / target, rateM2h: perMin * 60 * M2_PER_TILE, endsAt: sh.end };
 }
 

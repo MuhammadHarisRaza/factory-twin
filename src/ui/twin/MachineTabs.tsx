@@ -201,6 +201,11 @@ export function RecsTab({ id, recs }: { id: string; recs: Insight[] }) {
                 <p className="tw-rec-impact">
                   <span className="muted">Impact · </span>
                   {r.impact}
+                  {r.estimate?.length ? (
+                    <span className="tag sim" title={r.estimate.join(' ')} style={{ marginLeft: 6 }}>
+                      estimate · assumptions shown
+                    </span>
+                  ) : null}
                 </p>
               )}
               {r.recommendation && (

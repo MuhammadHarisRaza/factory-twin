@@ -4,7 +4,9 @@
  *
  * Answers: what is happening now, what happened in the window, and — for one event — what, where,
  * why (with confidence), what it cost (estimate) and who is handling it. Every row is the same
- * OpEvent record the report, the PDF and the copilot use; selecting one deep-links #/events/<id>.
+ * OpEvent record the report, the PDF and the copilot use; selecting one deep-links #/events/<id>
+ * (a click adds a browser-history entry; automatic selections and arrow-key moves do not).
+ * Reset Demo clears the selection in the app store (src/app/store.ts), so the newest event opens.
  */
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { ChevronLeft, ChevronRight, FileDown, Info, LoaderCircle, Search, X } from 'lucide-react';
@@ -21,6 +23,7 @@ import { Empty, Segmented } from '../ui/kit/Panel';
 import { SEVERITY } from '../ui/kit/Status';
 import { EventReportView } from '../ui/report/EventReportView';
 import {
+  ALL_EVENTS_FILTERS,
   CATEGORY_ORDER,
   DEFAULT_FILTERS,
   PAGE_SIZE,
@@ -42,13 +45,15 @@ import './events.css';
 export function EventsPage() {
   const selectedId = useApp((s) => s.selectedEventId);
   const selectEvent = useApp((s) => s.selectEvent);
-  const resets = useSim((s) => s.resets);
   const resetting = useSim((s) => s.resetting);
   const [filters, setFilters] = useState<EventFilters>(DEFAULT_FILTERS);
   const [page, setPage] = useState(0);
-  const set = (p: Partial<EventFilters>) => {
+  // Set by 'Show all events': once the widened list holds the open report, show its page.
+  const reveal = useRef(false);
+  const set = (p: Partial<EventFilters>, opts?: { reveal?: boolean }) => {
     setFilters((f) => ({ ...f, ...p }));
     setPage(0);
+    reveal.current = opts?.reveal ?? false;
   };
 
   const data = useSimValue(
@@ -80,19 +85,11 @@ export function EventsPage() {
     [filters, selectedId],
   );
 
-  // A Reset Demo replaces every record: drop the stale selection so the newest event opens.
-  const firstReset = useRef(resets);
-  useEffect(() => {
-    if (resets !== firstReset.current) {
-      firstReset.current = resets;
-      selectEvent(null);
-    }
-  }, [resets, selectEvent]);
-
-  // Nothing selected (first visit, after a reset): open the newest event of the list.
+  // Nothing selected (first visit, after a reset): open the newest event of the list. Automatic,
+  // so it rewrites the current history entry instead of adding one.
   const newest = data.rows[0]?.id;
   useEffect(() => {
-    if (!selectedId && newest) selectEvent(newest);
+    if (!selectedId && newest) selectEvent(newest, 'replace');
   }, [selectedId, newest, selectEvent]);
 
   // Deep link / related-event link: show the page that holds the selected event.
@@ -102,6 +99,12 @@ export function EventsPage() {
     // Only when the selection changes — paging away by hand must stay possible.
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [selectedId]);
+  // 'Show all events' widened the filters: jump to the page that now holds the open report.
+  useEffect(() => {
+    if (!reveal.current || indexOfSelected < 0) return;
+    reveal.current = false;
+    setPage(pageOf(indexOfSelected));
+  }, [indexOfSelected]);
 
   const pb = pageBounds(data.rows.length, page);
   const pageRows = data.rows.slice(pb.from, pb.to);
@@ -110,7 +113,8 @@ export function EventsPage() {
     const i = indexOfSelected < 0 ? 0 : Math.min(data.rows.length - 1, Math.max(0, indexOfSelected + delta));
     const ev = data.rows[i];
     if (!ev) return;
-    selectEvent(ev.id);
+    // Arrow-key stepping rewrites the current history entry: Back leaves the list, not each row.
+    selectEvent(ev.id, 'replace');
     setPage(pageOf(i));
     requestAnimationFrame(() => document.querySelector<HTMLElement>(`.evp-list [data-ev="${ev.id}"]`)?.focus());
   };
@@ -253,7 +257,7 @@ export function EventsPage() {
               {data.selectedExists ? (
                 <>
                   The open report ({selectedId}) is outside the current filters.
-                  <button className="row-link" onClick={() => set({ ...DEFAULT_FILTERS, window: 'all' })}>
+                  <button className="row-link" onClick={() => set(ALL_EVENTS_FILTERS, { reveal: true })}>
                     Show all events
                   </button>
                 </>

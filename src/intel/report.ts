@@ -19,7 +19,6 @@ import {
   EVENT_TYPE_LABEL,
   eventById,
   evidenceOf,
-  qualityWindow,
 } from '../sim/events';
 import { DEFAULT_FINANCE, assumptionList, lostOutputValue, rejectCost, waitingCost, type Estimate, type FinanceAssumptions } from '../sim/finance';
 import { HEALTH_BY_ID, assess } from '../sim/health';
@@ -33,10 +32,16 @@ const fmtN = (v: number, d = 0) => v.toLocaleString('en-GB', { maximumFractionDi
 const m2 = (tiles: number) => tiles * M2_PER_TILE;
 
 /** First-pass yield over the 24 h before a minute (to convert kiln tiles into good tiles). */
-function fpyBefore(s: SimState, t: number) {
+export function fpyBefore(s: SimState, t: number) {
   const q = qualityIn(s, { from: Math.max(0, t - 1440), to: Math.max(1, t), label: '' });
   return q.inspected > 0 ? 1 - q.rejected / q.inspected : 0.976;
 }
+
+/**
+ * Line good output (tiles) an event has cost: the kiln tiles it held up × the first-pass yield of
+ * the 24 h before the event. The one figure the report, the insights and the monitoring views show.
+ */
+export const lineGoodLostTiles = (s: SimState, ev: OpEvent) => ev.acc.constraintLostTiles * fpyBefore(s, ev.start);
 
 /** Impact of one event, from its accumulated quantities and the shared state. */
 export function eventImpact(s: SimState, ev: OpEvent, finance: FinanceAssumptions = DEFAULT_FINANCE, tariffs: Tariffs = DEFAULT_TARIFFS): EventImpact {
@@ -59,11 +64,14 @@ export function eventImpact(s: SimState, ev: OpEvent, finance: FinanceAssumption
         basis: 'Typical rate × active minutes − actual output (per minute)',
       });
     const fpy = fpyBefore(s, ev.start);
-    const lineGoodTiles = a.constraintLostTiles * fpy;
+    const lineGoodTiles = lineGoodLostTiles(s, ev);
     rows.push({
       label: 'Kiln (line constraint) held up or slowed by this event',
       value: `${fmtN(a.constraintMin)} min`,
-      basis: 'Minutes the kiln was down, starved, blocked or running below its typical rate with this event as the cause',
+      basis:
+        ev.asset.equipmentId === 'H-KILN'
+          ? 'Minutes the kiln was down, starved, blocked or running below its typical rate during this condition (observed)'
+          : 'Minutes the kiln was down, starved, blocked or running below its typical rate, attributed to this event (inferred from states and buffers)',
     });
     if (a.constraintMin === 0) {
       notes.push(
@@ -92,24 +100,31 @@ export function eventImpact(s: SimState, ev: OpEvent, finance: FinanceAssumption
     }
     limitations.push('Line loss is valued only while the kiln was held up; time lost elsewhere is recoverable while buffers cover it.');
   } else if (ev.category === 'quality') {
+    // Counts accumulated per minute over the event window (backfilled from the condition start at
+    // detection): a cleared event's figures are final, whenever the report is built.
     const a = ev.acc;
     const ref = a.referenceRejectRate;
-    const w = qualityWindow(s, Math.min(end, s.minute - 1), Math.max(1, Math.min(dur + 1, 240)), ev.refs.defect);
-    const inspected = Math.max(a.inspected, w.inspected);
-    const rejects = Math.max(a.rejects, w.rejected);
+    const inspected = a.inspected;
+    const rejects = a.rejects;
     rows.push({ label: 'Inspected in the event window', value: `${fmtN(inspected)} tiles`, basis: 'Gauge + vision counters, per minute' });
     rows.push({ label: ev.refs.defect ? `Rejected — ${DEFECTS[ev.refs.defect].label}` : 'Rejected', value: `${fmtN(rejects)} tiles`, basis: 'Reject counters in the window' });
     if (ref != null && inspected > 0) {
-      const excess = Math.max(0, rejects - inspected * (ev.refs.defect ? (ref * DEFECTS[ev.refs.defect].weight) / sumWeights() : ref));
-      rows.push({ label: 'Rate vs 24 h reference', value: `${((rejects / inspected) * 100).toFixed(2)} % vs ${((ev.refs.defect ? (ref * DEFECTS[ev.refs.defect].weight) / sumWeights() : ref) * 100).toFixed(2)} %`, basis: 'Reference = the 24 h before detection' });
+      const excess = Math.max(0, rejects - inspected * ref);
+      rows.push({
+        label: 'Rate vs 24 h reference',
+        value: `${((rejects / inspected) * 100).toFixed(2)} % vs ${(ref * 100).toFixed(2)} %`,
+        basis: `Reference = ${ev.refs.defect ? `${DEFECTS[ev.refs.defect].label.toLowerCase()} rate` : 'reject rate'} over the 24 h ending 2 h before detection (the detection rules' reference)`,
+      });
       rows.push({ label: 'Excess rejects', value: `${fmtN(excess)} tiles (${fmtN(m2(excess), 1)} m²)`, basis: 'Rejects above the reference rate for the tiles inspected' });
       rows.push({ label: 'Effect on quality rate', value: `−${((excess / inspected) * 100).toFixed(2)} pts`, basis: 'Excess rejects ÷ inspected — lowers line OEE by about the same share' });
       lines.push(...rejectCost(finance, excess));
     } else missing.push('No reference reject rate for the 24 h before detection.');
-    limitations.push('Root cause not confirmed — the suspected causes are hypotheses to check.');
+    if (!ev.causes.some((c) => c.confidence === 'confirmed')) limitations.push('Root cause not confirmed — the suspected causes are hypotheses to check.');
   } else if (ev.category === 'logistics') {
     if (ev.type === 'truck-waiting' || ev.type === 'dock-overstay' || ev.type === 'turnaround-exceeded') {
-      rows.push({ label: 'Minutes beyond the threshold', value: `${fmtN(ev.acc.waitMin)} min`, basis: `Counted from detection (threshold ${ruleThreshold(s, ev)})` });
+      // The threshold the event was detected with (rules can be changed afterwards).
+      const th = ev.trigger.threshold;
+      rows.push({ label: 'Minutes beyond the threshold', value: `${fmtN(ev.acc.waitMin)} min`, basis: `Counted from detection (threshold ${th ? `${th.value}${th.unit ? ` ${th.unit}` : ''}` : '—'})` });
       if (ev.type === 'truck-waiting') lines.push(waitingCost(finance, ev.acc.waitMin));
       else if (ev.type === 'dock-overstay') notes.push('The dock was unavailable to other trucks for this time; any resulting waiting is costed on those trucks’ waiting events.');
       else notes.push('Turnaround is reported for service-level tracking; its waiting part is costed on the waiting event.');
@@ -161,12 +176,6 @@ export function eventImpact(s: SimState, ev: OpEvent, finance: FinanceAssumption
   return { rows, estimate, notes };
 }
 
-const sumWeights = () => Object.values(DEFECTS).reduce((a, d) => a + d.weight, 0);
-const ruleThreshold = (s: SimState, ev: OpEvent) => {
-  const def = EVENT_RULE_DEFS.find((r) => r.id === ev.trigger.ruleId);
-  return def?.threshold ? `${s.rules[def.threshold]}${def.threshold.endsWith('Max') && def.threshold !== 'rejectRateMax' ? ' min' : ''}` : '—';
-};
-
 // ── Report model ──────────────────────────────────────────────────────────────
 
 export type ReportAsset = { kind: string; id: string; name: string; stage: string | null; zone: string | null; camera: string | null };
@@ -200,7 +209,14 @@ export type EventReport = {
   diagnosis: { facts: string[]; causes: OpEvent['causes']; uncertainty: string[] };
   recommendations: string[];
   resolution: { status: string; owner: string | null; notes: OpEvent['notes']; resolution: OpEvent['resolution']; history: OpEvent['history']; reports: OpEvent['reports'] };
-  provenance: { origin: string; sources: string[]; unavailable: { title: string; reason: string }[]; disclaimers: string[] };
+  provenance: {
+    origin: string;
+    sources: string[];
+    unavailable: { title: string; reason: string }[];
+    disclaimers: string[];
+    /** The camera evidence includes a frame grabbed from a configured camera stream (not a twin render). */
+    liveCamera: boolean;
+  };
 };
 
 const TRIGGER_KIND: Record<OpEvent['trigger']['kind'], string> = {
@@ -276,6 +292,8 @@ export function buildEventReport(
   for (const x of supporting) x.series?.forEach((sr) => sources.add(sr.id));
   const unavailable = evidence.filter((x) => x.status !== 'available').map((x) => ({ title: x.title, reason: x.status === 'pending' ? 'Being captured' : (x.unavailableReason ?? 'Unavailable') }));
   if (!visual.some((x) => x.kind === 'video-ref')) unavailable.push({ title: 'Video segment', reason: 'No video recording (NVR) is integrated — simulated feeds are rendered live, not recorded' });
+  // A frame grabbed from a configured camera stream must not be described as a twin render.
+  const liveCamera = visual.some((x) => x.kind === 'camera-snapshot' && x.provenance.origin === 'live-camera');
 
   return {
     generatedAt: opts.generatedAt ?? new Date().toISOString(),
@@ -326,11 +344,18 @@ export function buildEventReport(
       origin: ev.source === 'scenario' ? 'Simulated — triggered by a demo scenario' : 'Simulated — deterministic simulation of a representative plant',
       sources: [...sources],
       unavailable,
-      disclaimers: [
-        'wAI Manufacturing Digital Twin — demonstration. No PLC, SCADA, camera, sensor, vehicle tracking or language model is connected.',
-        'Camera views are rendered from the digital twin and labelled as such; inspection frames are illustrations of simulated records.',
-        'Financial figures are estimates from the stated assumptions, not verified business losses.',
-      ],
+      disclaimers: liveCamera
+        ? [
+            'wAI Manufacturing Digital Twin — demonstration. No PLC, SCADA, sensor, vehicle tracking or language model is connected.',
+            'Camera evidence includes a frame from a configured stream (labelled on the image); other camera views are digital-twin renders. Inspection frames are illustrations of simulated records.',
+            'Financial figures are estimates from the stated assumptions, not verified business losses.',
+          ]
+        : [
+            'wAI Manufacturing Digital Twin — demonstration. No PLC, SCADA, camera, sensor, vehicle tracking or language model is connected.',
+            'Camera views are rendered from the digital twin and labelled as such; inspection frames are illustrations of simulated records.',
+            'Financial figures are estimates from the stated assumptions, not verified business losses.',
+          ],
+      liveCamera,
     },
   };
 }

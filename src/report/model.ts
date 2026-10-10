@@ -8,7 +8,7 @@
  */
 import { cameraName, type EventReport, type ReportEvidence } from '../intel/report';
 import { DEFECTS } from '../model/plant';
-import type { QualityInspection } from '../model/types';
+import type { Evidence, QualityInspection } from '../model/types';
 import { CONFIDENCE_LABEL, HISTORY_LABEL, LABELS, fmtMoney, fmtValue, plantClock, plantTime, wallClock } from './format';
 import { fileSafe, sanitizeDeep } from './text';
 
@@ -60,7 +60,10 @@ export type PdfDocModel = {
   generatedAtPlant: string;
   sections: PdfSection[];
   fileName: string;
+  /** Page-footer disclaimer; it must match the provenance of what the document shows (see footerDisclaimer). */
   disclaimer: string;
+  /** Short note under the SIMULATED DATA marker in the header band (default: "Demonstration · no live plant data"). */
+  bandNote?: string;
 };
 
 export type EventPdfContext = {
@@ -71,8 +74,25 @@ export type EventPdfContext = {
 };
 
 export const PRODUCT_NAME = 'wAI Manufacturing Digital Twin';
+/** Footer of an event report whose camera evidence (if any) is rendered from the digital twin. */
 export const FOOTER_DISCLAIMER =
   'Demonstration with simulated data of a representative plant — not plant results. Camera views are digital-twin renders, inspection frames are illustrations of simulated records, financial figures are estimates from the stated assumptions.';
+/** Footer of an event report whose camera evidence includes a frame grabbed from a configured camera stream. */
+export const FOOTER_DISCLAIMER_LIVE_CAMERA =
+  'Demonstration with simulated data of a representative plant — not plant results. Camera evidence includes a frame from a configured camera stream (labelled as a camera frame); other camera views are digital-twin renders, inspection frames are illustrations of simulated records, financial figures are estimates from the stated assumptions.';
+/** Footer of a stage shift summary: it shows no camera image, and no camera feeds its figures. */
+export const STAGE_FOOTER_DISCLAIMER =
+  'Demonstration with simulated data of a representative plant — not plant results. The stage figures come from the simulation, not from cameras or plant systems; financial figures are estimates from the stated assumptions.';
+export const BAND_NOTE = 'Demonstration · no live plant data';
+export const BAND_NOTE_LIVE_CAMERA = 'Demonstration · simulated plant data + camera frame';
+
+/** Whether the evidence includes a frame grabbed from a configured camera stream (not a twin render). */
+export const hasLiveCameraFrame = (evidence: Pick<Evidence, 'kind' | 'provenance'>[]) =>
+  evidence.some((x) => x.kind === 'camera-snapshot' && x.provenance.origin === 'live-camera');
+
+/** Page-footer disclaimer that matches the provenance of the document's camera evidence. */
+export const footerDisclaimer = (evidence: Pick<Evidence, 'kind' | 'provenance'>[]) =>
+  hasLiveCameraFrame(evidence) ? FOOTER_DISCLAIMER_LIVE_CAMERA : FOOTER_DISCLAIMER;
 
 /** The section titles of the event report, in order (in-app and PDF). */
 export const EVENT_SECTION_TITLES = [
@@ -100,9 +120,11 @@ export function missingReason(x: ReportEvidence, hasImage: boolean): string | nu
   if (x.status === 'unavailable') return x.unavailableReason ?? 'Unavailable';
   if (!hasImage) {
     if (x.kind === 'video-ref') return 'No video recording (NVR) is integrated';
-    return x.kind === 'camera-snapshot'
-      ? 'The rendered image is no longer held in this browser session (images are kept in memory only)'
-      : 'The illustrative frame could not be rendered';
+    if (x.kind === 'camera-snapshot')
+      return x.provenance.origin === 'live-camera'
+        ? 'The camera frame is no longer held in this browser session (images are kept in memory only)'
+        : 'The rendered image is no longer held in this browser session (images are kept in memory only)';
+    return 'The illustrative frame could not be rendered';
   }
   return null;
 }
@@ -418,7 +440,9 @@ export function eventPdfModel(r: EventReport, ctx: EventPdfContext = {}): PdfDoc
     generatedAtPlant: r.generatedAtPlant,
     sections,
     fileName: `wAI-event-${fileSafe(ev.id)}.pdf`,
-    disclaimer: FOOTER_DISCLAIMER,
+    // A frame grabbed from a configured stream must not be described as a twin render.
+    disclaimer: footerDisclaimer(r.visualEvidence),
+    bandNote: hasLiveCameraFrame(r.visualEvidence) ? BAND_NOTE_LIVE_CAMERA : BAND_NOTE,
   });
 }
 

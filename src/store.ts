@@ -1,5 +1,6 @@
 import { create } from 'zustand';
-import { Box3, Vector3 } from 'three';
+// Type-only: the shell must not pull three.js into the initial chunks (only the lazy Scene chunk needs it).
+import type { Box3 } from 'three';
 import { HALL, VIEWS, ZONE_BY_ID } from './data/layout';
 import { EQUIPMENT_BY_ID } from './data/equipment';
 import type { PresetId, Vec3 } from './data/types';
@@ -42,6 +43,54 @@ export const equipmentBounds = new Map<string, Box3>();
 
 /** Vertical field of view of the scene camera (degrees). */
 export const CAMERA_FOV = 32;
+
+type XYZ = { x: number; y: number; z: number };
+/** Structural subset of THREE.Box3 that the framing maths needs (a Box3 satisfies it). */
+export type BoundsLike = { min: XYZ; max: XYZ };
+
+/**
+ * Camera pose that frames an asset's bounding box (plain numbers, no three.js at runtime): the bounding
+ * sphere fills ~85 % of the vertical field of view, the current compass direction is kept (buildings are
+ * entered from the south, where the cutaway walls are low) and the asset sits left of centre, clear of
+ * the inspector panel. An empty box behaves like THREE.Box3 (centre and size zero).
+ */
+export function focusPose(box: BoundsLike, cam: { x: number; z: number; tx: number; tz: number }): { pos: Vec3; target: Vec3 } {
+  const { min, max } = box;
+  const empty = max.x < min.x || max.y < min.y || max.z < min.z;
+  const center: XYZ = empty ? { x: 0, y: 0, z: 0 } : { x: (min.x + max.x) / 2, y: (min.y + max.y) / 2, z: (min.z + max.z) / 2 };
+  const diagonal = empty ? 0 : Math.hypot(max.x - min.x, max.y - min.y, max.z - min.z);
+  const radius = Math.max(2.5, diagonal / 2);
+  // Distance at which the bounding sphere fills ~85% of the vertical field of view.
+  const distance = Math.max(11, (radius / Math.sin((CAMERA_FOV * Math.PI) / 360)) * 0.95);
+
+  // Keep the current compass direction so the camera doesn't swing around the plant…
+  let dx = cam.x - cam.tx;
+  let dz = cam.z - cam.tz;
+  if (dx * dx + dz * dz < 1e-6) {
+    dx = 0.45;
+    dz = 0.9;
+  }
+  const normalise = () => {
+    const len = Math.hypot(dx, dz) || 1;
+    dx /= len;
+    dz /= len;
+  };
+  normalise();
+  // …but look into buildings from the south, where the cutaway walls are low.
+  const inside = (r: { x: [number, number]; z: [number, number] }) =>
+    center.x > r.x[0] && center.x < r.x[1] && center.z > r.z[0] && center.z < r.z[1];
+  if (center.x < -76 || inside(HALL.rect)) {
+    if (dz < 0.55) dz = 0.55;
+    normalise();
+  }
+  const elevation = (34 * Math.PI) / 180;
+  // Shift the framing so the asset sits left of centre, clear of the inspector panel.
+  const shift = distance * 0.1;
+  const target: Vec3 = [center.x + dz * shift, center.y * 0.55, center.z - dx * shift];
+  const out = Math.cos(elevation) * distance;
+  const pos: Vec3 = [target[0] + dx * out, Math.max(3, target[1] + Math.sin(elevation) * distance), target[2] + dz * out];
+  return { pos, target };
+}
 
 type CameraRequest = {
   pos: Vec3;
@@ -126,35 +175,8 @@ export const useTwin = create<TwinState>((set, get) => ({
   focusEquipment: (id) => {
     const box = equipmentBounds.get(id);
     if (!box) return;
-    const center = box.getCenter(new Vector3());
-    const radius = Math.max(2.5, box.getSize(new Vector3()).length() / 2);
-    // Distance at which the bounding sphere fills ~85% of the vertical field of view.
-    const distance = Math.max(11, (radius / Math.sin((CAMERA_FOV * Math.PI) / 360)) * 0.95);
-
-    // Keep the current compass direction so the camera doesn't swing around the plant…
-    const dir = new Vector3(minimapCamera.x - minimapCamera.tx, 0, minimapCamera.z - minimapCamera.tz);
-    if (dir.lengthSq() < 1e-6) dir.set(0.45, 0, 0.9);
-    dir.normalize();
-    // …but look into buildings from the south, where the cutaway walls are low.
-    const inside = (r: { x: [number, number]; z: [number, number] }) =>
-      center.x > r.x[0] && center.x < r.x[1] && center.z > r.z[0] && center.z < r.z[1];
-    if (center.x < -76 || inside(HALL.rect)) {
-      if (dir.z < 0.55) dir.z = 0.55;
-      dir.normalize();
-    }
-    const elevation = (34 * Math.PI) / 180;
-    const target = new Vector3(center.x, center.y * 0.55, center.z);
-    // Shift the framing so the asset sits left of centre, clear of the inspector panel.
-    const right = new Vector3(dir.z, 0, -dir.x).multiplyScalar(distance * 0.1);
-    target.add(right);
-    const pos = target
-      .clone()
-      .addScaledVector(dir, Math.cos(elevation) * distance)
-      .add(new Vector3(0, Math.sin(elevation) * distance, 0));
-    pos.y = Math.max(3, pos.y);
-    set((s) => ({
-      camera: { pos: pos.toArray(), target: target.toArray(), nonce: s.camera.nonce + 1 },
-    }));
+    const { pos, target } = focusPose(box, minimapCamera);
+    set((s) => ({ camera: { pos, target, nonce: s.camera.nonce + 1 } }));
   },
   reset: () => {
     set({ selected: null, zone: null, vehicle: null, follow: false });

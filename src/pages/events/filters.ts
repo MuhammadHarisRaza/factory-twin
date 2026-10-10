@@ -27,6 +27,9 @@ export type EventFilters = {
 
 export const DEFAULT_FILTERS: EventFilters = { category: 'all', status: 'all', severity: 'all', condition: 'all', window: '24h', sessionOnly: false, query: '' };
 
+/** 'Show all events' (open report outside the filters): every recorded event, so the report's row is listed. */
+export const ALL_EVENTS_FILTERS: EventFilters = { ...DEFAULT_FILTERS, window: 'all' };
+
 export const WINDOW_OPTIONS: { value: WindowKey; label: string }[] = [
   { value: '4h', label: 'Last 4 h' },
   { value: 'shift', label: 'Shift' },

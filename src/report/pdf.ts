@@ -4,7 +4,7 @@
  * Both read the shared stores at click time and build from the same records the in-app views show:
  * the event PDF renders the SAME EventReport model as <EventReportView/> (src/intel/report.ts
  * buildEventReport, with the live financial assumptions and tariffs). The report is frozen when the
- * button is pressed, then the visual evidence is resolved (twin snapshot from the image store,
+ * button is pressed, then the visual evidence is resolved (camera snapshot from the image store,
  * illustrative inspection frames), and the document is drawn and saved as wAI-event-<id>.pdf.
  * The export is logged on the event record (history + reports).
  */

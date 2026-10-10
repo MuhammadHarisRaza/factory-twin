@@ -1,0 +1,1366 @@
+/* ==========================================================================
+   Factory Twin interface — one grid over the 3D scene.
+
+   Every overlay lives in its own grid region, so panels cannot overlap at any
+   size; the centre region stays empty (pointer-events pass through to the
+   scene). Regions:
+     top     KPI chip strip
+     left    zones & views panel (foldable from the rail)
+     mid     scene · view/layer rail (left edge) · flow legend · hint · site plan
+     right   inspector (top) · live list (bottom), spanning down to the bottom edge
+     bottom  line status / truck visit stepper · shift timeline
+   Tokens only; shared classes from styles.css are reused, the absolute
+   positions of the older twin overlay classes are reset inside the grid.
+   ========================================================================== */
+
+.tw-layout {
+  --tw-gap: 10px;
+  --tw-left-w: 288px;
+  --tw-right-w: 360px;
+  position: absolute;
+  inset: 0;
+  z-index: 15;
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr) var(--tw-right-w);
+  grid-template-rows: auto minmax(0, 1fr) auto;
+  grid-template-areas:
+    'top top top'
+    'left mid right'
+    'bottom bottom right';
+  gap: var(--tw-gap);
+  padding: 12px;
+  pointer-events: none;
+}
+.tw-layout.no-left {
+  grid-template-columns: minmax(0, 1fr) var(--tw-right-w);
+  grid-template-areas:
+    'top top'
+    'mid right'
+    'bottom right';
+}
+.tw-layout > * {
+  min-width: 0;
+  min-height: 0;
+}
+.tw-layout .overlay-panel,
+.tw-layout .tw-kpi,
+.tw-layout .tw-period {
+  pointer-events: auto;
+}
+
+/* ── Regions ─────────────────────────────────────────────────────────────── */
+
+.tw-top {
+  grid-area: top;
+}
+.tw-left {
+  grid-area: left;
+  display: flex;
+}
+.tw-mid {
+  grid-area: mid;
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr);
+  grid-template-rows: auto minmax(0, 1fr) auto;
+  column-gap: var(--tw-gap);
+  row-gap: var(--tw-gap);
+}
+.tw-right {
+  grid-area: right;
+  display: flex;
+  flex-direction: column;
+  gap: var(--tw-gap);
+}
+.tw-bottom {
+  grid-area: bottom;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  width: 100%;
+  max-width: 980px;
+  align-self: end;
+}
+
+/* Older twin overlays, now placed by the grid instead of absolute offsets. */
+.tw-layout .zones {
+  position: relative;
+  inset: auto;
+  z-index: auto;
+  width: var(--tw-left-w);
+  height: 100%;
+}
+.tw-layout .inspector {
+  position: relative;
+  inset: auto;
+  z-index: auto;
+  width: 100%;
+  max-height: none;
+  flex: 0 1 auto;
+  min-height: min(200px, 45%);
+  overflow: hidden;
+}
+.tw-layout .flow-legend {
+  position: relative;
+  inset: auto;
+  z-index: auto;
+  grid-column: 2;
+  grid-row: 1;
+  justify-self: start;
+  align-self: start;
+  width: min(250px, 100%);
+}
+.tw-layout .hint {
+  position: relative;
+  inset: auto;
+  z-index: auto;
+  transform: none;
+  grid-column: 2;
+  grid-row: 2;
+  align-self: end;
+  justify-self: center;
+  white-space: normal;
+  max-width: 100%;
+}
+.tw-layout .minimap {
+  position: relative;
+  inset: auto;
+  z-index: auto;
+  grid-column: 2;
+  grid-row: 3;
+  justify-self: end;
+  align-self: end;
+  width: min(286px, 100%);
+}
+.tw-layout .minimap svg {
+  width: 100%;
+  height: auto;
+}
+.tw-layout .mm-h {
+  gap: 8px;
+  white-space: nowrap;
+  overflow: hidden;
+}
+.tw-layout .mm-h .muted {
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+/* ── Tooltip (portal) ────────────────────────────────────────────────────── */
+
+.tw-tip {
+  position: fixed;
+  z-index: 55;
+  max-width: 320px;
+  padding: 8px 10px;
+  background: var(--bg-3);
+  border: 1px solid var(--line-3);
+  border-radius: var(--r-2);
+  box-shadow: var(--shadow-2);
+  font-size: var(--fs-12);
+  line-height: 1.45;
+  color: var(--text-1);
+  pointer-events: none;
+}
+.tw-tip b {
+  display: block;
+  font-weight: var(--fw-semibold);
+  margin-bottom: 3px;
+}
+.tw-tip-row {
+  color: var(--text-2);
+  font-variant-numeric: tabular-nums;
+}
+.tw-tip-row + .tw-tip-row {
+  margin-top: 2px;
+}
+.tw-tip-note {
+  margin-top: 4px;
+  font-size: var(--fs-11);
+  color: var(--text-3);
+}
+.tw-tip-foot {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 6px;
+  margin-top: 6px;
+  padding-top: 5px;
+  border-top: 1px solid var(--line-2);
+  font-size: var(--fs-11);
+  color: var(--text-3);
+}
+
+/* ── KPI chip strip ──────────────────────────────────────────────────────── */
+
+.tw-kpis {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: stretch;
+  gap: 6px;
+}
+.tw-period,
+.tw-kpi {
+  height: 40px;
+  border: 1px solid var(--line-2);
+  border-radius: var(--r-3);
+  background: #12171cf2;
+  box-shadow: var(--shadow-1);
+}
+.tw-period {
+  display: flex;
+  align-items: center;
+  gap: 2px;
+  padding: 0 4px;
+}
+.tw-period button {
+  height: 30px;
+  padding: 0 9px;
+  border: 0;
+  border-radius: var(--r-2);
+  background: none;
+  color: var(--text-2);
+  font-size: var(--fs-12);
+  white-space: nowrap;
+}
+.tw-period button:hover {
+  color: var(--text-1);
+  background: var(--bg-3);
+}
+.tw-period button.on {
+  background: var(--bg-4);
+  color: var(--text-1);
+}
+.tw-kpi {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 0 12px 0 10px;
+  color: var(--text-1);
+  text-align: left;
+  transition:
+    background var(--t-fast),
+    border-color var(--t-fast);
+}
+.tw-kpi:hover {
+  background: #1a2026f5;
+  border-color: var(--line-3);
+}
+.tw-kpi-i {
+  display: inline-flex;
+  color: var(--text-3);
+}
+.tw-kpi-t {
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+}
+.tw-kpi .l {
+  font-size: 10.5px;
+  line-height: 1.25;
+  color: var(--text-3);
+  white-space: nowrap;
+}
+.tw-kpi .l .sh {
+  display: none;
+}
+.tw-kpi .v {
+  font-size: var(--fs-13);
+  line-height: 1.3;
+  font-weight: var(--fw-semibold);
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+}
+.tw-kpi .v small {
+  font-size: 11.5px;
+  font-weight: var(--fw-regular);
+  color: var(--text-2);
+}
+
+/* ── Rail (views & layers) ───────────────────────────────────────────────── */
+
+.tw-rail {
+  grid-column: 1;
+  grid-row: 1 / -1;
+  align-self: start;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  padding: 4px;
+  min-height: 0;
+  max-height: 100%;
+  overflow-x: hidden;
+  overflow-y: auto;
+  scrollbar-width: none;
+}
+.tw-rail-g {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  margin-top: 3px;
+  padding-top: 4px;
+  border-top: 1px solid var(--line-2);
+}
+.tw-tool {
+  display: grid;
+  place-items: center;
+  flex: none;
+  width: 34px;
+  height: 32px;
+  border: 0;
+  border-radius: var(--r-2);
+  background: none;
+  color: var(--text-3);
+}
+.tw-tool:hover {
+  background: var(--bg-3);
+  color: var(--text-1);
+}
+.tw-tool.on {
+  color: var(--text-1);
+}
+.tw-tool.on svg {
+  color: var(--accent-strong);
+}
+.tw-tool.off {
+  color: var(--text-4);
+}
+.tw-views-pop {
+  position: fixed;
+  z-index: 45;
+  width: 228px;
+  padding: 4px 6px 6px;
+  display: flex;
+  flex-direction: column;
+}
+.tw-pop-h {
+  padding: 7px 6px 4px;
+  font-size: 10.5px;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  color: var(--text-3);
+}
+.tw-views-pop button {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  height: 28px;
+  padding: 0 6px;
+  border: 0;
+  border-radius: var(--r-1);
+  background: none;
+  color: var(--text-2);
+  font-size: var(--fs-12);
+  text-align: left;
+  white-space: nowrap;
+}
+.tw-views-pop button:hover,
+.tw-views-pop button:focus-visible {
+  background: var(--bg-3);
+  color: var(--text-1);
+}
+.tw-views-pop button svg,
+.views .tw-quick svg {
+  color: var(--accent-strong);
+  flex: none;
+}
+
+/* ── Line status strip ───────────────────────────────────────────────────── */
+
+.tw-line {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 1px 6px 3px 9px;
+  min-width: 0;
+}
+.tw-strip-t {
+  flex: none;
+  font-size: 10.5px;
+  letter-spacing: 0.05em;
+  text-transform: uppercase;
+  color: var(--text-3);
+}
+.tw-line-chips {
+  display: flex;
+  align-items: center;
+  flex: 1;
+  min-width: 0;
+  padding: 6px 4px 3px;
+  overflow-x: auto;
+  scrollbar-width: thin;
+}
+.tw-conn {
+  flex: 1 1 6px;
+  min-width: 3px;
+  max-width: 26px;
+  height: 1px;
+  background: var(--line-3);
+}
+.tw-stage {
+  position: relative;
+  flex: none;
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  height: 26px;
+  padding: 0 7px;
+  border: 1px solid var(--line-2);
+  border-radius: var(--r-2);
+  background: var(--bg-2);
+  color: var(--text-1);
+  font-size: 11px;
+  white-space: nowrap;
+}
+.tw-stage > svg:first-child {
+  color: var(--c);
+  flex: none;
+}
+.tw-stage::after {
+  content: '';
+  position: absolute;
+  left: 5px;
+  right: 5px;
+  bottom: -1px;
+  height: 2px;
+  border-radius: 1px;
+  background: var(--c);
+}
+.tw-stage.store {
+  color: var(--text-2);
+}
+.tw-stage.store::after {
+  display: none;
+}
+.tw-stage:hover {
+  background: var(--bg-3);
+  border-color: var(--line-3);
+}
+.tw-stage.on {
+  background: var(--accent-soft);
+  border-color: var(--accent-line);
+}
+.tw-stage.bn {
+  outline: 1px dashed var(--accent);
+  outline-offset: 2px;
+}
+.tw-bn-i {
+  position: absolute;
+  top: -6px;
+  right: -6px;
+  padding: 1px;
+  box-sizing: content-box;
+  border-radius: 50%;
+  background: var(--bg-1);
+  color: var(--accent-strong);
+}
+.tw-bn-note {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  color: var(--accent-strong);
+}
+
+/* ── Truck visit stepper ─────────────────────────────────────────────────── */
+
+.tw-visit {
+  padding: 5px 8px 7px 10px;
+  min-width: 0;
+}
+.tw-visit-h {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+  font-size: var(--fs-12);
+  white-space: nowrap;
+}
+.tw-visit-h > svg {
+  color: var(--text-3);
+  flex: none;
+}
+.tw-visit-h .muted {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.tw-steps {
+  display: flex;
+  align-items: center;
+  margin: 5px 0 0;
+  padding: 0;
+  list-style: none;
+  min-width: 0;
+}
+.tw-steps li {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  flex: 1 1 auto;
+  min-width: 0;
+}
+.tw-steps li:last-child {
+  flex: 0 1 auto;
+}
+.tw-step-x {
+  display: flex;
+  flex-direction: column;
+  flex: 0 1 auto;
+  min-width: 0;
+}
+/* Connector to the next milestone, filling the remaining width. */
+.tw-step-c {
+  flex: 1 1 8px;
+  min-width: 8px;
+  height: 2px;
+  margin: 0 4px 0 2px;
+  border-radius: 1px;
+  background: var(--line-3);
+}
+.tw-steps li.done .tw-step-c {
+  background: var(--accent);
+}
+.tw-step-dot {
+  flex: none;
+  display: grid;
+  place-items: center;
+  width: 18px;
+  height: 18px;
+  border-radius: 50%;
+  border: 1px solid var(--line-3);
+  background: var(--bg-1);
+  font: var(--fw-medium) 10px var(--mono);
+  color: var(--text-3);
+}
+.tw-steps li.done .tw-step-dot {
+  background: var(--accent);
+  border-color: var(--accent);
+  color: #0b1418;
+}
+.tw-steps li.cur .tw-step-dot {
+  border-color: var(--accent);
+  color: var(--accent-strong);
+  box-shadow: 0 0 0 3px var(--accent-soft);
+}
+.tw-step-l {
+  font-size: 11.5px;
+  line-height: 1.25;
+  color: var(--text-3);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.tw-steps li.done .tw-step-l,
+.tw-steps li.cur .tw-step-l {
+  color: var(--text-1);
+}
+.tw-step-t {
+  font-size: var(--fs-11);
+  line-height: 1.25;
+  color: var(--text-3);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.tw-steps li.done .tw-step-t {
+  color: var(--text-2);
+}
+.tw-steps li.cur .tw-step-t {
+  color: var(--accent-strong);
+}
+
+/* ── Shift timeline ──────────────────────────────────────────────────────── */
+
+.tw-tl {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 4px 12px 4px 4px;
+  min-width: 0;
+}
+.tw-tl-ctl {
+  display: flex;
+  align-items: center;
+  gap: 2px;
+  flex: none;
+}
+.tw-tl .select.tw-speed {
+  height: 26px;
+  border-color: transparent;
+  background-color: transparent;
+  padding: 0 22px 0 6px;
+  background-position:
+    calc(100% - 12px) 11px,
+    calc(100% - 8px) 11px;
+}
+.tw-tl .select.tw-speed:hover {
+  background-color: var(--bg-3);
+}
+.tw-tl-clock {
+  display: flex;
+  flex-direction: column;
+  padding: 0 6px 0 8px;
+  margin-left: 2px;
+  border-left: 1px solid var(--line-2);
+  line-height: 1.15;
+}
+.tw-tl-clock b {
+  font: var(--fw-medium) var(--fs-13) var(--mono);
+}
+.tw-tl-clock small {
+  font-size: 10.5px;
+  color: var(--text-3);
+  white-space: nowrap;
+}
+.tw-tl-main {
+  flex: 1;
+  min-width: 140px;
+  container-type: inline-size;
+}
+.tw-tl-track {
+  position: relative;
+  height: 27px;
+  border: 1px solid var(--line);
+  border-radius: var(--r-1);
+  background: var(--bg-1);
+}
+.tw-tl-past {
+  position: absolute;
+  left: 0;
+  top: 0;
+  bottom: 0;
+  border-radius: var(--r-1) 0 0 var(--r-1);
+  background: var(--bg-3);
+}
+.tw-tl-tick {
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  width: 1px;
+  background: var(--line-2);
+}
+.tw-tl-lane {
+  position: absolute;
+  left: 0;
+  right: 0;
+  height: 6px;
+}
+.tw-tl-lane.l1 {
+  top: 3px;
+}
+.tw-tl-lane.l2 {
+  top: 10px;
+}
+.tw-tl-lane.l3 {
+  top: 17px;
+}
+.tw-mk {
+  position: absolute;
+  top: 0;
+  height: 6px;
+  padding: 0;
+  border: 0;
+  border-radius: 2px;
+  background: var(--neutral);
+}
+/* Larger hit area than the drawn mark. */
+.tw-mk::before {
+  content: '';
+  position: absolute;
+  inset: -3px -2px;
+}
+.tw-mk.critical {
+  background: var(--critical);
+}
+.tw-mk.serious,
+.tw-mk.warning {
+  background: var(--warning);
+}
+.tw-mk.neutral {
+  background: var(--neutral);
+}
+.tw-mk.accent {
+  background: var(--accent);
+}
+.tw-mk.alert {
+  width: 6px;
+  height: 6px;
+  border-radius: 1px;
+  transform: translateX(-50%) rotate(45deg);
+}
+.tw-mk.open {
+  box-shadow: inset -2px 0 0 #ffffffb3;
+}
+.tw-mk:hover,
+.tw-mk:focus-visible {
+  z-index: 2;
+  box-shadow: 0 0 0 1.5px var(--text-1);
+}
+.tw-mk[aria-disabled='true'] {
+  cursor: default;
+}
+.tw-tl-now {
+  position: absolute;
+  top: -3px;
+  bottom: -3px;
+  width: 2px;
+  margin-left: -1px;
+  border-radius: 1px;
+  background: var(--accent-strong);
+  pointer-events: none;
+}
+.tw-tl-axis {
+  position: relative;
+  height: 13px;
+  font: 10px var(--mono);
+  color: var(--text-3);
+}
+.tw-tl-axis span {
+  position: absolute;
+  top: 1px;
+  transform: translateX(-50%);
+  white-space: nowrap;
+}
+.tw-tl-axis span.first {
+  transform: none;
+}
+.tw-tl-axis span.last {
+  transform: translateX(-100%);
+}
+@container (max-width: 420px) {
+  .tw-tl-axis span.odd {
+    display: none;
+  }
+}
+
+/* ── Live list ───────────────────────────────────────────────────────────── */
+
+.tw-live {
+  flex: none;
+  margin-top: auto;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+}
+.tw-live-h {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  padding: 4px 4px 4px 5px;
+}
+.tw-tabs {
+  display: flex;
+  gap: 2px;
+  flex: 1;
+  min-width: 0;
+}
+.tw-tabs button {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  height: 26px;
+  padding: 0 8px;
+  border: 0;
+  border-radius: var(--r-1);
+  background: none;
+  color: var(--text-2);
+  font-size: var(--fs-12);
+  white-space: nowrap;
+}
+.tw-tabs button:hover {
+  color: var(--text-1);
+  background: var(--bg-3);
+}
+.tw-tabs button.on {
+  background: var(--bg-4);
+  color: var(--text-1);
+}
+.tw-tabs button > svg {
+  color: var(--text-3);
+}
+.tw-count {
+  display: inline-grid;
+  place-items: center;
+  min-width: 17px;
+  height: 16px;
+  padding: 0 4px;
+  border-radius: 8px;
+  border: 1px solid var(--line-2);
+  background: var(--bg-1);
+  font-size: 10px;
+  color: var(--text-2);
+}
+.tw-live-b {
+  max-height: min(252px, 32vh);
+  overflow: auto;
+  padding: 3px 4px 4px;
+  border-top: 1px solid var(--line);
+}
+.tw-row {
+  display: flex;
+  align-items: center;
+  gap: 9px;
+  width: 100%;
+  min-height: 38px;
+  padding: 4px 6px;
+  border: 0;
+  border-radius: var(--r-1);
+  background: none;
+  color: var(--text-1);
+  text-align: left;
+}
+.tw-row:hover {
+  background: var(--bg-3);
+}
+.tw-row.on {
+  background: var(--accent-soft);
+}
+.tw-row:disabled {
+  cursor: default;
+  opacity: 1;
+}
+.tw-row:disabled:hover {
+  background: none;
+}
+.tw-row-i {
+  flex: none;
+  color: var(--text-3);
+}
+.tw-row-m {
+  flex: 1;
+  min-width: 0;
+}
+.tw-row-m b,
+.tw-row-m small {
+  display: block;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.tw-row-m b {
+  font-size: var(--fs-12);
+  font-weight: var(--fw-medium);
+}
+.tw-row-m small {
+  font-size: var(--fs-11);
+  color: var(--text-3);
+}
+.tw-row-t {
+  flex: none;
+  font: var(--fs-11) var(--mono);
+  color: var(--text-3);
+}
+.tw-pill {
+  display: inline-flex;
+  align-items: center;
+  flex: 0 1 auto;
+  max-width: 150px;
+  height: 22px;
+  padding: 0 8px;
+  border: 1px solid var(--line-2);
+  border-radius: 11px;
+  background: var(--bg-1);
+  overflow: hidden;
+}
+.tw-pill .status {
+  font-size: var(--fs-11);
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.tw-live-empty {
+  padding: 14px 8px;
+  font-size: var(--fs-12);
+  color: var(--text-3);
+}
+
+/* ── Inspector with tabs ─────────────────────────────────────────────────── */
+
+.tw-insp {
+  container-type: inline-size;
+}
+.tw-insp .insp-h {
+  flex: none;
+}
+.tw-insp-status {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 8px 12px;
+  margin-top: 7px;
+}
+.tw-insp-tabs {
+  flex: none;
+  padding: 0 10px 6px;
+  border-bottom: 1px solid var(--line);
+}
+.tw-insp-b {
+  flex: 1 1 auto;
+  min-height: 0;
+  overflow: auto;
+}
+.tw-insp-b > .insp-sec:first-child {
+  border-top: 0;
+}
+.tw-insp .insp-f {
+  flex: none;
+}
+@container (max-width: 340px) {
+  .tw-insp-tabs button {
+    padding: 0 6px;
+    font-size: 11.5px;
+  }
+}
+.tw-link {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  padding: 0;
+  border: 0;
+  background: none;
+  color: inherit;
+  font: inherit;
+  text-align: left;
+}
+.tw-link:hover {
+  color: var(--accent-strong);
+}
+.tw-health-top {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 8px 14px;
+}
+.tw-score {
+  display: flex;
+  align-items: baseline;
+  gap: 2px;
+}
+.tw-score b {
+  font-size: var(--fs-26);
+  font-weight: var(--fw-semibold);
+  line-height: 1;
+}
+.tw-score span {
+  color: var(--text-3);
+  font-size: var(--fs-12);
+}
+.tw-read {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto auto auto auto;
+  align-items: center;
+  gap: 5px 10px;
+  font-size: var(--fs-12);
+}
+.tw-read .h {
+  font-size: 10.5px;
+  color: var(--text-3);
+}
+.tw-read .n {
+  text-align: right;
+}
+.tw-fine {
+  margin: 7px 0 0;
+  font-size: var(--fs-11);
+  line-height: 1.45;
+  color: var(--text-3);
+}
+.tw-list {
+  margin: 0;
+  padding-left: 16px;
+  font-size: var(--fs-12);
+  line-height: 1.5;
+  color: var(--text-2);
+}
+.tw-list li + li {
+  margin-top: 3px;
+}
+.tw-action {
+  margin-top: 8px;
+  padding: 7px 10px;
+  border-left: 2px solid var(--accent);
+  border-radius: 0 var(--r-1) var(--r-1) 0;
+  background: var(--bg-2);
+}
+.tw-action b {
+  font-size: var(--fs-11);
+  font-weight: var(--fw-medium);
+  color: var(--accent-strong);
+}
+.tw-action p {
+  margin: 2px 0 0;
+  font-size: var(--fs-12);
+  line-height: 1.5;
+}
+.tw-honest {
+  margin: 0;
+  padding: 8px 14px 10px;
+  border-top: 1px solid var(--line);
+  font-size: var(--fs-11);
+  line-height: 1.45;
+  color: var(--text-3);
+}
+.tw-ev {
+  display: grid;
+  grid-template-columns: auto auto minmax(0, 1fr) auto;
+  align-items: start;
+  column-gap: 8px;
+}
+.tw-ev-r {
+  display: contents;
+}
+.tw-ev-r > * {
+  padding: 5px 0;
+  border-bottom: 1px solid var(--line);
+}
+.tw-ev-r .t {
+  font: var(--fs-11) var(--mono);
+  color: var(--text-3);
+  white-space: nowrap;
+  padding-top: 6px;
+}
+.tw-ev-r .status {
+  padding-top: 6px;
+}
+.tw-ev-r .m b {
+  display: block;
+  font-size: var(--fs-12);
+  font-weight: var(--fw-medium);
+}
+.tw-ev-r .m small {
+  display: block;
+  font-size: var(--fs-11);
+  color: var(--text-3);
+}
+.tw-ev-r .tag {
+  margin-top: 5px;
+  padding-bottom: 0;
+  border-bottom-color: var(--line-2);
+}
+.tw-recs {
+  display: flex;
+  flex-direction: column;
+}
+.tw-rec {
+  padding: 9px 0 11px;
+  border-bottom: 1px solid var(--line);
+}
+.tw-rec:first-child {
+  padding-top: 2px;
+}
+.tw-rec header {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 4px;
+}
+.tw-rec header b {
+  font-size: 12.5px;
+  font-weight: var(--fw-semibold);
+  line-height: 1.35;
+}
+.tw-rec > p {
+  margin: 5px 0;
+  font-size: var(--fs-12);
+  line-height: 1.5;
+  color: var(--text-2);
+}
+.tw-rec .tw-rec-impact {
+  color: var(--text-1);
+}
+.tw-rec-links {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  margin-top: 8px;
+}
+
+/* ── Header search & actions ─────────────────────────────────────────────── */
+
+.tw-actions {
+  display: flex;
+  align-items: center;
+  gap: 2px;
+  flex: none;
+}
+.tw-search {
+  position: relative;
+  display: flex;
+  align-items: center;
+  margin-right: 6px;
+}
+.tw-search .input {
+  width: 240px;
+  padding: 0 28px 0 30px;
+}
+.tw-search .input::-webkit-search-cancel-button {
+  display: none;
+}
+.tw-search .input::placeholder {
+  color: var(--text-3);
+}
+.tw-search-i {
+  position: absolute;
+  left: 10px;
+  z-index: 1;
+  color: var(--text-3);
+  pointer-events: none;
+}
+.tw-search-k {
+  position: absolute;
+  right: 8px;
+  pointer-events: none;
+}
+.tw-search-x {
+  position: absolute;
+  right: 4px;
+  z-index: 2;
+  display: grid;
+  place-items: center;
+  width: 22px;
+  height: 22px;
+  border: 0;
+  border-radius: var(--r-1);
+  background: none;
+  color: var(--text-3);
+}
+.tw-search-x:hover {
+  color: var(--text-1);
+  background: var(--bg-3);
+}
+.tw-search-pop {
+  position: absolute;
+  top: calc(100% + 6px);
+  left: 0;
+  z-index: 50;
+  width: max(100%, 400px);
+  max-height: min(460px, 70vh);
+  overflow: auto;
+  padding: 4px;
+}
+.tw-res {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 6px 8px;
+  border-radius: var(--r-1);
+  cursor: pointer;
+}
+.tw-res.on {
+  background: var(--bg-3);
+}
+.tw-res-i {
+  display: grid;
+  place-items: center;
+  flex: none;
+  width: 18px;
+  height: 18px;
+  border-radius: var(--r-1);
+  background: var(--bg-4);
+  color: var(--text-2);
+}
+.tw-res-m {
+  flex: 1;
+  min-width: 0;
+}
+.tw-res-m b,
+.tw-res-m small {
+  display: block;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.tw-res-m b {
+  font-size: var(--fs-12);
+  font-weight: var(--fw-medium);
+}
+.tw-res-m small {
+  font-size: var(--fs-11);
+  color: var(--text-3);
+}
+.tw-res-k {
+  flex: none;
+  padding: 0 5px;
+  border: 1px solid var(--line-2);
+  border-radius: var(--r-1);
+  font-size: 10.5px;
+  color: var(--text-3);
+}
+.tw-res-empty {
+  padding: 10px 8px;
+  font-size: var(--fs-12);
+  color: var(--text-2);
+}
+.tw-res-foot {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  margin-top: 4px;
+  padding: 6px 8px 3px;
+  border-top: 1px solid var(--line);
+  font-size: var(--fs-11);
+  color: var(--text-3);
+}
+
+/* ── Responsive ──────────────────────────────────────────────────────────── */
+
+/* Header: icon-only twin actions first, then a search field that expands over the title on focus. */
+@media (max-width: 1600px) {
+  .tw-actions .btn-label {
+    display: none;
+  }
+  .tw-actions .btn.ghost {
+    width: 30px;
+    padding: 0;
+  }
+  .tw-search .input {
+    width: 210px;
+  }
+}
+@media (max-width: 1440px) {
+  .tw-search {
+    width: 30px;
+    height: 30px;
+  }
+  .tw-search .input {
+    position: absolute;
+    top: 0;
+    right: 0;
+    width: 30px;
+    padding: 0 0 0 28px;
+    color: transparent;
+    cursor: pointer;
+    transition: width var(--t-base) var(--ease);
+  }
+  .tw-search .input::placeholder {
+    color: transparent;
+  }
+  .tw-search:focus-within .input {
+    z-index: 51;
+    width: 300px;
+    padding-right: 28px;
+    color: var(--text-1);
+    cursor: text;
+    box-shadow: var(--shadow-2);
+  }
+  .tw-search:focus-within .input::placeholder {
+    color: var(--text-3);
+  }
+  .tw-search-i {
+    left: 8px;
+    z-index: 52;
+  }
+  /* The field grows leftwards from the icon button; keep the icon at its left edge. */
+  .tw-search:focus-within .tw-search-i {
+    left: calc(30px - 300px + 9px);
+  }
+  .tw-search:focus-within .tw-search-x {
+    z-index: 52;
+  }
+  .tw-search:not(:focus-within) .tw-search-x,
+  .tw-search .tw-search-k {
+    display: none;
+  }
+  .tw-search-pop {
+    left: auto;
+    right: 0;
+  }
+}
+
+/* Laptop / projector widths: narrower side panels so the line strip fits beside the right column. */
+@media (max-width: 1339px) {
+  .tw-layout {
+    --tw-left-w: 260px;
+    --tw-right-w: 320px;
+  }
+  .tw-line .tw-strip-t {
+    display: none;
+  }
+}
+@media (max-width: 1280px) {
+  .tw-kpi .v small {
+    display: none;
+  }
+  .tw-kpi {
+    padding: 0 10px 0 8px;
+    gap: 7px;
+  }
+}
+/* Narrow windows: the bottom strips take the full width (the right column stops above them). */
+@media (max-width: 1180px) {
+  .tw-layout {
+    grid-template-areas:
+      'top top top'
+      'left mid right'
+      'bottom bottom bottom';
+  }
+  .tw-layout.no-left {
+    grid-template-areas:
+      'top top'
+      'mid right'
+      'bottom bottom';
+  }
+  .tw-kpi .l .lg {
+    display: none;
+  }
+  .tw-kpi .l .sh {
+    display: inline;
+  }
+}
+@media (max-width: 1100px) {
+  .tw-layout {
+    --tw-right-w: 300px;
+    padding: 10px;
+    --tw-gap: 8px;
+  }
+  .tw-period button {
+    padding: 0 7px;
+  }
+}
+
+/* Short screens: smaller rail buttons and site plan, so the rail fits beside the bottom strips. */
+@media (max-height: 820px) {
+  .tw-tool {
+    height: 29px;
+  }
+  .tw-layout .minimap {
+    width: min(236px, 100%);
+  }
+}
+@media (max-height: 680px) {
+  .tw-tool {
+    height: 26px;
+  }
+  .tw-layout .hint {
+    display: none;
+  }
+}
+
+/* Phones / very narrow windows: stack the regions; the scene keeps the middle. */
+@media (max-width: 760px) {
+  .tw-layout,
+  .tw-layout.no-left {
+    grid-template-columns: minmax(0, 1fr);
+    grid-template-rows: auto minmax(0, 1fr) auto auto;
+    grid-template-areas:
+      'top'
+      'mid'
+      'right'
+      'bottom';
+  }
+  .tw-left,
+  .tw-layout .minimap,
+  .tw-layout .flow-legend {
+    display: none;
+  }
+  .tw-right {
+    max-height: 42vh;
+  }
+  .tw-kpis {
+    flex-wrap: nowrap;
+    overflow-x: auto;
+    pointer-events: auto;
+  }
+  .tw-tl-ctl .tw-tl-clock {
+    display: none;
+  }
+}

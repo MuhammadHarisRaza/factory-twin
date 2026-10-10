@@ -1,4 +1,5 @@
-import { Crosshair, ExternalLink, LocateFixed, Scan, X } from 'lucide-react';
+import type { ReactNode } from 'react';
+import { CalendarClock, Crosshair, ExternalLink, HeartPulse, Lightbulb, LocateFixed, LogOut, MessageSquareText, Scan, X } from 'lucide-react';
 import { useTwin } from '../store';
 import { ZONE_BY_ID } from '../data/layout';
 import { EQUIPMENT, EQUIPMENT_BY_ID } from '../data/equipment';
@@ -7,9 +8,15 @@ import { useApp, type WorkspaceId } from '../app/store';
 import { useSimValue } from '../sim/store';
 import { eventDuration, machineMetrics, qualityIn, resolvePeriod, visitDurations } from '../sim/metrics';
 import { phaseLabel, type TruckRuntime } from '../sim/logistics';
+import { HEALTH_BY_ID, assess } from '../sim/health';
+import { recommendationsFor } from '../intel/insights';
 import { formatClock, formatDuration } from '../sim/time';
-import { MachineStatus, MetricText, SourceTag } from './kit/Status';
+import { MachineStatus, MetricText, SourceTag, StatusBadge } from './kit/Status';
 import { fmtInt, fmtM2, fmtPct } from './kit/format';
+import { EventsTab, HEALTH_LEVEL, HealthBadge, HealthTab, RecsTab } from './twin/MachineTabs';
+import { useTwinUi, type InspectorTab } from './twin/uiStore';
+import { vehicleActivity } from './twin/derive';
+import { phaseIcon } from './twin/LiveList';
 
 /** Clickable list of related equipment (upstream / downstream). */
 function Connections({ ids, label }: { ids: string[]; label: string }) {
@@ -51,8 +58,7 @@ function MachineLive({ id }: { id: string }) {
       const m = s.machines[id];
       const p = resolvePeriod('shift', s.minute);
       const mm = machineMetrics(s, id, p);
-      const events = s.downtime.filter((d) => d.equipmentId === id && d.category !== 'Starved' && d.category !== 'Blocked').slice(-5).reverse();
-      return { m, mm, events, now: s.minute, active: m.activeDowntimeId ? s.downtime.find((d) => d.id === m.activeDowntimeId) : null };
+      return { m, mm, now: s.minute, active: m.activeDowntimeId ? s.downtime.find((d) => d.id === m.activeDowntimeId) : null };
     },
     [id],
   );
@@ -102,20 +108,6 @@ function MachineLive({ id }: { id: string }) {
           </div>
         </div>
       </div>
-      {data.events.length > 0 && (
-        <div className="insp-sec">
-          <h3>Recent stoppages</h3>
-          <div className="mini-events">
-            {data.events.map((d) => (
-              <button key={d.id} onClick={() => useApp.getState().go('production')} title="Open Production & OEE">
-                <span className="t">{formatClock(d.start)}</span>
-                <span className="d">{REASON_BY_CODE[d.reasonCode].label}</span>
-                <span className="muted num">{d.end == null ? 'Active' : formatDuration(eventDuration(d, data.now))}</span>
-              </button>
-            ))}
-          </div>
-        </div>
-      )}
     </>
   );
 }
@@ -160,6 +152,8 @@ function StationLive({ id }: { id: string }) {
   );
 }
 
+const LOGISTICS_IDS = ['A-GATE', 'A-HOLD', 'K-DOCK', 'K-STG', 'K-RACK', 'K-FLT', 'B-RCV'];
+
 function LogisticsLive({ id }: { id: string }) {
   const data = useSimValue(
     (s) => {
@@ -172,12 +166,20 @@ function LogisticsLive({ id }: { id: string }) {
   if (id === 'K-DOCK')
     return (
       <div className="insp-sec">
-        <h3>Docks · simulated</h3>
+        <h3>Docks · simulated · click a truck to follow it</h3>
         <dl className="dl">
           {data.dockRows.map(({ d, v }) => (
             <span key={d.id} style={{ display: 'contents' }}>
               <dt>{d.name}</dt>
-              <dd>{v ? `${v.label} · ${v.phase ? phaseLabel[v.phase] : ''}` : 'Free'}</dd>
+              <dd>
+                {v ? (
+                  <button className="tw-link" onClick={() => useTwin.getState().selectVehicle(v.id, true)}>
+                    {v.label} · {v.phase ? phaseLabel[v.phase] : ''}
+                  </button>
+                ) : (
+                  'Free'
+                )}
+              </dd>
             </span>
           ))}
         </dl>
@@ -214,86 +216,92 @@ function VehicleInspector({ id }: { id: string }) {
       const leg = [...v.legs].reverse().find((l) => l.start <= now) ?? v.legs[0];
       const zone = GEOFENCES.find((g) => g.id === leg?.zone);
       const dur = v.class === 'external' ? visitDurations(v as TruckRuntime, now) : null;
-      return { v, leg, zone, dur, now, gone: v.despawned != null && v.despawned <= now };
+      return { v, leg, zone, dur, now, act: vehicleActivity(v, now), gone: v.despawned != null && v.despawned <= now };
     },
     [id],
   );
   if (!data) return null;
   const { v, leg, zone, dur } = data;
   return (
-    <aside className="inspector overlay-panel">
+    <aside className="inspector overlay-panel tw-insp" aria-label={`Vehicle ${v.label}`}>
       <div className="insp-h">
         <div>
           <div className="insp-zone">{v.class === 'external' ? 'External vehicle' : 'Internal vehicle'} · simulated</div>
           <h2>{v.label}</h2>
+          <div className="tw-insp-status">
+            <StatusBadge tone={data.gone ? 'neutral' : data.act.tone} icon={data.gone ? LogOut : phaseIcon(data.act.label, data.act.tone)} label={data.gone ? 'Left site' : data.act.label} />
+            <span className="tag sim">Simulated</span>
+          </div>
         </div>
         <button className="btn ghost sm icon" onClick={() => selectVehicle(null)} title="Deselect (Esc)">
           <X size={16} />
         </button>
       </div>
-      <div className="insp-sec">
-        <dl className="dl">
-          <dt>Type</dt>
-          <dd>{v.type.replace('-', ' ')}</dd>
-          <dt>Operator</dt>
-          <dd>{v.operator}</dd>
-          {v.phase && (
-            <>
-              <dt>Phase</dt>
-              <dd>{phaseLabel[v.phase]}</dd>
-            </>
-          )}
-          <dt>Activity</dt>
-          <dd>{data.gone ? 'Left site' : leg?.activity ?? '—'}</dd>
-          <dt>Zone</dt>
-          <dd>{zone?.name ?? '—'}</dd>
-          {v.visit && (
-            <>
-              <dt>Gate in</dt>
-              <dd>{formatClock(v.visit.gateIn)}</dd>
-              <dt>Dock</dt>
-              <dd>{v.visit.dockId ? DOCKS.find((d) => d.id === v.visit!.dockId)!.name : v.visit.direction === 'inbound' ? 'Raw-material shed' : '—'}</dd>
-              <dt>Load</dt>
-              <dd>{v.visit.direction === 'outbound' ? `${v.visit.load} pallets` : `${v.visit.load} t ${v.visit.material ?? ''}`}</dd>
-            </>
-          )}
-          {v.task && (
-            <>
-              <dt>Task</dt>
-              <dd>{v.task}</dd>
-            </>
-          )}
-        </dl>
-      </div>
-      {dur && (
+      <div className="tw-insp-b">
         <div className="insp-sec">
-          <h3>Durations</h3>
-          <div className="insp-kpis">
-            <div>
-              <span>Waiting</span>
-              <b>{dur.waiting == null ? '—' : Math.round(dur.waiting)}</b>
-              <span>min</span>
-            </div>
-            <div>
-              <span>Gate→dock</span>
-              <b>{dur.gateToDock == null ? '—' : Math.round(dur.gateToDock)}</b>
-              <span>min</span>
-            </div>
-            <div>
-              <span>At dock</span>
-              <b>{dur.dockTime == null ? '—' : Math.round(dur.dockTime)}</b>
-              <span>min</span>
-            </div>
-            <div>
-              <span>Turnaround</span>
-              <b>{dur.turnaround == null ? '—' : Math.round(dur.turnaround)}</b>
-              <span>min</span>
+          <dl className="dl">
+            <dt>Type</dt>
+            <dd>{v.type.replace('-', ' ')}</dd>
+            <dt>Operator</dt>
+            <dd>{v.operator}</dd>
+            {v.phase && (
+              <>
+                <dt>Phase</dt>
+                <dd>{phaseLabel[v.phase]}</dd>
+              </>
+            )}
+            <dt>Activity</dt>
+            <dd>{data.gone ? 'Left site' : (leg?.activity ?? '—')}</dd>
+            <dt>Zone</dt>
+            <dd>{zone?.name ?? '—'}</dd>
+            {v.visit && (
+              <>
+                <dt>Gate in</dt>
+                <dd>{v.visit.gateIn <= data.now ? formatClock(v.visit.gateIn) : 'Not yet'}</dd>
+                <dt>Dock</dt>
+                <dd>{v.visit.dockId ? DOCKS.find((d) => d.id === v.visit!.dockId)!.name : v.visit.direction === 'inbound' ? 'Raw-material shed' : '—'}</dd>
+                <dt>Load</dt>
+                <dd>{v.visit.direction === 'outbound' ? `${v.visit.load} pallets` : `${v.visit.load} t ${v.visit.material ?? ''}`}</dd>
+              </>
+            )}
+            {v.task && (
+              <>
+                <dt>Task</dt>
+                <dd>{v.task}</dd>
+              </>
+            )}
+          </dl>
+        </div>
+        {dur && (
+          <div className="insp-sec">
+            <h3>Durations · visit milestones in the strip below</h3>
+            <div className="insp-kpis">
+              <div>
+                <span>Waiting</span>
+                <b>{dur.waiting == null ? '—' : Math.round(dur.waiting)}</b>
+                <span>min</span>
+              </div>
+              <div>
+                <span>Gate→dock</span>
+                <b>{dur.gateToDock == null ? '—' : Math.round(dur.gateToDock)}</b>
+                <span>min</span>
+              </div>
+              <div>
+                <span>At dock</span>
+                <b>{dur.dockTime == null ? '—' : Math.round(dur.dockTime)}</b>
+                <span>min</span>
+              </div>
+              <div>
+                <span>Turnaround</span>
+                <b>{dur.turnaround == null ? '—' : Math.round(dur.turnaround)}</b>
+                <span>min</span>
+              </div>
             </div>
           </div>
-        </div>
-      )}
+        )}
+      </div>
       <div className="insp-f">
-        <button className={`btn sm ${follow ? 'on' : ''}`} onClick={() => setFollow(!follow)} title="Keep the camera on this vehicle">
+        <button className={`btn sm ${follow ? 'on' : ''}`} onClick={() => setFollow(!follow)} title="Keep the camera on this vehicle" aria-pressed={follow}>
           <LocateFixed size={13} />
           {follow ? 'Following' : 'Follow'}
         </button>
@@ -309,101 +317,180 @@ function VehicleInspector({ id }: { id: string }) {
   );
 }
 
-/** Right panel: selected machine, vehicle, or active zone. */
-export function Inspector() {
-  const selected = useTwin((s) => s.selected);
-  const vehicle = useTwin((s) => s.vehicle);
-  const zoneId = useTwin((s) => s.zone);
+/** Equipment detail: Overview | Health | Events | Recommendations. */
+function EquipmentInspector({ id }: { id: string }) {
   const select = useTwin((s) => s.select);
-  const selectZone = useTwin((s) => s.selectZone);
   const focusEquipment = useTwin((s) => s.focusEquipment);
   const preset = useTwin((s) => s.preset);
-  const zoneStates = useSimValue(
-    (s) => (zoneId ? EQUIPMENT.filter((e) => e.zone === zoneId).map((e) => [e.id, s.machines[e.id]?.state ?? null] as const) : []),
-    [zoneId],
+  const tabFor = useTwinUi((s) => s.tabFor);
+  const setTab = useTwinUi((s) => s.setTab);
+  const tariffs = useApp((s) => s.tariffs);
+  const item = EQUIPMENT_BY_ID[id];
+  const zone = ZONE_BY_ID[item.zone];
+  const ops = OPS_BY_ID[id];
+  const isProcess = ops.category === 'process';
+  const isHealth = !!HEALTH_BY_ID[id];
+  const isBuffer = BUFFERS.some((b) => b.equipmentId === id);
+  const isStation = INSPECTION_STATIONS.some((s) => s.equipmentId === id);
+  const isLogistics = LOGISTICS_IDS.includes(id);
+  const live = useSimValue(
+    (s) => ({
+      state: s.machines[id]?.state ?? null,
+      health: HEALTH_BY_ID[id] ? assess(s, id) : null,
+      recs: recommendationsFor(s, id, { tariffs }),
+    }),
+    [id, tariffs],
   );
+  const requested = tabFor?.id === id ? tabFor.tab : 'overview';
+  const tab: InspectorTab = requested === 'health' && !isHealth ? 'overview' : requested;
+  const openRecs = live.recs.filter((r) => r.severity !== 'positive').length;
+  const tabs: { id: InspectorTab; label: string; badge?: ReactNode }[] = [
+    { id: 'overview', label: 'Overview' },
+    ...(isHealth && live.health
+      ? [
+          {
+            id: 'health' as const,
+            label: 'Health',
+            badge: (() => {
+              const H = HEALTH_LEVEL[live.health.level];
+              const Icon = H.icon;
+              return (
+                <span className={`status ${H.tone}`} aria-label={H.label}>
+                  <Icon size={12} strokeWidth={2.3} />
+                </span>
+              );
+            })(),
+          },
+        ]
+      : []),
+    { id: 'events', label: 'Events' },
+    { id: 'recs', label: 'Recommendations', badge: openRecs ? <span className="tw-count num">{openRecs}</span> : undefined },
+  ];
 
-  if (vehicle) return <VehicleInspector id={vehicle} />;
-
-  if (selected) {
-    const item = EQUIPMENT_BY_ID[selected];
-    const zone = ZONE_BY_ID[item.zone];
-    const ops = OPS_BY_ID[selected];
-    const isBuffer = BUFFERS.some((b) => b.equipmentId === selected);
-    const isStation = INSPECTION_STATIONS.some((s) => s.equipmentId === selected);
-    const isLogistics = ['A-GATE', 'A-HOLD', 'K-DOCK', 'K-STG', 'K-RACK', 'K-FLT', 'B-RCV'].includes(selected);
-    return (
-      <aside className="inspector overlay-panel">
-        <div className="insp-h">
-          <div>
-            <div className="insp-zone">
-              <span className="chip" style={{ background: zone.color }}>
-                {zone.id}
-              </span>
-              {zone.name}
-            </div>
-            <h2>{item.name}</h2>
+  return (
+    <aside className="inspector overlay-panel tw-insp" aria-label={item.name}>
+      <div className="insp-h">
+        <div>
+          <div className="insp-zone">
+            <span className="chip" style={{ background: zone.color }}>
+              {zone.id}
+            </span>
+            {zone.name}
           </div>
-          <button className="btn ghost sm icon" onClick={() => select(null)} title="Deselect (Esc)">
-            <X size={16} />
-          </button>
-        </div>
-        <div className="insp-sec">
-          <dl className="dl">
-            <dt>Asset id</dt>
-            <dd className="mono">{item.id}</dd>
-            <dt>Process stage</dt>
-            <dd>{item.stage}</dd>
-            <dt>Category</dt>
-            <dd style={{ textTransform: 'capitalize' }}>{ops.category.replace('-', ' ')}</dd>
-          </dl>
-          <p className="insp-desc" style={{ marginTop: 8 }}>
-            {item.description}
-          </p>
-        </div>
-        {ops.category === 'process' && <MachineLive id={selected} />}
-        {isBuffer && <BufferLive id={selected} />}
-        {isStation && <StationLive id={selected} />}
-        {isLogistics && <LogisticsLive id={selected} />}
-        <Connections ids={item.upstream} label="Upstream" />
-        <Connections ids={item.downstream} label="Downstream" />
-        <div className="insp-f">
-          <button className="btn sm" onClick={() => focusEquipment(item.id)} title="Frame this asset">
-            <Crosshair size={13} />
-            Focus
-          </button>
-          <button className="btn sm" onClick={() => preset(zone.preset)} title={`Back to the ${zone.short} view`}>
-            <Scan size={13} />
-            Zone view
-          </button>
-          {ops.category === 'process' && <OpenIn workspace="production" label="Production & OEE" />}
-          {isStation && <OpenIn workspace="quality" label="Quality" />}
-          {isLogistics && <OpenIn workspace="fleet" label="Fleet & Logistics" />}
-        </div>
-      </aside>
-    );
-  }
-
-  if (zoneId) {
-    const zone = ZONE_BY_ID[zoneId];
-    const items = EQUIPMENT.filter((e) => e.zone === zoneId);
-    const states = Object.fromEntries(zoneStates);
-    return (
-      <aside className="inspector overlay-panel">
-        <div className="insp-h">
-          <div>
-            <div className="insp-zone">
-              <span className="chip" style={{ background: zone.color }}>
-                {zone.id}
-              </span>
-              Zone {zone.id} · {zone.stage}
+          <h2>{item.name}</h2>
+          {(live.state || live.health) && (
+            <div className="tw-insp-status">
+              {live.state && <MachineStatus state={live.state} />}
+              {live.health && (
+                <button className="tw-link" onClick={() => setTab(id, 'health')} title="Condition (rule-based) · open the Health tab">
+                  <HealthBadge level={live.health.level} />
+                  <span className="muted num"> {live.health.score}/100</span>
+                </button>
+              )}
+              <span className="tag sim">Simulated</span>
             </div>
-            <h2>{zone.name}</h2>
-          </div>
-          <button className="btn ghost sm icon" onClick={() => selectZone(null)} title="Clear zone">
-            <X size={16} />
-          </button>
+          )}
         </div>
+        <button className="btn ghost sm icon" onClick={() => select(null)} title="Deselect (Esc)">
+          <X size={16} />
+        </button>
+      </div>
+      <div className="tw-tabs tw-insp-tabs" role="tablist" aria-label="Asset detail">
+        {tabs.map((t) => (
+          <button key={t.id} role="tab" aria-selected={tab === t.id} className={tab === t.id ? 'on' : ''} onClick={() => setTab(id, t.id)}>
+            {t.label}
+            {t.badge}
+          </button>
+        ))}
+      </div>
+      <div className="tw-insp-b" role="tabpanel">
+        {tab === 'overview' && (
+          <>
+            {isProcess && <MachineLive id={id} />}
+            {isBuffer && <BufferLive id={id} />}
+            {isStation && <StationLive id={id} />}
+            {isLogistics && <LogisticsLive id={id} />}
+            <div className="insp-sec">
+              <dl className="dl">
+                <dt>Asset id</dt>
+                <dd className="mono">{item.id}</dd>
+                <dt>Process stage</dt>
+                <dd>{item.stage}</dd>
+                <dt>Category</dt>
+                <dd style={{ textTransform: 'capitalize' }}>{ops.category.replace('-', ' ')}</dd>
+              </dl>
+              <p className="insp-desc" style={{ marginTop: 8 }}>
+                {item.description}
+              </p>
+            </div>
+            <Connections ids={item.upstream} label="Upstream" />
+            <Connections ids={item.downstream} label="Downstream" />
+          </>
+        )}
+        {tab === 'health' && live.health && <HealthTab id={id} a={live.health} />}
+        {tab === 'events' && <EventsTab id={id} />}
+        {tab === 'recs' && <RecsTab id={id} recs={live.recs} />}
+      </div>
+      <div className="insp-f">
+        <button className="btn sm" onClick={() => focusEquipment(item.id)} title="Frame this asset">
+          <Crosshair size={13} />
+          Focus
+        </button>
+        <button className="btn sm" onClick={() => preset(zone.preset)} title={`Back to the ${zone.short} view`}>
+          <Scan size={13} />
+          Zone view
+        </button>
+        {isProcess && <OpenIn workspace="production" label="Production & OEE" />}
+        {isHealth && (
+          <button className="btn sm" onClick={() => useApp.getState().go('health')}>
+            <HeartPulse size={13} />
+            Machine Health
+          </button>
+        )}
+        {isStation && <OpenIn workspace="quality" label="Quality" />}
+        {isLogistics && <OpenIn workspace="fleet" label="Fleet & Logistics" />}
+        {tab === 'events' && isProcess && (
+          <button className="btn sm" onClick={() => useApp.getState().go('production')} title="Downtime analysis in Production & OEE">
+            <CalendarClock size={13} />
+            Downtime analysis
+          </button>
+        )}
+        <button
+          className="btn sm"
+          onClick={() => useApp.getState().openCopilot(`How is ${item.id} performing?`)}
+          title="Ask the operations copilot (rule-based, uses the current demo state)"
+        >
+          {tab === 'recs' ? <Lightbulb size={13} /> : <MessageSquareText size={13} />}
+          Ask copilot
+        </button>
+      </div>
+    </aside>
+  );
+}
+
+function ZoneInspector({ id }: { id: string }) {
+  const select = useTwin((s) => s.select);
+  const selectZone = useTwin((s) => s.selectZone);
+  const zone = ZONE_BY_ID[id];
+  const items = EQUIPMENT.filter((e) => e.zone === id);
+  const states = useSimValue((s) => Object.fromEntries(items.map((e) => [e.id, s.machines[e.id]?.state ?? null] as const)), [id]);
+  return (
+    <aside className="inspector overlay-panel tw-insp" aria-label={zone.name}>
+      <div className="insp-h">
+        <div>
+          <div className="insp-zone">
+            <span className="chip" style={{ background: zone.color }}>
+              {zone.id}
+            </span>
+            Zone {zone.id} · {zone.stage}
+          </div>
+          <h2>{zone.name}</h2>
+        </div>
+        <button className="btn ghost sm icon" onClick={() => selectZone(null)} title="Clear zone">
+          <X size={16} />
+        </button>
+      </div>
+      <div className="tw-insp-b">
         <div className="insp-sec">
           <p className="insp-desc">{zone.summary}</p>
         </div>
@@ -418,9 +505,18 @@ export function Inspector() {
             ))}
           </div>
         </div>
-      </aside>
-    );
-  }
+      </div>
+    </aside>
+  );
+}
 
+/** Right panel: selected machine, vehicle, or active zone. */
+export function Inspector() {
+  const selected = useTwin((s) => s.selected);
+  const vehicle = useTwin((s) => s.vehicle);
+  const zoneId = useTwin((s) => s.zone);
+  if (vehicle) return <VehicleInspector id={vehicle} />;
+  if (selected) return <EquipmentInspector key={selected} id={selected} />;
+  if (zoneId) return <ZoneInspector id={zoneId} />;
   return null;
 }

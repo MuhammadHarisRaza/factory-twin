@@ -3,11 +3,12 @@
  * Answers: how many tiles passed first time, what is being rejected, where it comes
  * from and which station / batch is affected. All records are simulated.
  */
-import { useMemo, useState } from 'react';
-import { Box, Info, Locate, X } from 'lucide-react';
+import { useMemo, useRef, useState } from 'react';
+import { Box, FlaskConical, Info, Locate, ScanLine, X } from 'lucide-react';
 import { useApp, openEquipment, openStation } from '../app/store';
-import { BASE_REJECT_RATE, DEFECTS, DEFECT_ORDER, INSPECTION_STATIONS, PRODUCTS, STAGE_BY_ID } from '../model/plant';
-import type { DefectCategory, ProductionBatch, QualityInspection } from '../model/types';
+import { DEFECT_ACTIONS } from '../intel/insights';
+import { BASE_REJECT_RATE, DEFECTS, DEFECT_ORDER, INSPECTION_STATIONS, STAGE_BY_ID } from '../model/plant';
+import type { DefectCategory, ProductionBatch, QualityInspection, ScenarioActivation } from '../model/types';
 import { defectTrend, qualityIn, resolvePeriod } from '../sim/metrics';
 import type { Metric } from '../sim/oee';
 import { useSimValue } from '../sim/store';
@@ -18,17 +19,19 @@ import { fmtInt, fmtM2, fmtPct } from '../ui/kit/format';
 import { Empty, Panel } from '../ui/kit/Panel';
 import { MetricText, SourceBadge, SourceTag } from '../ui/kit/Status';
 import { DefectSeverity, ResultBadge } from './quality/badges';
+import { FrameThumb } from './quality/FrameArt';
+import { affectingScenario, frameById, isFrameStation, type Frame } from './quality/frames';
+import { PRODUCT_BY_SKU, STATION_BY_ID } from './quality/lookup';
+import { VisionStation } from './quality/VisionStation';
 import './quality.css';
 
 const DEFECT_COLOR = Object.fromEntries(DEFECT_ORDER.map((d, i) => [d, `var(--series-${i + 1})`])) as Record<DefectCategory, string>;
-const STATION_BY_ID = Object.fromEntries(INSPECTION_STATIONS.map((s) => [s.id, s]));
-const PRODUCT_BY_SKU = Object.fromEntries(PRODUCTS.map((p) => [p.sku, p]));
 /** Inline stations count every tile; the QC bench only checks samples. */
 const INLINE = (id: string) => (STATION_BY_ID[id]?.detects.length ?? 0) > 0;
 const HISTORY_LIMIT = 500;
 
 type StationRow = { id: string; inspected: number; rejected: number; rate: number | null; samples: boolean };
-type BatchRow = { batch: ProductionBatch; rejectedTiles: number; topDefect: DefectCategory | null};
+type BatchRow = { batch: ProductionBatch; rejectedTiles: number; topDefect: DefectCategory | null; affectedTiles: number };
 
 export function QualityPage() {
   const periodKey = useApp((s) => s.period);
@@ -61,11 +64,19 @@ export function QualityPage() {
           const byDefect = new Map<DefectCategory, number>();
           for (const r of recs) if (r.defect) byDefect.set(r.defect, (byDefect.get(r.defect) ?? 0) + r.tiles);
           const top = [...byDefect.entries()].sort((a, c) => c[1] - a[1])[0];
-          return { batch: b, rejectedTiles: recs.reduce((a, r) => a + r.tiles, 0), topDefect: top ? top[0] : null };
+          const affectedTiles = recs.reduce((a, r) => a + (affectingScenario(s, r) ? r.tiles : 0), 0);
+          return { batch: b, rejectedTiles: recs.reduce((a, r) => a + r.tiles, 0), topDefect: top ? top[0] : null, affectedTiles };
         })
         .reverse();
 
-      return { p, q, records: records.reverse(), stations, trend, bucketMin, batches };
+      // Records raised by a quality-deterioration scenario (defect origin = scenario stage).
+      const affected = new Map<string, ScenarioActivation>();
+      for (const r of records) {
+        const sc = affectingScenario(s, r);
+        if (sc) affected.set(r.id, sc);
+      }
+
+      return { p, q, records: records.reverse(), stations, trend, bucketMin, batches, affected };
     },
     [periodKey],
   );
@@ -90,7 +101,11 @@ export function QualityPage() {
   const [fResult, setFResult] = useState('');
   const [fSeverity, setFSeverity] = useState('');
   const [fBatch, setFBatch] = useState<string | null>(null);
+  const [fAffected, setFAffected] = useState(false);
+  /** Selected record / frame id, shared by the vision viewer and the history table (null = the viewer follows the latest frame). */
   const [selected, setSelected] = useState<string | null>(null);
+  const visionRef = useRef<HTMLDivElement>(null);
+  const showInViewer = () => visionRef.current?.scrollIntoView({ behavior: 'smooth', block: 'start' });
 
   const filtered = useMemo(
     () =>
@@ -100,18 +115,20 @@ export function QualityPage() {
           (!fDefect || r.defect === fDefect) &&
           (!fResult || r.result === fResult) &&
           (!fSeverity || r.severity === fSeverity) &&
-          (!fBatch || r.batchId === fBatch),
+          (!fBatch || r.batchId === fBatch) &&
+          (!fAffected || data.affected.has(r.id)),
       ),
-    [data.records, fStation, fDefect, fResult, fSeverity, fBatch],
+    [data.records, data.affected, fStation, fDefect, fResult, fSeverity, fBatch, fAffected],
   );
   const shown = filtered.slice(0, HISTORY_LIMIT);
-  const anyFilter = fStation || fDefect || fResult || fSeverity || fBatch;
+  const anyFilter = fStation || fDefect || fResult || fSeverity || fBatch || fAffected;
   const clearFilters = () => {
     setFStation('');
     setFDefect('');
     setFResult('');
     setFSeverity('');
     setFBatch(null);
+    setFAffected(false);
   };
 
   const detail = useSimValue(
@@ -119,7 +136,12 @@ export function QualityPage() {
       if (!selected) return null;
       const rec = s.inspections.find((r) => r.id === selected);
       if (!rec) return null;
-      return { rec, batch: s.batches.find((b) => b.id === rec.batchId) ?? null };
+      return {
+        rec,
+        batch: s.batches.find((b) => b.id === rec.batchId) ?? null,
+        frame: isFrameStation(rec.stationId) ? frameById(s, rec.id) : null,
+        scenario: affectingScenario(s, rec),
+      };
     },
     [selected],
   );
@@ -198,7 +220,26 @@ export function QualityPage() {
     { key: 'station', header: 'Station', render: (r) => STATION_BY_ID[r.stationId]?.name ?? r.stationId, sort: (r) => r.stationId },
     { key: 'batch', header: 'Batch', render: (r) => <span className="mono">{r.batchId}</span>, sort: (r) => r.batchId },
     { key: 'result', header: 'Result', render: (r) => <ResultBadge result={r.result} />, sort: (r) => r.result },
-    { key: 'defect', header: 'Defect', render: (r) => (r.defect ? DEFECTS[r.defect].label : <span className="muted">—</span>), sort: (r) => (r.defect ? DEFECTS[r.defect].label : null) },
+    {
+      key: 'defect',
+      header: 'Defect',
+      render: (r) => {
+        const sc = data.affected.get(r.id);
+        if (!r.defect) return <span className="muted">—</span>;
+        return (
+          <>
+            {DEFECTS[r.defect].label}
+            {sc && (
+              <span className="q-aff" title={`Raised by scenario: ${sc.label}`}>
+                <FlaskConical size={11} aria-hidden />
+                <span className="q-sr">Scenario-affected</span>
+              </span>
+            )}
+          </>
+        );
+      },
+      sort: (r) => (r.defect ? DEFECTS[r.defect].label : null),
+    },
     {
       key: 'sev',
       header: 'Severity',
@@ -211,7 +252,22 @@ export function QualityPage() {
   ];
 
   const batchCols: Column<BatchRow>[] = [
-    { key: 'id', header: 'Batch', render: (r) => <span className="mono">{r.batch.id}</span>, sort: (r) => r.batch.start },
+    {
+      key: 'id',
+      header: 'Batch',
+      render: (r) => (
+        <>
+          <span className="mono">{r.batch.id}</span>
+          {r.affectedTiles > 0 && (
+            <span className="q-aff" title={`${fmtInt(r.affectedTiles)} rejected tiles raised by a quality scenario`}>
+              <FlaskConical size={11} aria-hidden />
+              <span className="q-sr">Scenario-affected</span>
+            </span>
+          )}
+        </>
+      ),
+      sort: (r) => r.batch.start,
+    },
     {
       key: 'product',
       header: 'Product',
@@ -295,6 +351,10 @@ export function QualityPage() {
         </div>
       </section>
 
+      <div className="col-12 q-vis-anchor" ref={visionRef}>
+        <VisionStation selected={selected} onSelect={setSelected} batchFilter={fBatch} onFilterBatch={setFBatch} />
+      </div>
+
       <div className="col-7">
         <Panel
           title="Inspection stations"
@@ -359,6 +419,16 @@ export function QualityPage() {
                   Batch {fBatch} <X size={12} />
                 </button>
               )}
+              {(fAffected || data.affected.size > 0) && (
+                <button
+                  className={`btn sm ${fAffected ? 'on' : ''}`}
+                  aria-pressed={fAffected}
+                  onClick={() => setFAffected(!fAffected)}
+                  title="Only records raised by a quality-deterioration scenario"
+                >
+                  <FlaskConical size={12} /> Scenario-affected {fmtInt(data.affected.size)}
+                </button>
+              )}
               <select className="select" value={fStation} onChange={(e) => setFStation(e.target.value)} aria-label="Filter by station">
                 <option value="">All stations</option>
                 {INSPECTION_STATIONS.map((s) => (
@@ -406,12 +476,35 @@ export function QualityPage() {
         </Panel>
       </div>
 
-      {detail && <RecordDetail rec={detail.rec} batch={detail.batch} onClose={() => setSelected(null)} />}
+      {detail && (
+        <RecordDetail
+          rec={detail.rec}
+          batch={detail.batch}
+          frame={detail.frame}
+          scenario={detail.scenario}
+          onShowFrame={showInViewer}
+          onClose={() => setSelected(null)}
+        />
+      )}
     </div>
   );
 }
 
-function RecordDetail({ rec, batch, onClose }: { rec: QualityInspection; batch: ProductionBatch | null; onClose: () => void }) {
+function RecordDetail({
+  rec,
+  batch,
+  frame,
+  scenario,
+  onShowFrame,
+  onClose,
+}: {
+  rec: QualityInspection;
+  batch: ProductionBatch | null;
+  frame: Frame | null;
+  scenario: ScenarioActivation | null;
+  onShowFrame: () => void;
+  onClose: () => void;
+}) {
   const st = STATION_BY_ID[rec.stationId];
   const product = batch ? PRODUCT_BY_SKU[batch.sku] : undefined;
   const origin = rec.defect ? STAGE_BY_ID[DEFECTS[rec.defect].origin] : null;
@@ -432,6 +525,27 @@ function RecordDetail({ rec, batch, onClose }: { rec: QualityInspection; batch: 
         }
       >
         <div className="q-detail">
+          {frame && (
+            <section className="q-rd-frame">
+              <button className="q-rd-thumb" onClick={onShowFrame} title="Show this frame in the vision viewer">
+                <FrameThumb frame={frame} />
+              </button>
+              <div>
+                <h3>Inspection frame</h3>
+                <p className="muted">Illustrative frame · simulated classification. Selected in the vision viewer.</p>
+                {scenario && (
+                  <p>
+                    <span className="tag scenario" title={`Raised by scenario: ${scenario.label}`}>
+                      <FlaskConical size={11} aria-hidden /> Scenario-affected
+                    </span>
+                  </p>
+                )}
+                <button className="btn sm" onClick={onShowFrame}>
+                  <ScanLine size={13} /> Show in vision viewer
+                </button>
+              </div>
+            </section>
+          )}
           <section>
             <h3>Record</h3>
             <dl className="dl">
@@ -449,6 +563,12 @@ function RecordDetail({ rec, batch, onClose }: { rec: QualityInspection; batch: 
               </dd>
               <dt>Measurement</dt>
               <dd>{rec.measurement ?? '—'}</dd>
+              {rec.confidence != null && (
+                <>
+                  <dt>Confidence</dt>
+                  <dd title="Simulated classification confidence (no model runs)">{fmtPct(rec.confidence, 1)} · simulated</dd>
+                </>
+              )}
               <dt>Tiles</dt>
               <dd>{fmtInt(rec.tiles)}</dd>
               {origin && (
@@ -478,6 +598,12 @@ function RecordDetail({ rec, batch, onClose }: { rec: QualityInspection; batch: 
               <p className="muted">Batch {rec.batchId} not found.</p>
             )}
           </section>
+          {rec.defect && (
+            <section>
+              <h3>Recommended investigation</h3>
+              <p>{DEFECT_ACTIONS[rec.defect]}</p>
+            </section>
+          )}
           <section>
             <h3>Station</h3>
             <dl className="dl">

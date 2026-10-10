@@ -31,8 +31,206 @@
   color: var(--text-1);
   font-weight: var(--fw-medium);
 }
-.prod-spark {
-  margin-top: 6px;
+
+/* KPI strip: answer-first headline + seven compact KPIs in one row on large displays */
+.prod .summary.prod-kpis {
+  grid-template-columns: minmax(0, 1.75fr) repeat(7, minmax(0, 1fr));
+}
+.prod .summary.prod-kpis > * {
+  padding: 12px 14px;
+}
+.prod .summary.prod-kpis .kpi-value {
+  font-size: var(--fs-20);
+}
+.prod .summary.prod-kpis .kpi-sub {
+  align-items: center;
+  gap: 4px 8px;
+}
+.prod-kpis .row-link {
+  font-size: var(--fs-12);
+}
+@media (max-width: 1280px) {
+  .prod .summary.prod-kpis {
+    grid-template-columns: repeat(4, minmax(0, 1fr));
+  }
+  .prod .summary.prod-kpis > * {
+    border-left: 1px solid var(--line);
+    border-top: 0;
+  }
+  .prod .summary.prod-kpis > :nth-child(4n + 1) {
+    border-left: 0;
+  }
+  .prod .summary.prod-kpis > :nth-child(n + 5) {
+    border-top: 1px solid var(--line);
+  }
+}
+@media (max-width: 720px) {
+  .prod .summary.prod-kpis {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+  .prod .summary.prod-kpis > :nth-child(n) {
+    border-left: 1px solid var(--line);
+    border-top: 1px solid var(--line);
+  }
+  .prod .summary.prod-kpis > :nth-child(2n + 1) {
+    border-left: 0;
+  }
+  .prod .summary.prod-kpis > :nth-child(-n + 2) {
+    border-top: 0;
+  }
+}
+
+/* Planned vs actual: gap to plan in the panel header */
+.prod-gap {
+  font-size: var(--fs-12);
+  font-weight: var(--fw-medium);
+  color: var(--text-1);
+  white-space: nowrap;
+  font-variant-numeric: tabular-nums;
+}
+.prod-gap.behind {
+  color: var(--serious);
+}
+
+/* How OEE is calculated */
+.prod-oee-inputs {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(190px, 1fr));
+  gap: 10px 16px;
+  margin: 0 0 14px;
+}
+.prod-oee-inputs > div {
+  min-width: 0;
+  padding-left: 10px;
+  border-left: 2px solid var(--line-2);
+}
+.prod-oee-inputs dt {
+  font-size: var(--fs-11);
+  color: var(--text-3);
+}
+.prod-oee-inputs dd {
+  margin: 0;
+  font-size: var(--fs-14);
+  font-weight: var(--fw-medium);
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+}
+.prod-oee-inputs dd.note {
+  font-size: var(--fs-11);
+  font-weight: var(--fw-regular);
+  color: var(--text-3);
+  white-space: normal;
+}
+.prod-formula {
+  border-top: 1px solid var(--line);
+}
+.prod-f-row {
+  display: grid;
+  grid-template-columns: 92px minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 12px;
+  padding: 7px 0;
+  border-bottom: 1px solid var(--line);
+  font-variant-numeric: tabular-nums;
+}
+.prod-f-row.total {
+  border-bottom: 0;
+}
+.prod-f-row.total .prod-f-name,
+.prod-f-row.total .prod-f-res {
+  color: var(--text-1);
+  font-weight: var(--fw-semibold);
+}
+.prod-f-name {
+  font-size: var(--fs-12);
+  font-weight: var(--fw-medium);
+  color: var(--text-2);
+}
+.prod-f-calc {
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+}
+.prod-f-expr {
+  font-size: var(--fs-11);
+  color: var(--text-3);
+}
+.prod-f-values {
+  font-size: var(--fs-12);
+  color: var(--text-1);
+  overflow-wrap: anywhere;
+}
+.prod-f-res {
+  font-size: var(--fs-14);
+  font-weight: var(--fw-medium);
+  white-space: nowrap;
+  text-align: right;
+}
+.prod-f-eq {
+  color: var(--text-3);
+  margin-right: 6px;
+  font-weight: var(--fw-regular);
+}
+
+/* Losses by machine: stacked ranked bars */
+.prod-loss {
+  position: relative;
+}
+.prod-loss-row {
+  display: grid;
+  grid-template-columns: minmax(118px, 1.2fr) minmax(0, 1.5fr) 52px 40px;
+  align-items: center;
+  gap: 10px;
+  height: 27px;
+  font-size: var(--fs-12);
+  border-bottom: 1px solid var(--line);
+  font-variant-numeric: tabular-nums;
+  cursor: pointer;
+}
+.prod-loss-row:last-child {
+  border-bottom: 0;
+}
+.prod-loss-row.head {
+  height: 24px;
+  color: var(--text-3);
+  font-size: var(--fs-11);
+  cursor: default;
+}
+.prod-loss-row .n {
+  text-align: right;
+}
+.prod-loss-row:not(.head):hover .prod-loss-name .mono {
+  color: var(--accent-strong);
+}
+.prod-loss-row.sel {
+  background: var(--accent-soft);
+  box-shadow: inset 2px 0 0 var(--accent);
+}
+.prod-loss-name {
+  display: flex;
+  gap: 6px;
+  min-width: 0;
+  white-space: nowrap;
+  overflow: hidden;
+  padding-left: 4px;
+}
+.prod-loss-name .dim {
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.prod-loss-track {
+  display: flex;
+  gap: 2px;
+  height: 10px;
+  min-width: 0;
+}
+.prod-loss-track i {
+  display: block;
+  height: 100%;
+  flex: none;
+}
+.prod-loss-track i:last-child {
+  border-radius: 0 3px 3px 0;
 }
 
 .prod-actions {

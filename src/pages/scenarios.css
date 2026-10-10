@@ -1,0 +1,452 @@
+/* Scenario Simulator workspace + scenario cards in the quick drawer — page-specific styles (tokens from styles.css). */
+
+/* ── Toolbar & impact band ──────────────────────────────────────────────── */
+
+.scnp-toolbar .notice {
+  flex: 1;
+  min-width: 320px;
+  align-items: center;
+  padding: 8px 12px;
+}
+.scnp-window {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  font-size: var(--fs-12);
+  color: var(--text-2);
+  white-space: nowrap;
+}
+
+.scnp-band .kpi-value {
+  margin-top: 4px;
+}
+.scnp-band .kpi-headline {
+  margin-top: 4px;
+}
+.scnp-note {
+  display: block;
+  line-height: 1.4;
+}
+.scnp-preparing {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  color: var(--text-2);
+}
+.scnp-foot {
+  grid-column: span 12;
+  margin: calc(-1 * var(--s-2)) 0 0;
+  font-size: var(--fs-11);
+  color: var(--text-3);
+  line-height: 1.45;
+}
+
+/* ── Catalogue ───────────────────────────────────────────────────────────── */
+
+.scnp-groupwrap + .scnp-groupwrap {
+  margin-top: var(--s-5);
+}
+.scnp-group {
+  margin: 0 0 10px;
+  font-size: var(--fs-12);
+  font-weight: var(--fw-medium);
+  color: var(--text-2);
+}
+.scnp-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(320px, 1fr));
+  gap: var(--s-3);
+}
+@media (max-width: 1280px) {
+  .scnp-grid {
+    grid-template-columns: repeat(auto-fill, minmax(280px, 1fr));
+  }
+}
+
+.scnp-card {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  min-width: 0;
+  padding: 12px;
+  border: 1px solid var(--line-2);
+  border-radius: var(--r-2);
+  background: var(--bg-1);
+}
+.scnp-card.on {
+  border-color: var(--accent-line);
+  box-shadow: inset 2px 0 0 var(--accent);
+}
+.scnp-card-h {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 6px 8px;
+  min-width: 0;
+}
+.scnp-card-h h3 {
+  margin: 0;
+  font-size: var(--fs-13);
+  font-weight: var(--fw-semibold);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  min-width: 0;
+}
+.scnp-letter {
+  display: inline-grid;
+  place-items: center;
+  flex: none;
+  width: 20px;
+  height: 20px;
+  border-radius: var(--r-1);
+  border: 1px solid var(--line-2);
+  background: var(--bg-3);
+  font: var(--fw-semibold) 10.5px var(--mono);
+  color: var(--text-1);
+}
+.scnp-card.on .scnp-letter {
+  border-color: var(--accent-line);
+  color: var(--accent-strong);
+}
+
+/* Scenario lifecycle pill (an input's state: accent / neutral, never the equipment status colours). */
+.scnp-state {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  flex: none;
+  height: 20px;
+  padding: 0 7px;
+  border-radius: var(--r-1);
+  border: 1px solid var(--line-2);
+  font-size: var(--fs-11);
+  color: var(--text-2);
+  white-space: nowrap;
+  font-variant-numeric: tabular-nums;
+}
+.scnp-state svg {
+  flex: none;
+  color: var(--text-3);
+}
+.scnp-state.on {
+  border-color: var(--accent-line);
+  background: var(--accent-soft);
+  color: var(--accent-strong);
+}
+.scnp-state.on svg {
+  color: var(--accent-strong);
+}
+.scnp-state-t {
+  color: inherit;
+  opacity: 0.85;
+}
+
+.scnp-what {
+  margin: 0;
+  font-size: var(--fs-12);
+  color: var(--text-2);
+  line-height: 1.45;
+}
+.scnp-where,
+.scnp-hint {
+  display: flex;
+  gap: 6px;
+  align-items: flex-start;
+  margin: 0;
+  font-size: 11.5px;
+  color: var(--text-3);
+  line-height: 1.4;
+}
+.scnp-where svg,
+.scnp-hint svg {
+  flex: none;
+  margin-top: 1px;
+}
+
+.scnp-row {
+  display: flex;
+  align-items: flex-end;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+.scnp-field {
+  flex: 1 1 130px;
+  max-width: 260px;
+  min-width: 0;
+}
+.scnp-field .select {
+  width: 100%;
+  min-width: 0;
+  text-overflow: ellipsis;
+}
+
+.scnp-inst {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+.scnp-inst li {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto auto;
+  align-items: center;
+  gap: 8px;
+  padding: 4px 4px 4px 9px;
+  border-radius: var(--r-1);
+  background: var(--accent-soft);
+  font-size: var(--fs-12);
+}
+.scnp-inst-l {
+  color: var(--text-1);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.scnp-inst-m {
+  color: var(--text-2);
+  font-size: 11.5px;
+  white-space: nowrap;
+  font-variant-numeric: tabular-nums;
+}
+.scnp-last {
+  margin: 0;
+  font-size: 11.5px;
+  color: var(--text-3);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.scnp-cbm {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  padding: 10px;
+  border: 1px solid var(--line);
+  border-radius: var(--r-2);
+  background: var(--bg-2);
+}
+.scnp-cbm-h {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+  font-size: var(--fs-12);
+}
+
+.scnp-card-f {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  flex-wrap: wrap;
+  margin-top: auto;
+  padding-top: 10px;
+  border-top: 1px solid var(--line);
+}
+.scnp-show-l {
+  font-size: var(--fs-11);
+  color: var(--text-3);
+  margin-right: 2px;
+}
+
+/* ── Side column: presenter guide, reset ─────────────────────────────────── */
+
+.scnp-side {
+  display: flex;
+  flex-direction: column;
+  gap: var(--s-4);
+  min-width: 0;
+}
+
+.scnp-steps {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+}
+.scnp-steps li {
+  display: grid;
+  grid-template-columns: 22px minmax(0, 1fr);
+  gap: 10px;
+  padding: 10px 0;
+  border-bottom: 1px solid var(--line);
+}
+.scnp-steps li:first-child {
+  padding-top: 0;
+}
+.scnp-steps li:last-child {
+  border-bottom: 0;
+  padding-bottom: 0;
+}
+.scnp-step-n {
+  display: grid;
+  place-items: center;
+  width: 22px;
+  height: 22px;
+  border-radius: 50%;
+  border: 1px solid var(--line-3);
+  font: var(--fw-medium) var(--fs-11) var(--mono);
+  color: var(--text-2);
+}
+.scnp-steps li.done .scnp-step-n {
+  background: var(--bg-3);
+  border-color: var(--line-2);
+  color: var(--text-1);
+}
+.scnp-steps li.next .scnp-step-n {
+  border-color: var(--accent);
+  color: var(--accent-strong);
+  box-shadow: 0 0 0 3px var(--accent-soft);
+}
+.scnp-step-b {
+  min-width: 0;
+}
+.scnp-step-b b {
+  display: block;
+  font-size: var(--fs-13);
+  font-weight: var(--fw-medium);
+  line-height: 22px;
+}
+.scnp-steps li.done .scnp-step-b b {
+  color: var(--text-2);
+}
+.scnp-step-b p {
+  margin: 0 0 8px;
+  font-size: var(--fs-12);
+  color: var(--text-3);
+  line-height: 1.4;
+}
+.scnp-step-a {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  flex-wrap: wrap;
+}
+.scnp-step-why {
+  font-size: var(--fs-11);
+  color: var(--text-3);
+}
+.scnp-guide-f {
+  flex: 1;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+  min-width: 0;
+}
+
+.scnp-reset {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+.scnp-reset.compact {
+  padding: 12px;
+  border: 1px solid var(--line);
+  border-radius: var(--r-2);
+}
+.scnp-reset.compact h3 {
+  margin: 0;
+  font-size: var(--fs-13);
+  font-weight: var(--fw-semibold);
+}
+.scnp-reset-p {
+  margin: 0;
+  font-size: var(--fs-12);
+  color: var(--text-2);
+  line-height: 1.45;
+}
+.scnp-reset-a {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  flex-wrap: wrap;
+}
+.scnp-done {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  font-size: var(--fs-12);
+  color: var(--text-2);
+}
+.scnp-done svg {
+  color: var(--good);
+}
+.scnp-confirm {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  padding: 10px 12px;
+  border: 1px solid color-mix(in srgb, var(--critical) 45%, transparent);
+  border-radius: var(--r-2);
+  background: color-mix(in srgb, var(--critical) 8%, transparent);
+  font-size: var(--fs-12);
+  color: var(--text-2);
+  line-height: 1.45;
+}
+.scnp-confirm b {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  color: var(--text-1);
+  font-weight: var(--fw-semibold);
+}
+.scnp-confirm b svg {
+  color: var(--warning);
+}
+.scnp-confirm-a {
+  display: flex;
+  justify-content: flex-end;
+  gap: 8px;
+}
+
+/* ── Log ─────────────────────────────────────────────────────────────────── */
+
+.scnp-log-a {
+  display: inline-flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 6px;
+  width: 100%;
+}
+
+/* ── Quick drawer ────────────────────────────────────────────────────────── */
+
+.scnd-open {
+  justify-content: space-between;
+  width: 100%;
+  height: 34px;
+}
+.scnd-open span {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+}
+.scnd-active {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  padding: 12px;
+  border: 1px solid var(--accent-line);
+  border-radius: var(--r-2);
+  background: var(--accent-soft);
+}
+.scnd-active h3 {
+  margin: 0;
+  font-size: var(--fs-13);
+  font-weight: var(--fw-semibold);
+}
+.scnd-active .scnp-inst li {
+  background: var(--bg-1);
+}
+.scnd-active-a {
+  display: flex;
+  justify-content: flex-end;
+}
+.drawer .scnp-group {
+  margin: 4px 0 -6px;
+}

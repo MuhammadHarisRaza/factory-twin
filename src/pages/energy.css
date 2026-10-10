@@ -1,0 +1,333 @@
+/* Energy Intelligence — page-specific layout only; shared classes and tokens live in styles.css. */
+
+.energy-page > .notice {
+  align-items: center;
+}
+
+/* Grid cells that hold one panel: the panel fills the row height. */
+.en-cell {
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+}
+.en-cell > .panel {
+  flex: 1;
+}
+#en-hourly {
+  scroll-margin-top: var(--s-4);
+}
+
+/* ── Summary ─────────────────────────────────────────────────────────────── */
+
+.en-summary .kpi-value {
+  margin-top: 4px;
+}
+.en-verdict {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  margin-top: 6px;
+  font-size: var(--fs-14);
+  font-weight: var(--fw-semibold);
+  line-height: 1.3;
+}
+.en-verdict svg {
+  flex: none;
+}
+.en-verdict.good svg {
+  color: var(--good);
+}
+.en-verdict.warning svg {
+  color: var(--warning);
+}
+.en-verdict.critical svg {
+  color: var(--critical);
+}
+.en-verdict.neutral svg {
+  color: var(--neutral);
+}
+.kpi-value small.en-pre {
+  margin: 0 5px 0 0;
+}
+.en-split {
+  display: flex;
+  gap: 2px;
+  height: 4px;
+  margin-top: 10px;
+  border-radius: 2px;
+  overflow: hidden;
+}
+.en-split i {
+  display: block;
+  height: 100%;
+  min-width: 0;
+}
+.en-sw {
+  display: inline-block;
+  width: 8px;
+  height: 8px;
+  border-radius: 2px;
+  margin-right: 5px;
+  vertical-align: 0;
+}
+
+/* ── Shared bits ─────────────────────────────────────────────────────────── */
+
+.en-type {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  color: var(--text-2);
+  white-space: nowrap;
+}
+.en-type svg {
+  flex: none;
+}
+.en-actions {
+  display: flex;
+  align-items: center;
+  gap: var(--s-2);
+}
+.en-actions .select {
+  height: 28px;
+  max-width: 260px;
+}
+.en-actions-row {
+  display: flex;
+  align-items: center;
+  gap: var(--s-2);
+  flex-wrap: wrap;
+}
+.en-note {
+  margin: 0;
+  font-size: var(--fs-12);
+  color: var(--text-2);
+  line-height: 1.5;
+}
+.en-hint {
+  font-size: var(--fs-12);
+}
+.en-count {
+  font-size: var(--fs-12);
+  color: var(--text-2);
+  white-space: nowrap;
+  font-variant-numeric: tabular-nums;
+}
+.en-h3 {
+  margin: var(--s-4) 0 var(--s-2);
+  font-size: var(--fs-11);
+  font-weight: var(--fw-medium);
+  color: var(--text-3);
+}
+
+/* ── Anomalies ───────────────────────────────────────────────────────────── */
+
+.en-empty {
+  padding: 28px 16px;
+}
+.en-empty svg.en-ok {
+  color: var(--good);
+}
+.en-anoms {
+  display: flex;
+  flex-direction: column;
+  gap: var(--s-3);
+}
+.en-anom {
+  border: 1px solid var(--line-2);
+  border-left-width: 2px;
+  border-radius: var(--r-2);
+  padding: 10px 12px 12px;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  background: var(--bg-1);
+}
+.en-anom.warning {
+  border-left-color: var(--warning);
+}
+.en-anom.critical {
+  border-left-color: var(--critical);
+}
+.en-anom-h {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  flex-wrap: wrap;
+  min-width: 0;
+}
+.en-anom-name {
+  font-size: var(--fs-13);
+  font-weight: var(--fw-semibold);
+}
+.en-phase {
+  font-size: var(--fs-11);
+  color: var(--text-3);
+  white-space: nowrap;
+}
+.en-phase.on {
+  color: var(--text-1);
+}
+.en-anom-metrics {
+  display: grid;
+  grid-template-columns: repeat(5, minmax(0, 1fr));
+  gap: 8px 16px;
+  margin: 0;
+}
+.en-anom-metrics dt {
+  font-size: var(--fs-11);
+  color: var(--text-3);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.en-anom-metrics dd {
+  margin: 2px 0 0;
+  font-size: var(--fs-13);
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+}
+.en-anom-metrics dd b {
+  font-weight: var(--fw-semibold);
+}
+.en-anom-rec {
+  margin: 0;
+  font-size: var(--fs-12);
+  color: var(--text-2);
+  line-height: 1.5;
+}
+.en-anom-rec b {
+  display: block;
+  font-size: var(--fs-11);
+  font-weight: var(--fw-medium);
+  color: var(--text-3);
+  margin-bottom: 2px;
+}
+
+/* ── Simulate ────────────────────────────────────────────────────────────── */
+
+.en-sim {
+  display: flex;
+  flex-direction: column;
+  gap: var(--s-3);
+}
+.en-sim-row {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) 96px;
+  gap: var(--s-2);
+}
+.en-sim-row .select {
+  width: 100%;
+}
+.en-sim-cause {
+  font-size: var(--fs-12);
+  color: var(--text-1);
+}
+.en-active {
+  border-top: 1px solid var(--line);
+  padding-top: var(--s-3);
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+.en-active-h {
+  font-size: var(--fs-11);
+  font-weight: var(--fw-medium);
+  color: var(--text-3);
+}
+.en-active-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: var(--fs-12);
+  min-width: 0;
+}
+.en-active-label {
+  flex: 1;
+  min-width: 0;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+/* ── Kiln idle burn ──────────────────────────────────────────────────────── */
+
+.en-kiln {
+  display: flex;
+  flex-direction: column;
+  gap: var(--s-3);
+}
+.en-kiln-figs {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: var(--s-4);
+}
+.en-kiln-figs .kpi-value {
+  font-size: var(--fs-20);
+  margin-top: 2px;
+}
+
+/* ── Tariffs ─────────────────────────────────────────────────────────────── */
+
+.en-tariffs {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: var(--s-3);
+}
+.en-field.en-wide {
+  grid-column: span 2;
+}
+.en-input {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+}
+.en-input .input {
+  width: 100%;
+  min-width: 0;
+  font-variant-numeric: tabular-nums;
+}
+.en-input .input.en-code {
+  width: 72px;
+  flex: none;
+  font-family: var(--mono);
+  letter-spacing: 0.04em;
+}
+.en-unit {
+  font-size: var(--fs-11);
+  color: var(--text-3);
+  white-space: nowrap;
+}
+.input.en-invalid {
+  border-color: var(--critical);
+}
+.en-err {
+  font-size: var(--fs-11);
+  color: #f0b4b4;
+}
+.en-mod {
+  color: var(--accent-strong);
+  font-weight: var(--fw-medium);
+}
+.en-breakdown dd b {
+  font-weight: var(--fw-medium);
+}
+
+@media (max-width: 1360px) {
+  .en-anom-metrics {
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+  }
+}
+
+/* Consumer table: name + id, scenario tag at the end */
+.en-consumer {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  max-width: 100%;
+}
+.en-consumer-name {
+  overflow: hidden;
+  text-overflow: ellipsis;
+}

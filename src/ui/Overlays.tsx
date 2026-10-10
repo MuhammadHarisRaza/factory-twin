@@ -48,7 +48,7 @@ export function Hint() {
       <MousePointerClick size={15} />
       <span>
         <b>Drag</b> to orbit · <b>Right-drag</b> to pan · <b>Scroll</b> to zoom · <b>Click</b> a machine to inspect · keys{' '}
-        <b>1–0</b> views, <b>M</b> flow, <b>H</b> hide UI
+        <b>/</b> search, <b>1–0</b> views, <b>M</b> flow, <b>H</b> hide UI
       </span>
     </div>
   );

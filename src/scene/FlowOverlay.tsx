@@ -5,18 +5,86 @@ import { ConeGeometry, MeshBasicMaterial, Quaternion, Vector3 } from 'three';
 import type { Line2, LineMaterial } from 'three-stdlib';
 import { useTwin } from '../store';
 import { FLOW_COLORS, FLOW_PATHS, FLOW_STAGES } from '../data/layout';
-import type { FlowPath } from '../data/types';
+import type { FlowPath, Vec2 } from '../data/types';
+import type { StageId } from '../model/types';
+import { useSim } from '../sim/store';
+import { approach, routeFlow, splitRoute } from './status/model';
 
 const ARROW_GEOMETRY = new ConeGeometry(0.6, 1.6, 12);
+/** Dash speed (m/s) at full throughput. */
+const DASH_SPEED = 4;
 
-/** One route: soft glow line, marching dashed line and direction arrows every 16 m. */
-function FlowRoute({ pts, y, kind }: FlowPath) {
+/**
+ * Process stages whose throughput drives the material flow from a route vertex onwards.
+ * A route is split at each listed vertex; `null` marks a part not driven by the line
+ * (warehouse and dispatch). Vertices that are not on a route are ignored.
+ */
+const BREAKPOINTS: { at: Vec2; stages: StageId[] | null }[] = [
+  { at: [-129, -28], stages: ['PREP'] },
+  { at: [-55, -17.5], stages: ['PREP'] },
+  { at: [-50, -34], stages: ['SPRAY'] },
+  { at: [-35, -20.5], stages: ['PRESS'] },
+  { at: [1, -12], stages: ['DRY'] },
+  { at: [25, -12], stages: ['GLAZE', 'DECOR'] },
+  { at: [72, -12], stages: ['DECOR'] },
+  { at: [70.5, 15], stages: ['KILN'] },
+  { at: [-4.5, 15], stages: ['SORT'] },
+  { at: [-38.5, 15], stages: ['PACK'] },
+  { at: [-61, 15], stages: ['PAL'] },
+  { at: [-86, 20], stages: null },
+];
+
+type FlowSegment = { points: Vector3[]; stages: StageId[] | null };
+
+const BREAKS = BREAKPOINTS.map((b) => ({ at: b.at, value: b.stages }));
+
+/** Splits a route into segments that each follow one part of the process. */
+function segmentsOf({ pts, y }: FlowPath): FlowSegment[] {
+  return splitRoute<StageId[] | null>(pts, BREAKS, null).map((r) => ({
+    points: pts.slice(r.from, r.to + 1).map(([x, z]) => new Vector3(x, y, z)),
+    stages: r.value,
+  }));
+}
+
+/**
+ * One part of a route: the marching dashes run at a speed proportional to the current
+ * throughput of the stage(s) it serves — a bottleneck visibly slows its part of the flow,
+ * a stopped kiln stops the kiln section, and a paused simulation stops everything.
+ */
+function FlowDashes({ points, stages, color }: FlowSegment & { color: string }) {
   const dashed = useRef<Line2>(null);
-  const points = useMemo(() => pts.map(([x, z]) => new Vector3(x, y, z)), [pts, y]);
-
+  const flow = useRef<number | null>(null);
   useFrame((_, dt) => {
-    if (dashed.current) (dashed.current.material as LineMaterial).dashOffset -= dt * 4;
+    const line = dashed.current;
+    if (!line) return;
+    const { sim, running } = useSim.getState();
+    const target = running ? routeFlow(sim, stages) : 0;
+    flow.current = flow.current == null ? target : approach(flow.current, target, Math.min(dt, 0.1), 0.6);
+    const m = line.material as LineMaterial;
+    m.dashOffset -= Math.min(dt, 0.1) * DASH_SPEED * flow.current;
+    // A part that is not flowing reads quieter.
+    m.opacity = 0.45 + 0.55 * Math.min(1, flow.current / 0.15);
   });
+  return (
+    <Line
+      ref={dashed}
+      points={points}
+      color={color}
+      lineWidth={3}
+      dashed
+      dashSize={3.2}
+      gapSize={1.8}
+      transparent
+      depthTest={false}
+      renderOrder={21}
+    />
+  );
+}
+
+/** One route: soft glow line, throughput-driven marching dashes and direction arrows every 16 m. */
+function FlowRoute({ pts, y, kind }: FlowPath) {
+  const points = useMemo(() => pts.map(([x, z]) => new Vector3(x, y, z)), [pts, y]);
+  const segments = useMemo(() => segmentsOf({ pts, y, kind }), [pts, y, kind]);
 
   const arrows = useMemo(() => {
     const out: { p: Vector3; q: Quaternion }[] = [];
@@ -49,17 +117,9 @@ function FlowRoute({ pts, y, kind }: FlowPath) {
         depthTest={false}
         renderOrder={20}
       />
-      <Line
-        ref={dashed}
-        points={points}
-        color={FLOW_COLORS[kind]}
-        lineWidth={3}
-        dashed
-        dashSize={3.2}
-        gapSize={1.8}
-        depthTest={false}
-        renderOrder={21}
-      />
+      {segments.map((s, i) => (
+        <FlowDashes key={i} {...s} color={FLOW_COLORS[kind]} />
+      ))}
       {arrows.map((a, i) => (
         <mesh key={i} geometry={ARROW_GEOMETRY} material={arrowMaterial} position={a.p} quaternion={a.q} renderOrder={22} />
       ))}

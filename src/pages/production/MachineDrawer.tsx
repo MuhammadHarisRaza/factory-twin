@@ -12,7 +12,7 @@ import { DataTable, type Column } from '../../ui/kit/DataTable';
 import { fmtInt, fmtPct } from '../../ui/kit/format';
 import { MachineStatus, MetricText, SourceTag } from '../../ui/kit/Status';
 import type { DowntimeEvent } from '../../model/types';
-import { granularityFor, machineTrend, reasonLabel } from './derive';
+import { granularityFor, machineLoss, machineTrend, reasonLabel } from './derive';
 
 type EvRow = { ev: DowntimeEvent };
 
@@ -33,7 +33,7 @@ export function MachineDrawer({ id, periodKey, onClose }: { id: string; periodKe
         .filter((e) => e.equipmentId === id)
         .sort((a, b) => (a.end == null ? 0 : 1) - (b.end == null ? 0 : 1) || b.start - a.start)
         .map((ev) => ({ ev }));
-      return { p, g, mm, rt: s.machines[id], now: s.minute, trend: machineTrend(s, id, p, g), events };
+      return { p, g, mm, rt: s.machines[id], now: s.minute, trend: machineTrend(s, id, p, g), events, loss: machineLoss(s, id, p) };
     },
     [id, periodKey],
   );
@@ -110,6 +110,13 @@ export function MachineDrawer({ id, periodKey, onClose }: { id: string; periodKe
             <dt>Starved / blocked</dt>
             <dd>
               {fmtPct(share(t.starved))} / {fmtPct(share(t.blocked))} <span className="muted">of planned time</span>
+            </dd>
+            <dt>Lost output</dt>
+            <dd title="Unplanned downtime and starved / blocked minutes × ideal rate">
+              {fmtInt(d.loss.totalM2)} m²{' '}
+              <span className="muted">
+                · down {fmtInt(d.loss.downM2)} · starved {fmtInt(d.loss.starvedM2)} · blocked {fmtInt(d.loss.blockedM2)} m² at ideal rate
+              </span>
             </dd>
           </dl>
           {d.mm.oee.issues.length > 0 && (

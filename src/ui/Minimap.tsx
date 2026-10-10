@@ -19,6 +19,7 @@ import {
 } from '../data/layout';
 import type { Rect } from '../data/types';
 
+/** Drawing width (viewBox units); the panel scales the plan down when space is short. */
 const WIDTH = 270;
 const BUILDINGS: Rect[] = [HALL.rect, RAW_SHED.rect, WAREHOUSE.rect, WORKSHOP.rect, SPRAY_TOWER.rect, LINK.rect];
 
@@ -31,6 +32,7 @@ export function Minimap() {
   const selectZone = useTwin((s) => s.selectZone);
   const flyTo = useTwin((s) => s.flyTo);
   const flow = useTwin((s) => s.layers.flow);
+  const selectedVehicle = useTwin((s) => s.vehicle);
   const [cam, setCam] = useState({ ...minimapCamera });
   const [vehicles, setVehicles] = useState<{ id: string; x: number; z: number; external: boolean }[]>([]);
 
@@ -66,10 +68,10 @@ export function Minimap() {
   const camY = clamp(my(cam.z), 4, height - 4);
 
   return (
-    <div className="minimap overlay-panel">
+    <div className="minimap overlay-panel" aria-label="Site plan">
       <div className="mm-h">
         <span>Site plan</span>
-        <span className="muted">click to move · N ↑</span>
+        <span className="muted">click to move · zone to select · N ↑</span>
       </div>
       <svg
         width={WIDTH}
@@ -149,8 +151,8 @@ export function Minimap() {
             cy={my(v.z)}
             r={v.external ? 2.6 : 1.6}
             fill={v.external ? '#e7ebee' : '#c98500'}
-            stroke="#0b1116"
-            strokeWidth={0.8}
+            stroke={v.id === selectedVehicle ? '#79bdd6' : '#0b1116'}
+            strokeWidth={v.id === selectedVehicle ? 1.8 : 0.8}
             pointerEvents="none"
           />
         ))}

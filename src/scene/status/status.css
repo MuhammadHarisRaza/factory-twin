@@ -1,0 +1,73 @@
+/* Operational overlays in the 3D twin (drei Html). Tokens from src/styles.css only. */
+
+/* Pins stack above the asset's own name tag / status pin, which share the same anchor. */
+.ops-pins,
+.ops-lift {
+  display: flex;
+  gap: 4px;
+  transform: translateY(-26px);
+  transition: opacity var(--t-base) var(--ease);
+}
+
+.ops-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  height: 20px;
+  padding: 0 7px 0 5px;
+  border-radius: var(--r-1);
+  background: #12171de6;
+  border: 1px solid #ffffff26;
+  color: var(--text-1);
+  font: var(--fw-medium) 10.5px var(--sans);
+  white-space: nowrap;
+  cursor: pointer;
+  pointer-events: auto;
+  box-shadow: var(--shadow-1);
+  transition:
+    opacity var(--t-base) var(--ease),
+    background var(--t-fast) var(--ease);
+}
+.ops-chip svg {
+  flex: none;
+  color: var(--text-2);
+}
+.ops-chip:hover {
+  background: #1a2129f2;
+}
+.ops-chip:focus-visible,
+.ops-pins .status-pin:focus-visible {
+  outline: none;
+  box-shadow: var(--focus);
+}
+.ops-chip.ops-amber {
+  border-color: #fab21980;
+}
+.ops-chip.ops-amber svg {
+  color: var(--warning);
+}
+
+/* Secondary value inside a chip (stage name, reject rate, health level). */
+.ops-sub {
+  padding-left: 6px;
+  border-left: 1px solid #ffffff1f;
+  color: var(--text-2);
+  font-variant-numeric: tabular-nums;
+}
+.status-pin .ops-sub {
+  margin-left: 1px;
+}
+
+/* Grey (planned / offline) variant of the shared status pin; amber and red exist already. */
+.status-pin.ops-grey {
+  border-color: #8a9bad73;
+}
+
+/* Destination of the selected vehicle's route. */
+.ops-dest {
+  gap: 6px;
+}
+.ops-dest svg {
+  flex: none;
+  color: var(--accent-strong);
+}

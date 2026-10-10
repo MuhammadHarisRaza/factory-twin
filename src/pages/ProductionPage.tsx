@@ -1,12 +1,13 @@
-import { useCallback, useState } from 'react';
-import { CircleCheck, Info, OctagonX, TriangleAlert, X } from 'lucide-react';
+import { useCallback, useState, type ReactNode } from 'react';
+import { ArrowRight, CircleCheck, Info, OctagonX, TriangleAlert, X } from 'lucide-react';
 import { useApp, openEquipment } from '../app/store';
 import { EQUIPMENT_BY_ID } from '../data/equipment';
-import { DOWNTIME_REASONS, LINE, M2_PER_TILE, PROCESS_MACHINES, STAGE_BY_ID, TARGET } from '../model/plant';
+import { BASE_REJECT_RATE, DOWNTIME_REASONS, LINE, M2_PER_TILE, PROCESS_MACHINES, STAGE_BY_ID, TARGET } from '../model/plant';
 import type { DowntimeCategory, DowntimeEvent, StageId } from '../model/types';
 import {
   bottleneck,
   clippedDuration,
+  energyIn,
   lineLossTree,
   lineMetrics,
   resolvePeriod,
@@ -19,14 +20,27 @@ import {
 } from '../sim/metrics';
 import { useSimValue } from '../sim/store';
 import { formatClock, formatDateTime, formatDay, formatDuration } from '../sim/time';
-import { ColumnChart, LineChart, RankedBars, Sparkline, TipRow, Waterfall, type WaterfallStep } from '../ui/kit/charts';
+import { ColumnChart, LineChart, RankedBars, TipRow, Waterfall, type WaterfallStep } from '../ui/kit/charts';
 import { DataTable, type Column } from '../ui/kit/DataTable';
-import { fmtInt, fmtPct, pct } from '../ui/kit/format';
+import { fmt1, fmtInt, fmtPct, pct } from '../ui/kit/format';
 import { Panel, Segmented } from '../ui/kit/Panel';
 import { MachineStatus, MetricText, SourceTag, StatusBadge } from '../ui/kit/Status';
 import type { MachineState } from '../model/types';
+import { LossBars } from './production/LossBars';
 import { MachineDrawer } from './production/MachineDrawer';
-import { filterEvents, filteredPareto, granularityFor, isFlow, lastFullHour, lineTrend, reasonLabel, shiftProjection, type EventFilter } from './production/derive';
+import { OeeExplainPanel } from './production/OeeExplainPanel';
+import { PlanVsActual } from './production/PlanVsActual';
+import {
+  filterEvents,
+  filteredPareto,
+  granularityFor,
+  isFlow,
+  lineTrend,
+  machineLosses,
+  reasonLabel,
+  shiftProjection,
+  type EventFilter,
+} from './production/derive';
 import './production.css';
 
 const eqName = (id: string) => EQUIPMENT_BY_ID[id]?.name ?? id;
@@ -43,17 +57,23 @@ export function ProductionPage() {
 
   return (
     <div className="page prod">
+      {/* 1. Are we on target? */}
       <Summary periodKey={periodKey} constraint={bn.current} shifted={bn.shifted} />
+      <PlanVsActual periodKey={periodKey} className="col-7" />
+      <OeeExplainPanel periodKey={periodKey} className="col-5" />
 
+      {/* 2. Where do we lose, and why? */}
       <LossWaterfall periodKey={periodKey} />
       <DowntimePareto periodKey={periodKey} filter={filter} setFilter={setFilter} />
-
+      <MachineLossPanel periodKey={periodKey} selected={machine} onSelect={setMachine} />
       <StageTable periodKey={periodKey} constraintStage={bn.current.stage} selected={machine} onSelect={setMachine} />
-      <BottleneckPanel ranked={bn.ranked} shifted={bn.shifted} />
 
+      {/* 3. How is it trending? */}
       <Trends periodKey={periodKey} />
-
+      <BottleneckPanel ranked={bn.ranked} shifted={bn.shifted} />
       <ShiftTable />
+
+      {/* 4. Event detail */}
       <EventTable periodKey={periodKey} filter={filter} setFilter={setFilter} />
 
       {machine && <MachineDrawer id={machine} periodKey={periodKey} onClose={closeDrawer} />}
@@ -63,16 +83,32 @@ export function ProductionPage() {
 
 // ── 1. Summary band ──────────────────────────────────────────────────────────
 
+function Kpi({ label, value, lines, title }: { label: string; value: ReactNode; lines: ReactNode[]; title?: string }) {
+  return (
+    <div title={title}>
+      <div className="kpi-label">{label}</div>
+      <div className="kpi-value">{value}</div>
+      {lines.map((l, i) => (
+        <div key={i} className="kpi-sub">
+          {l}
+        </div>
+      ))}
+    </div>
+  );
+}
+
 function Summary({ periodKey, constraint, shifted }: { periodKey: PeriodKey; constraint: StageMetrics; shifted: boolean }) {
+  const tariffs = useApp((s) => s.tariffs);
+  const go = useApp((s) => s.go);
   const d = useSimValue(
     (s) => {
       const p = resolvePeriod(periodKey, s.minute);
       const lm = lineMetrics(s, p);
-      return { p, lm, proj: periodKey === 'shift' ? shiftProjection(s, lm.output) : null, hour: lastFullHour(s) };
+      return { p, lm, energy: energyIn(s, p, tariffs), proj: periodKey === 'shift' ? shiftProjection(s, lm.output) : null };
     },
-    [periodKey],
+    [periodKey, tariffs],
   );
-  const { lm, proj, hour } = d;
+  const { lm, proj, energy } = d;
   const att = lm.attainment;
   const gap = lm.targetM2 - lm.outputM2;
   // Meter scale: target sits at 80 % of the track so over-delivery stays visible.
@@ -86,12 +122,15 @@ function Summary({ periodKey, constraint, shifted }: { periodKey: PeriodKey; con
           ? { tone: 'good', icon: CircleCheck, text: `On track · ${pct(att)} of target` }
           : { tone: att >= 0.9 ? 'warning' : 'critical', icon: att >= 0.9 ? TriangleAlert : OctagonX, text: `Behind target by ${fmtInt(gap)} m²` };
   const VIcon = verdict.icon;
+  const oee = lm.oee.oee;
+  const oeeDelta = oee.status === 'ok' ? Math.round((oee.value! - TARGET.oeeTarget) * 1000) / 10 : null;
   const rejectRate = lm.inspected > 0 ? lm.rejected / lm.inspected : null;
+  const stops = lm.activeStops.length;
 
   return (
-    <section className="summary" aria-label="Production summary">
-      <div>
-        <div className="kpi-label">Output vs target · {d.p.label}</div>
+    <section className="summary prod-kpis" aria-label="Production summary">
+      <div className="prod-kpi-head">
+        <div className="kpi-label">Actual vs target · {d.p.label}</div>
         <div className={`prod-verdict ${verdict.tone}`}>
           <VIcon size={16} strokeWidth={2.2} aria-hidden />
           {verdict.text}
@@ -110,88 +149,103 @@ function Summary({ periodKey, constraint, shifted }: { periodKey: PeriodKey; con
               Projected at {formatClock(proj.endsAt)}: <b className="prod-strong">{fmtInt(proj.projectedM2)} m²</b> ({pct(proj.attainment)}) at {fmtInt(proj.rateM2h)} m²/h
             </span>
           ) : (
-            <span>
-              {fmtPct(att)} attainment · first-quality m² accepted at sorting
-            </span>
+            <span>{fmtPct(att)} attainment · first-quality m² accepted at sorting</span>
           )}
         </div>
+        <div className="kpi-sub" title="Active-period method over the last 2 h">
+          <span>
+            Constraint: <span className="prod-strong">{constraint.name}</span>
+          </span>
+          {shifted && <StatusBadge tone="warning" icon={TriangleAlert} label={`Shifted from ${stageName(LINE.designConstraint)}`} />}
+        </div>
       </div>
 
-      <div>
-        <div className="kpi-label">Line OEE</div>
-        <div className="kpi-value">
-          <MetricText m={lm.oee.oee} />
-        </div>
-        <div className="kpi-sub" title="Availability × Performance × Quality">
-          <span>
-            A <MetricText m={lm.oee.availability} />
-          </span>
-          <span>
-            × P <MetricText m={lm.oee.performance} />
-          </span>
-          <span>
-            × Q <MetricText m={lm.oee.quality} />
-          </span>
-        </div>
-        <div className="kpi-sub">Target {pct(TARGET.oeeTarget)}</div>
-      </div>
-
-      <div>
-        <div className="kpi-label">Unplanned downtime</div>
-        <div className="kpi-value">
-          {fmtInt(lm.downtimeMin)}
-          <small>min</small>
-        </div>
-        <div className="kpi-sub">
-          {lm.activeStops.length ? (
-            <StatusBadge tone="critical" icon={OctagonX} label={`${lm.activeStops.length} active ${lm.activeStops.length === 1 ? 'stoppage' : 'stoppages'}`} />
+      <Kpi
+        label="OEE"
+        title="Availability × Performance × Quality — see “How OEE is calculated”"
+        value={<MetricText m={oee} />}
+        lines={[
+          <>
+            <span>Target {pct(TARGET.oeeTarget)}</span>
+            {oeeDelta != null && (
+              <span className={oeeDelta < 0 ? 'prod-under' : ''}>
+                {oeeDelta < 0 ? '−' : '+'}
+                {fmt1(Math.abs(oeeDelta))} pts
+              </span>
+            )}
+          </>,
+        ]}
+      />
+      <Kpi
+        label="Availability"
+        title="Kiln operating time ÷ planned production time"
+        value={<MetricText m={lm.oee.availability} />}
+        lines={[<span key="a">Kiln run ÷ planned time</span>]}
+      />
+      <Kpi
+        label="Performance"
+        title="Ideal cycle time × kiln count ÷ operating time"
+        value={<MetricText m={lm.oee.performance} />}
+        lines={[<span key="p">Kiln rate ÷ ideal rate</span>]}
+      />
+      <Kpi
+        label="Quality rate"
+        title="Tiles accepted first time ÷ tiles sorted"
+        value={<MetricText m={lm.oee.quality} />}
+        lines={[<span key="q">First pass at sorting</span>]}
+      />
+      <Kpi
+        label="Total downtime"
+        title="Unplanned stops summed over all process machines; excludes planned stops and starved / blocked time"
+        value={
+          <>
+            {fmtInt(lm.downtimeMin)}
+            <small>min</small>
+          </>
+        }
+        lines={[
+          stops ? (
+            <StatusBadge tone="critical" icon={OctagonX} label={`${stops} active ${stops === 1 ? 'stop' : 'stops'}`} />
           ) : (
-            <StatusBadge tone="good" icon={CircleCheck} label="No active stoppages" />
-          )}
-        </div>
-        <div className="kpi-sub">Excl. planned, starved, blocked</div>
-      </div>
-
-      <div>
-        <div className="kpi-label">Good vs rejected</div>
-        <div className="kpi-value">
-          {fmtInt(lm.good)}
-          <small>/ {fmtInt(lm.rejected)} tiles</small>
-        </div>
-        <div className="kpi-sub">
-          <span>Reject rate {fmtPct(rejectRate)}</span>
-        </div>
-        <div className="kpi-sub">{fmtInt(lm.inspected)} sorted</div>
-      </div>
-
-      <div>
-        <div className="kpi-label">Current constraint</div>
-        <div className="kpi-headline">{constraint.name}</div>
-        <div className="kpi-sub">
-          <span>Active {pct(constraint.activeShare)} of last 2 h</span>
-        </div>
-        <div className="kpi-sub">
-          {shifted ? (
-            <StatusBadge tone="warning" icon={TriangleAlert} label={`Shifted from ${stageName(LINE.designConstraint)} (design)`} />
-          ) : (
-            <span>Matches design constraint</span>
-          )}
-        </div>
-      </div>
-
-      <div>
-        <div className="kpi-label">Last full hour · {formatClock(hour.from)}</div>
-        <div className="kpi-value">
-          {fmtInt(hour.outputM2)}
-          <small>m²/h</small>
-        </div>
-        <div className="kpi-sub">
-          <span>Target {fmtInt(hour.targetM2)} m²/h</span>
-        </div>
-        <div className="prod-spark" title="Output of the last 8 full hours">
-          <Sparkline values={hour.spark} width={110} height={22} />
-        </div>
-      </div>
+            <StatusBadge tone="good" icon={CircleCheck} label="None active" />
+          ),
+          <span key="u">Unplanned · all machines</span>,
+        ]}
+      />
+      <Kpi
+        label="Defect rate"
+        title="Tiles rejected at sorting ÷ tiles sorted"
+        value={fmtPct(rejectRate)}
+        lines={[
+          <span key="r">
+            {fmtInt(lm.rejected)} of {fmtInt(lm.inspected)} tiles
+          </span>,
+          <button key="l" className="row-link" onClick={() => go('quality')}>
+            Quality <ArrowRight size={11} aria-hidden />
+          </button>,
+        ]}
+      />
+      <Kpi
+        label="Energy per good m²"
+        title="Electrical + thermal energy of all metered consumers ÷ first-quality m². Illustrative model; tariffs are assumptions."
+        value={
+          <>
+            {fmt1(energy.sec)}
+            <small>kWh/m²</small>
+          </>
+        }
+        lines={[
+          <span key="t">
+            {fmtInt(energy.total)} kWh · {tariffs.currency} {fmtInt(energy.cost)}
+          </span>,
+          <>
+            <span className="tag sim">Illustrative model</span>
+            <button className="row-link" onClick={() => go('energy')}>
+              Energy <ArrowRight size={11} aria-hidden />
+            </button>
+          </>,
+        ]}
+      />
     </section>
   );
 }
@@ -221,10 +275,13 @@ function LossWaterfall({ periodKey }: { periodKey: PeriodKey }) {
     <Panel
       className="col-5"
       title="OEE loss waterfall"
-      subtitle="Line constraint time, minutes"
+      subtitle="Where planned kiln time goes · minutes"
       footer={
         <div className="prod-foot">
-          <span>Line OEE measured at the line constraint (H-KILN) × first-pass quality at sorting; computed from simulated minute records.</span>
+          <span>
+            Planned production time at the kiln split into availability, performance and quality losses; fully productive ÷ planned time = line OEE
+            {t && t.planned > 0 ? ` (${fmtPct(t.fullyProductive / t.planned)})` : ''}.
+          </span>
           {issues.length > 0 && (
             <span className="prod-issues">
               <TriangleAlert size={12} aria-hidden /> {issues.join(' · ')}
@@ -319,6 +376,33 @@ function CategorySelect({ filter, setFilter }: { filter: EventFilter; setFilter:
         </option>
       ))}
     </select>
+  );
+}
+
+function MachineLossPanel({ periodKey, selected, onSelect }: { periodKey: PeriodKey; selected: string | null; onSelect: (id: string) => void }) {
+  const rows = useSimValue((s) => machineLosses(s, resolvePeriod(periodKey, s.minute)), [periodKey]);
+  const total = rows.reduce((a, r) => a + r.totalM2, 0);
+  return (
+    <Panel
+      className="col-4"
+      title="Losses by machine"
+      subtitle={`Lost output at ideal rate · ${fmtInt(total)} m² · click a machine for the drill-down`}
+      footer={
+        <span>
+          Unplanned downtime and starved / blocked minutes × the machine’s ideal rate, in tile-equivalent m². Losses away from the kiln cost line output
+          only when they starve or block the kiln.
+        </span>
+      }
+    >
+      {total > 0 ? (
+        <LossBars rows={rows} selectedKey={selected} onSelect={onSelect} />
+      ) : (
+        <div className="empty">
+          <b>No losses</b>
+          No unplanned downtime, starved or blocked time in this period
+        </div>
+      )}
+    </Panel>
   );
 }
 
@@ -445,6 +529,7 @@ function BottleneckPanel({ ranked, shifted }: { ranked: StageMetrics[]; shifted:
 // ── 4. Trends ────────────────────────────────────────────────────────────────
 
 function Trends({ periodKey }: { periodKey: PeriodKey }) {
+  const go = useApp((s) => s.go);
   const d = useSimValue(
     (s) => {
       const p = resolvePeriod(periodKey, s.minute);
@@ -454,10 +539,13 @@ function Trends({ periodKey }: { periodKey: PeriodKey }) {
     [periodKey],
   );
   const unit = d.g === 'hour' ? 'Hourly' : 'Per-shift';
-  const tickEvery = Math.max(1, Math.ceil(d.data.length / 12));
+  const tickEvery = Math.max(1, Math.ceil(d.data.length / 8));
+  const rates = d.data.map((b) => b.defectRate);
+  // Axis top on a whole-percent step so the five gridlines land on readable values.
+  const rateMax = Math.max(0.02, Math.ceil((Math.max(BASE_REJECT_RATE, ...rates.filter((r): r is number => r != null)) * 1.15) / 0.02) * 0.02);
   return (
     <>
-      <Panel className="col-6" title={`${unit} output vs target`} subtitle="First-quality m² · dashed = target">
+      <Panel className="col-4" title={`${unit} output vs target`} subtitle="First-quality m² · dashed = target">
         <ColumnChart
           data={d.data.map((b) => ({ key: b.key, label: b.label, value: b.outputM2, target: b.targetM2, muted: b.partial }))}
           format={fmtInt}
@@ -478,7 +566,7 @@ function Trends({ periodKey }: { periodKey: PeriodKey }) {
           }}
         />
       </Panel>
-      <Panel className="col-6" title={`${unit} line OEE`} subtitle={`Dashed line = OEE target ${pct(TARGET.oeeTarget)} · gaps where OEE is unavailable`}>
+      <Panel className="col-4" title={`${unit} line OEE`} subtitle={`Dashed = target ${pct(TARGET.oeeTarget)} · gaps where OEE is unavailable`}>
         <LineChart
           labels={d.data.map((b) => b.label)}
           series={[{ id: 'oee', label: 'Line OEE', color: 'var(--series-1)', points: d.data.map((b) => b.oee) }]}
@@ -486,6 +574,25 @@ function Trends({ periodKey }: { periodKey: PeriodKey }) {
           format={(v) => pct(v)}
           tickEvery={tickEvery}
           reference={{ value: TARGET.oeeTarget, label: `Target ${pct(TARGET.oeeTarget)}` }}
+        />
+      </Panel>
+      <Panel
+        className="col-4"
+        title={`${unit} defect rate`}
+        subtitle={`Rejected ÷ sorted tiles · dashed = baseline ${fmtPct(BASE_REJECT_RATE)}`}
+        actions={
+          <button className="btn sm ghost" onClick={() => go('quality')} title="Open Quality Intelligence for defects, stations and batches">
+            Quality <ArrowRight size={12} aria-hidden />
+          </button>
+        }
+      >
+        <LineChart
+          labels={d.data.map((b) => b.label)}
+          series={[{ id: 'defects', label: 'Defect rate', color: 'var(--series-1)', points: rates }]}
+          yMax={rateMax}
+          format={(v) => fmtPct(v)}
+          tickEvery={tickEvery}
+          reference={{ value: BASE_REJECT_RATE, label: `Baseline ${fmtPct(BASE_REJECT_RATE)}` }}
         />
       </Panel>
     </>
@@ -630,7 +737,7 @@ function ShiftTable() {
     { key: 'down', header: 'Unpl. downtime', numeric: true, render: (r) => formatDuration(r.metrics.downtimeMin), sort: (r) => r.metrics.downtimeMin },
   ];
   return (
-    <Panel className="col-12" title="Shift performance" subtitle="Last 7 days · newest first · in-progress shift measured to now (target pro-rated)" flush>
+    <Panel className="col-8" title="Shift performance" subtitle="Last 7 days · newest first · in-progress shift measured to now (target pro-rated)" flush>
       <DataTable columns={cols} rows={rows} rowKey={(r) => `${r.date}-${r.id}`} maxHeight={320} />
     </Panel>
   );

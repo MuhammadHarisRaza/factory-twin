@@ -6,7 +6,7 @@ import { equipmentBounds, useTwin, type LayerId } from '../store';
 import { EQUIPMENT_BY_ID } from '../data/equipment';
 import { ZONE_BY_ID } from '../data/layout';
 import { useSimValue } from '../sim/store';
-import { MACHINE_STATE } from '../ui/kit/Status';
+import { MACHINE_STATE, OP_COLOR_HEX, toneToColor } from '../ui/kit/Status';
 
 /** Corner-bracket segments (3 short edges per box corner) around a box. */
 function bracketPoints(box: Box3) {
@@ -87,6 +87,8 @@ export function Selectable({
   // Live machine state from the shared simulation (process machines only).
   const state = useSimValue((s) => s.machines[id]?.state ?? null, [id]);
   const st = state ? MACHINE_STATE[state] : null;
+  // Product-wide four-colour scheme (green · amber · red · grey).
+  const op = st ? toneToColor(st.tone) : null;
   const pinned = statusOn && state != null && (state === 'down' || state === 'planned' || state === 'reduced');
 
   useLayoutEffect(() => {
@@ -168,7 +170,7 @@ export function Selectable({
           {pinned && !showTag && st && StIcon && (
             <Html position={[center.x, box.max.y + 1.2, center.z]} center zIndexRange={[8, 0]}>
               <button
-                className={`status-pin status ${st.tone} ${st.tone}`}
+                className={`status-pin status ${st.tone} ops-${op}`}
                 onClick={() => useTwin.getState().select(id)}
                 title={`${item.name}: ${st.label}`}
               >
@@ -186,7 +188,7 @@ export function Selectable({
                 [box.min.x - 0.6, 0.1, box.max.z + 0.6],
                 [box.min.x - 0.6, 0.1, box.min.z - 0.6],
               ]}
-              color="#e05252"
+              color={OP_COLOR_HEX.red}
               lineWidth={2}
               transparent
               opacity={0.85}

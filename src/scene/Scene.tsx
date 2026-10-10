@@ -14,6 +14,7 @@ import { Structure } from './Structure';
 import { Conveyors } from './Conveyors';
 import { FlowOverlay } from './FlowOverlay';
 import { SimVehicles, selectedVehiclePose } from './SimVehicles';
+import { OperationalStatus } from './status';
 import { Utilities } from './zones/Utilities';
 import { RawMaterials } from './zones/RawMaterials';
 import { Preparation } from './zones/Preparation';
@@ -399,6 +400,7 @@ export default function Scene({ active = true }: { active?: boolean }) {
         <Conveyors />
         <SimVehicles />
         <FlowOverlay />
+        <OperationalStatus />
         <ZoneLabels />
       </Suspense>
       <OrbitControls

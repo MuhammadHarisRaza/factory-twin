@@ -1,13 +1,19 @@
-import { ChevronDown, ChevronRight, OctagonX, PanelLeftClose, PanelLeftOpen } from 'lucide-react';
+import { useLayoutEffect } from 'react';
+import { ChevronDown, ChevronRight, OctagonX, PanelLeftClose } from 'lucide-react';
 import { useTwin } from '../store';
 import { VIEWS, VIEW_ORDER, ZONES } from '../data/layout';
 import { EQUIPMENT } from '../data/equipment';
 import { useSimValue } from '../sim/store';
 import type { MachineState } from '../model/types';
 import { MACHINE_STATE } from './kit/Status';
+import { QUICK_VIEWS } from './twin/quickViews';
 
 /** Keyboard shortcut shown next to the n-th view: 1–9, then 0. */
 export const viewShortcut = (index: number) => (index + 1) % 10;
+
+/** Below this viewport width the panel starts folded so the 3D view keeps the room (once per session). */
+const AUTO_FOLD_BELOW = 1500;
+let autoFolded = false;
 
 function StateIcon({ state }: { state: MachineState }) {
   const s = MACHINE_STATE[state];
@@ -19,7 +25,7 @@ function StateIcon({ state }: { state: MachineState }) {
   );
 }
 
-/** Left panel: camera views, then the zone list with expandable equipment and live status. */
+/** Left panel: camera and quick views, then the zone list with expandable equipment and live status. */
 export function ZonePanel() {
   const open = useTwin((s) => s.zonePanel);
   const setOpen = useTwin((s) => s.setZonePanel);
@@ -30,29 +36,39 @@ export function ZonePanel() {
   const preset = useTwin((s) => s.preset);
   const states = useSimValue((s) => Object.fromEntries(Object.values(s.machines).map((m) => [m.id, m.state])) as Record<string, MachineState>);
 
-  if (!open) {
-    return (
-      <button className="btn icon panel-open overlay-panel" onClick={() => setOpen(true)} title="Show zones & views">
-        <PanelLeftOpen size={16} />
-      </button>
-    );
-  }
+  useLayoutEffect(() => {
+    if (autoFolded) return;
+    autoFolded = true;
+    if (window.innerWidth < AUTO_FOLD_BELOW) setOpen(false);
+  }, [setOpen]);
+
+  // Reopened from the rail (first button).
+  if (!open) return null;
 
   return (
     <aside className="zones overlay-panel" aria-label="Factory navigation">
       <div className="zones-h">
         <span>Views</span>
-        <button className="btn ghost sm icon" onClick={() => setOpen(false)} title="Collapse panel">
+        <button className="btn ghost sm icon" onClick={() => setOpen(false)} title="Collapse panel (reopen from the rail)">
           <PanelLeftClose size={15} />
         </button>
       </div>
       <div className="views">
         {VIEW_ORDER.map((id, i) => (
-          <button key={id} onClick={() => preset(id)} title={`Shortcut ${viewShortcut(i)}`}>
+          <button key={id} onClick={() => preset(id)} title={`${VIEWS[id].label} · shortcut ${viewShortcut(i)}`}>
             <kbd>{viewShortcut(i)}</kbd>
             {VIEWS[id].label}
           </button>
         ))}
+        {QUICK_VIEWS.map((q) => {
+          const Icon = q.icon;
+          return (
+            <button key={q.id} className="tw-quick" onClick={q.run} title={q.hint}>
+              <Icon size={13} aria-hidden />
+              {q.label}
+            </button>
+          );
+        })}
       </div>
       <div className="zones-h">
         <span>Production zones</span>
@@ -75,7 +91,7 @@ export function ZonePanel() {
                   <small>{zone.stage}</small>
                 </span>
                 {down > 0 && (
-                  <span className="zone-alert" title={`${down} machine${down > 1 ? 's' : ''} down`}>
+                  <span className="zone-alert" title={`${down} machine${down > 1 ? 's' : ''} down`} aria-label={`${down} down`}>
                     <OctagonX size={13} />
                   </span>
                 )}

@@ -8,6 +8,7 @@ import { CopilotDrawer } from './app/CopilotDrawer';
 import { useKeyboardShortcuts } from './useKeyboardShortcuts';
 import { Loader, PresentationExit, SceneErrorBoundary } from './ui/Overlays';
 import { TwinOverlays } from './ui/twin/TwinOverlays';
+import { TwinSearch } from './ui/twin/Search';
 import { ProductionPage } from './pages/ProductionPage';
 import { QualityPage } from './pages/QualityPage';
 import { MachineHealthPage } from './pages/MachineHealthPage';
@@ -20,25 +21,28 @@ import { AssetsPage } from './pages/AssetsPage';
 // The 3D scene (three.js + all geometry) loads as its own chunk so the shell paints first.
 const Scene = lazy(() => import('./scene/Scene'));
 
+/** Header actions of the Factory Twin: global search, fit, overview and presentation mode. */
 function TwinActions() {
   const fit = useTwin((s) => s.fit);
   const reset = useTwin((s) => s.reset);
   const setUiHidden = useTwin((s) => s.setUiHidden);
+  const uiHidden = useTwin((s) => s.uiHidden);
   return (
-    <>
-      <button className="btn ghost" onClick={fit} title="Fit the whole site in view (F)">
+    <div className="tw-actions">
+      {!uiHidden && <TwinSearch />}
+      <button className="btn ghost" onClick={fit} title="Fit the whole site in view (F)" aria-label="Fit site">
         <Expand size={14} />
         <span className="btn-label">Fit</span>
       </button>
-      <button className="btn ghost" onClick={reset} title="Return to the factory overview and clear selection (R)">
+      <button className="btn ghost" onClick={reset} title="Return to the factory overview and clear selection (R)" aria-label="Overview">
         <RotateCcw size={14} />
         <span className="btn-label">Overview</span>
       </button>
-      <button className="btn ghost" onClick={() => setUiHidden(true)} title="Presentation mode — hide the interface (H)">
+      <button className="btn ghost" onClick={() => setUiHidden(true)} title="Presentation mode — hide the interface (H)" aria-label="Present">
         <Presentation size={14} />
         <span className="btn-label">Present</span>
       </button>
-    </>
+    </div>
   );
 }
 

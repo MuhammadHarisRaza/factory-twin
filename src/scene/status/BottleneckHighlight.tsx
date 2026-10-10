@@ -52,7 +52,7 @@ export function BottleneckHighlight() {
   const target = info.machines[0];
   const title = bottleneckTitle(info, EQUIPMENT_BY_ID[target]?.name ?? target);
   return (
-    <group>
+    <group name="overlay:bottleneck" userData={{ twinOverlay: true }}>
       {geometry.outlines.map((pts, i) => (
         <Line
           key={`${info.stage}-${i}`}

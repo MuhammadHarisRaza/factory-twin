@@ -286,7 +286,8 @@ function raise(s: SimState, t: number, spec: Spec): OpEvent {
       return ev;
     }
   }
-  const start = spec.start ?? t;
+  // Event times are whole plant minutes (vehicle timestamps are fractional).
+  const start = Math.floor(spec.start ?? t);
   const ev: OpEvent = {
     id: `EV-${String(++I.seq).padStart(5, '0')}`,
     category: spec.category,
@@ -330,6 +331,7 @@ function raise(s: SimState, t: number, spec: Spec): OpEvent {
   I.index.set(ev.id, ev);
   I.open[spec.key] = ev.id;
   initAcc(s, ev, t);
+  backfill(s, ev, t);
   spec.capture?.(ev);
   s.version++;
   return ev;
@@ -649,6 +651,37 @@ function initAcc(s: SimState, ev: OpEvent, t: number) {
   if (ev.category === 'quality') ev.acc.referenceRejectRate = referenceRejectRate(s, t);
 }
 
+/**
+ * Events are dated from when their condition began (often a few minutes before the rule fired):
+ * fill the accumulators for that window from the minute log so the impact covers the whole event.
+ * Kiln (constraint) minutes are only credited when the event is the kiln's own condition, or a kiln
+ * starvation / blockage — which also credits its root event.
+ */
+function backfill(s: SimState, ev: OpEvent, t: number) {
+  if (ev.category !== 'production' || ev.start >= t) return;
+  const asset = ev.asset.equipmentId;
+  const ideal = asset ? OPS_BY_ID[asset]?.idealRatePerHour : null;
+  const typical = ideal ? (ideal / 60) * 0.945 : asset && CONVEYOR_BY_ID[asset] ? ev.acc.kilnTypicalRate : 0;
+  const ownsKiln = asset === 'H-KILN';
+  const root = ev.consequenceOf ? eventById(s, ev.consequenceOf) : undefined;
+  for (let m = Math.max(ev.start, t - LOG_MIN + 1); m < t; m++) {
+    ev.acc.minutes++;
+    const x = asset ? minuteAt(s, asset, m) : null;
+    if (x && typical) ev.acc.assetLostTiles += Math.max(0, typical - x.rate);
+    if (!ownsKiln) continue;
+    const k = minuteAt(s, 'H-KILN', m);
+    if (!k) continue;
+    const held = HELD.includes(k.state);
+    const relevant = ev.type === 'below-rate' ? !held && !k.limited : held;
+    if (!relevant) continue;
+    const lost = Math.max(0, ev.acc.kilnTypicalRate - k.rate);
+    for (const target of root ? [ev, root] : [ev]) {
+      if (held || lost > ev.acc.kilnTypicalRate * 0.05) target.acc.constraintMin++;
+      target.acc.constraintLostTiles += lost;
+    }
+  }
+}
+
 /** Per-minute accumulation for every event whose condition is active. */
 function accumulate(s: SimState, t: number) {
   const kiln = minuteAt(s, 'H-KILN', t);
@@ -658,6 +691,8 @@ function accumulate(s: SimState, t: number) {
   if (kilnHeld) {
     kilnOwner = openEvent(s, 'stop:H-KILN') ?? openEvent(s, 'starved:H-KILN') ?? openEvent(s, 'blocked:H-KILN');
   }
+  // A kiln running slow at its own pace is a line loss too: its below-rate event owns that minute.
+  if (!kilnHeld && kiln && (kiln.state === 'running' || kiln.state === 'reduced') && !kiln.limited) kilnOwner = openEvent(s, 'rate:H-KILN');
   const owners = new Set<OpEvent>();
   if (kilnOwner) {
     owners.add(kilnOwner);
@@ -680,8 +715,9 @@ function accumulate(s: SimState, t: number) {
       if (x && typical) ev.acc.assetLostTiles += Math.max(0, typical - x.rate);
     }
     if (owners.has(ev) && kiln) {
-      ev.acc.constraintMin++;
-      ev.acc.constraintLostTiles += Math.max(0, ev.acc.kilnTypicalRate - kiln.rate);
+      const lost = Math.max(0, ev.acc.kilnTypicalRate - kiln.rate);
+      if (kilnHeld || lost > ev.acc.kilnTypicalRate * 0.05) ev.acc.constraintMin++;
+      ev.acc.constraintLostTiles += lost;
     }
     if (ev.category === 'quality' && q) {
       const relevant = ev.refs.defect ? (q.byDefect[ev.refs.defect] ?? 0) : q.rejected;

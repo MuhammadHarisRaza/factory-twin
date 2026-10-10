@@ -61,9 +61,9 @@ export function eventImpact(s: SimState, ev: OpEvent, finance: FinanceAssumption
     const fpy = fpyBefore(s, ev.start);
     const lineGoodTiles = a.constraintLostTiles * fpy;
     rows.push({
-      label: 'Kiln (line constraint) held up by this event',
+      label: 'Kiln (line constraint) held up or slowed by this event',
       value: `${fmtN(a.constraintMin)} min`,
-      basis: 'Minutes the kiln was down, starved or blocked with this event as the cause',
+      basis: 'Minutes the kiln was down, starved, blocked or running below its typical rate with this event as the cause',
     });
     if (a.constraintMin === 0) {
       notes.push(
@@ -82,7 +82,7 @@ export function eventImpact(s: SimState, ev: OpEvent, finance: FinanceAssumption
     } else if (lineGoodTiles > 0) {
       lines.push(lostOutputValue(finance, lineGoodTiles));
     }
-    if (ev.asset.equipmentId === 'H-KILN' && a.constraintMin > 0 && !root) {
+    if (ev.asset.equipmentId === 'H-KILN' && a.constraintMin > 0 && !root && ev.type !== 'below-rate') {
       const c = CONSUMER_BY_ID['H-KILN'];
       const kw = ((c.thermal?.[0] ?? 0) + c.elec[0]) * (c.stoppedFactor ?? 1);
       const kwh = (kw * a.constraintMin) / 60;

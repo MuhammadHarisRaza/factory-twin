@@ -97,7 +97,7 @@ export function StatusBeacons() {
 
   if (!anchors.length) return null;
   return (
-    <group visible={visible}>
+    <group visible={visible} name="overlay:status-beacons" userData={{ twinOverlay: true }}>
       <instancedMesh
         key={`d${anchors.length}`}
         ref={dark}

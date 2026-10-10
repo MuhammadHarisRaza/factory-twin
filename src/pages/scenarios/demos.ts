@@ -352,7 +352,9 @@ export function demoView(s: SimState, def: DemoDef, v: Values, run: DemoRun | nu
     : run
       ? def.waiting(ctx)
       : 'Set up to create the scenario; its event appears here.';
-  const skip = run && !primary && active ? def.skip(ctx) : null;
+  const raw = run && !primary && active ? def.skip(ctx) : null;
+  // Whole simulated minutes (the clock advances by minutes; labels must not show float noise).
+  const skip = raw == null ? null : Math.max(1, Math.ceil(raw - 1e-6));
   return { run, scenarios: rows, active, clearable, events, primary, steps: def.steps(ctx), status, eventLine, skip };
 }
 

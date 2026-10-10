@@ -154,8 +154,8 @@ export function createLogistics(seed: number): LogisticsState {
       type: 'forklift',
       label: `Forklift ${id.slice(3)}`,
       operator: role === 'packaging' ? 'Packaging' : 'Warehouse',
-      legs: [stop(0, Infinity, home, role === 'packaging' ? 'GF-PACK' : 'GF-RACK', 'Idle', 0)],
-      zoneLog: [{ zone: role === 'packaging' ? 'GF-PACK' : 'GF-RACK', start: 0 }],
+      legs: [stop(0, Infinity, home, homeZone(role), 'Idle', 0)],
+      zoneLog: [{ zone: homeZone(role), start: 0 }],
       task,
       spawned: 0,
     };
@@ -541,11 +541,18 @@ function runForklifts(s: SimState, t: number) {
   }
 }
 
+/** Where each forklift waits when idle: dispatch forklifts in the staging lanes, put-away at the racks. */
+const homeZone = (role: ForkliftRuntime['role']) => (role === 'packaging' ? 'GF-PACK' : role === 'dispatch' ? 'GF-STG' : 'GF-RACK');
+
 function dispatchWork(s: SimState, id: string, fl: ForkliftRuntime, t: number) {
   const st = s.logistics;
   const v = st.vehicles[id];
   // Find a docked truck that is loading and has no forklift yet.
   if (!fl.truckId) {
+    // Share the work: a free dispatch forklift that has waited longer takes the next truck first.
+    const longerIdle = Object.entries(st.forklifts).some(
+      ([oid, o]) => oid !== id && o.role === 'dispatch' && !o.truckId && o.busyUntil <= t && (o.busyUntil < fl.busyUntil || (o.busyUntil === fl.busyUntil && oid < id)),
+    );
     const taken = new Set(Object.values(st.forklifts).map((f) => f.truckId));
     const dockId = Object.keys(st.docks).find((d) => {
       const tr = st.docks[d].vehicleId;
@@ -559,7 +566,7 @@ function dispatchWork(s: SimState, id: string, fl: ForkliftRuntime, t: number) {
         !loadingDone(st, truck.id)
       );
     });
-    if (!dockId) {
+    if (!dockId || longerIdle) {
       if (lastLeg(v).end !== Infinity) push(v, stop(endOf(v), Infinity, posEnd(lastLeg(v)), 'GF-STG', 'Idle', faceEnd(lastLeg(v))));
       v.task = 'Available';
       return;

@@ -111,10 +111,11 @@ export function SignalsTab({ equipment, onEquipment }: { equipment: string; onEq
         </Panel>
       </div>
       <div className="col-4">
-        <Panel title="How signals become metrics" subtitle="One signal id per value; every metric is derived from these">
+        <Panel title="How signals become metrics" subtitle="One signal id per value">
           <p className="a-text">
-            Each workspace computes its figures from these signal ids only. A machine's <span className="mono">state</span> drives availability and the
-            downtime log; <span className="mono">count_total</span> drives performance, quality and output; inspection counters drive first-pass yield.
+            Signal values here are read from the simulation state. A machine's <span className="mono">state</span> drives availability and the downtime
+            log; <span className="mono">count_total</span> drives performance, quality and output; inspection counters and records drive first-pass yield
+            and the defect Pareto.
           </p>
           <dl className="dl">
             {MAPPING.map(([name, e]) => (

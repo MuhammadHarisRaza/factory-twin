@@ -7,12 +7,39 @@ import { useSimValue } from '../../sim/store';
 import { fleetMetrics, resolvePeriod } from '../../sim/metrics';
 import type { TruckRuntime } from '../../sim/logistics';
 import { formatClock, formatDuration } from '../../sim/time';
-import { MACHINE_STATE, OP_COLOR_HEX, machineColor } from '../kit/Status';
+import { OPERATIONAL_STATE, OP_COLOR_HEX, toneToColor } from '../kit/Status';
 import { fmtInt, fmtPct } from '../kit/format';
-import { currentStep, lineStatus, visitSteps, type LineStageStatus } from './derive';
+import type { OperationalState } from '../../model/types';
+import { LINE_STAGES, currentStep, lineStatus, visitSteps, worstOf, type AssetStatus, type LineConnector, type LineStageStatus } from './derive';
 import { useTip } from './Tip';
 
-/** Process stages Raw → Warehouse as connected chips, coloured by the worst machine state. */
+/** Colour of an operational state in the four-state scheme (stopped / fault red, idle / blocked amber, planned / stale grey). */
+const opColor = (op: OperationalState) => OP_COLOR_HEX[toneToColor(OPERATIONAL_STATE[op].tone)];
+
+/** One machine or conveyor row in a tooltip: id, operational state, since, reason, stale feed. */
+function AssetTipRow({ a }: { a: AssetStatus }) {
+  const os = OPERATIONAL_STATE[a.op];
+  const Icon = os.icon;
+  return (
+    <div className="tw-tip-row">
+      <span className={`status ${os.tone}`}>
+        <Icon size={12} strokeWidth={2.3} aria-hidden />
+        {a.id} · {os.label}
+      </span>
+      <span className="muted">
+        {a.staleSince != null ? ` · data stale since ${formatClock(a.staleSince)}` : a.op !== 'running' ? ` · since ${formatClock(a.since)}` : ''}
+        {a.reason ? ` · ${a.reason}` : ''}
+      </span>
+    </div>
+  );
+}
+
+type TipKey = `s:${string}` | `c:${string}`;
+
+/**
+ * Process stages Raw → Warehouse as chips coloured by the worst machine state, linked by the
+ * conveyors that carry tiles between them (thin connectors coloured by the conveyor's state).
+ */
 function StageStrip() {
   const selected = useTwin((s) => s.selected);
   const zone = useTwin((s) => s.zone);
@@ -20,7 +47,7 @@ function StageStrip() {
     const fm = fleetMetrics(s, resolvePeriod('shift', s.minute));
     return { ...lineStatus(s), stock: s.logistics.stockPallets, onSite: fm.onSite, waiting: fm.waiting };
   });
-  const tip = useTip<string>();
+  const tip = useTip<TipKey>();
 
   const locate = (st: LineStageStatus) => {
     tip.hide();
@@ -28,25 +55,43 @@ function StageStrip() {
     if (st.focusId) tw.select(st.focusId);
     else tw.selectZone(st.def.zone);
   };
+  const locateConveyor = (cn: LineConnector) => {
+    tip.hide();
+    const c = worstOf(cn.conveyors);
+    if (c) useTwin.getState().select(c.id);
+  };
 
   return (
-    <div className="tw-line overlay-panel" role="group" aria-label="Production line status by stage (simulated)">
+    <div className="tw-line overlay-panel" role="group" aria-label="Production line status by stage and conveyor (simulated)">
       <span className="tw-strip-t">Line</span>
       <div className="tw-line-chips">
         {data.stages.map((st, i) => {
-          const color = st.worst ? OP_COLOR_HEX[machineColor(st.worst)] : OP_COLOR_HEX.grey;
-          const Icon = st.worst ? MACHINE_STATE[st.worst].icon : st.def.key === 'RAW' ? Boxes : Warehouse;
-          const on = selected ? st.machines.some((m) => m.id === selected) : zone === st.def.zone;
-          const stateLabel = st.worst ? MACHINE_STATE[st.worst].label : 'No machine state';
+          const color = st.worst ? opColor(st.worst) : OP_COLOR_HEX.grey;
+          const Icon = st.worst ? OPERATIONAL_STATE[st.worst].icon : st.def.key === 'RAW' ? Boxes : Warehouse;
+          const on = selected ? st.machines.some((m) => m.id === selected) || st.conveyors.some((c) => c.id === selected) : zone === st.def.zone;
+          const stateLabel = st.worst ? OPERATIONAL_STATE[st.worst].label : 'No machine state';
+          const cn = i > 0 ? data.connectors[i - 1] : null;
+          const cw = cn?.conveyors.length ? worstOf(cn.conveyors) : null;
           return (
             <Fragment key={st.def.key}>
-              {i > 0 && <span className="tw-conn" aria-hidden />}
+              {cn &&
+                (cw ? (
+                  <button
+                    className={`tw-conn cv ${cn.conveyors.some((c) => c.id === selected) ? 'on' : ''} ${cw.op === 'unknown' ? 'stale' : ''} ${cw.op === 'stopped' || cw.op === 'fault' ? 'stop' : ''}`}
+                    style={{ ['--c' as string]: opColor(cw.op) }}
+                    onClick={() => locateConveyor(cn)}
+                    aria-label={cn.conveyors.map((c) => `Conveyor ${c.id}: ${OPERATIONAL_STATE[c.op].label}`).join(', ')}
+                    {...tip.bind(`c:${cn.key}`, 'top')}
+                  />
+                ) : (
+                  <span className="tw-conn" aria-hidden />
+                ))}
               <button
                 className={`tw-stage ${on ? 'on' : ''} ${st.bottleneck ? 'bn' : ''} ${st.worst ? '' : 'store'}`}
                 style={{ ['--c' as string]: color }}
                 onClick={() => locate(st)}
                 aria-label={`${st.def.name}: ${stateLabel}${st.bottleneck ? ', current bottleneck' : ''}`}
-                {...tip.bind(st.def.key, 'top')}
+                {...tip.bind(`s:${st.def.key}`, 'top')}
               >
                 <Icon size={13} strokeWidth={2.3} aria-hidden />
                 <span>{st.def.label}</span>
@@ -57,7 +102,25 @@ function StageStrip() {
         })}
       </div>
       {tip.render((key) => {
-        const st = data.stages.find((x) => x.def.key === key);
+        if (key.startsWith('c:')) {
+          const cn = data.connectors.find((x) => x.key === key.slice(2));
+          if (!cn) return null;
+          const from = LINE_STAGES.find((x) => x.key === cn.from)!;
+          const to = LINE_STAGES.find((x) => x.key === cn.to)!;
+          return (
+            <>
+              <b>{cn.conveyors.map((c) => c.name).join(' · ')}</b>
+              <div className="tw-tip-row">
+                Conveyor · {from.name} → {to.name}
+              </div>
+              {cn.conveyors.map((c) => (
+                <AssetTipRow key={c.id} a={c} />
+              ))}
+              <div className="tw-tip-foot">Simulated · click to inspect {cn.conveyors.map((c) => c.id).join(', ')}</div>
+            </>
+          );
+        }
+        const st = data.stages.find((x) => x.def.key === key.slice(2));
         if (!st) return null;
         const z = ZONE_BY_ID[st.def.zone];
         return (
@@ -66,19 +129,7 @@ function StageStrip() {
               {st.def.name} · Zone {z.id}
             </b>
             {st.machines.length ? (
-              st.machines.map((m) => {
-                const ms = MACHINE_STATE[m.state];
-                const MIcon = ms.icon;
-                return (
-                  <div key={m.id} className="tw-tip-row">
-                    <span className={`status ${ms.tone}`}>
-                      <MIcon size={12} strokeWidth={2.3} aria-hidden />
-                      {m.id} · {ms.label}
-                    </span>
-                    {m.reason && <span className="muted"> · {m.reason}</span>}
-                  </div>
-                );
-              })
+              st.machines.map((m) => <AssetTipRow key={m.id} a={m} />)
             ) : st.def.key === 'RAW' ? (
               <div className="tw-tip-row">Receiving & storage — no machine state modelled; raw-material supply is not a constraint in this simulation.</div>
             ) : (
@@ -86,11 +137,15 @@ function StageStrip() {
                 {fmtInt(data.stock)} pallets in stock · {data.onSite} trucks on site, {data.waiting} waiting — no machine state modelled.
               </div>
             )}
+            {st.conveyors.map((c) => (
+              <AssetTipRow key={c.id} a={c} />
+            ))}
             {st.bottleneck && (
               <div className="tw-tip-row">
                 <span className="tw-bn-note">
                   <Hourglass size={12} aria-hidden />
-                  Current bottleneck · working {fmtPct(data.bottleneckShare, 0)} of planned time ({data.window.toLowerCase()})
+                  Current bottleneck · producing {fmtPct(data.bottleneckWorking, 0)} of planned time
+                  {data.bottleneckDown >= 0.005 ? `, down ${fmtPct(data.bottleneckDown, 0)}` : ''} ({data.window.toLowerCase()})
                 </span>
               </div>
             )}

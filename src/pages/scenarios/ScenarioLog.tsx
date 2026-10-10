@@ -5,13 +5,16 @@ import { useSim, useSimValue } from '../../sim/store';
 import { formatClock, formatDuration } from '../../sim/time';
 import { DataTable, type Column } from '../../ui/kit/DataTable';
 import { Panel } from '../../ui/kit/Panel';
+import { openEvent } from '../../app/store';
+import type { OpEvent } from '../../model/types';
 import {
-  ENTRY_BY_KIND,
   ONE_OFF_KINDS,
+  isClearable,
   outcomeOf,
   paramSummary,
-  resolveValues,
   scenarioDuration,
+  scenarioEvents,
+  scenarioFocus,
   scenarioStatus,
   when,
   type ScenarioStatus,
@@ -28,6 +31,9 @@ type Row = {
   duration: number | null;
   origin: string;
   target: { t: ShowTarget; label: string } | null;
+  /** Operational events the scenario produced (same records as Events & Reports). */
+  events: OpEvent[];
+  clearable: boolean;
 };
 
 /** Every scenario activated since the last reset, newest first. */
@@ -37,12 +43,7 @@ export function ScenarioLog() {
   const d = useSimValue(
     (s) => {
       const rows: Row[] = s.scenarios.map((sc) => {
-        const entry = ENTRY_BY_KIND[sc.kind];
-        const t: ShowTarget | null = entry
-          ? entry.focus(resolveValues(entry, undefined, s), sc, s)
-          : sc.kind === 'maintenance' && sc.equipmentId
-            ? { type: 'equipment', id: sc.equipmentId }
-            : null;
+        const t = scenarioFocus(s, sc);
         const o = originOf(resets, sc.id);
         return {
           sc,
@@ -52,6 +53,8 @@ export function ScenarioLog() {
           duration: scenarioDuration(s, sc),
           origin: o ? ORIGIN_LABEL[o] : 'Other workspace',
           target: t ? { t, label: targetLabel(t, s) } : null,
+          events: scenarioEvents(s, sc),
+          clearable: isClearable(s, sc),
         };
       });
       // Newest first; equal start minutes keep activation order under the stable sort.
@@ -85,6 +88,23 @@ export function ScenarioLog() {
     { key: 'dur', header: 'Duration', numeric: true, render: (r) => (r.duration == null ? '—' : formatDuration(r.duration)), sort: (r) => r.duration },
     { key: 'status', header: 'Status', render: (r) => <ScenarioState st={r.st} now={now} time={false} />, sort: (r) => r.st.key },
     { key: 'outcome', header: 'Outcome', render: (r) => <span title={r.outcome ?? undefined}>{r.outcome ?? <span className="muted">See impact band</span>}</span> },
+    {
+      key: 'events',
+      header: 'Events',
+      render: (r) => {
+        const main = r.events.find((e) => !e.consequenceOf) ?? r.events[0];
+        if (!main) return <span className="muted">None yet</span>;
+        return (
+          <span className="scnp-log-ev">
+            <button className="row-link mono" onClick={() => openEvent(main.id)} title={`Open the report of ${main.id}: ${main.title}`}>
+              {main.id}
+            </button>
+            {r.events.length > 1 && <span className="muted"> +{r.events.length - 1}</span>}
+          </span>
+        );
+      },
+      sort: (r) => r.events.length,
+    },
     { key: 'source', header: 'Source', render: (r) => r.origin, sort: (r) => r.origin },
     {
       key: 'actions',
@@ -92,7 +112,7 @@ export function ScenarioLog() {
       render: (r) => (
         <span className="scnp-log-a">
           {r.target && <ShowButton target={r.target.t} label={r.target.label} />}
-          {(r.st.key === 'active' || r.st.key === 'resolved') && r.sc.kind !== 'maintenance' && (
+          {r.clearable && (
             <button className="btn sm" onClick={() => clear(r.sc.id)} title="End this scenario now">
               <X size={13} aria-hidden />
               Clear

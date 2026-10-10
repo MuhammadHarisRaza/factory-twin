@@ -1,10 +1,10 @@
-/* Fleet & Logistics workspace — page-specific styles (tokens from styles.css). */
+/* Vehicle Monitoring workspace — page-specific styles (tokens from styles.css). */
 
-/* Seven-figure summary band (six fleet KPIs + stock context). */
+/* Eight-figure summary band (current state + period statistics). */
 .summary.fleet-summary {
-  grid-template-columns: repeat(7, minmax(0, 1fr));
+  grid-template-columns: repeat(8, minmax(0, 1fr));
 }
-@media (max-width: 1180px) {
+@media (max-width: 1440px) {
   .summary.fleet-summary {
     grid-template-columns: repeat(4, minmax(0, 1fr));
   }
@@ -21,19 +21,18 @@
     border-top: 1px solid var(--line);
   }
 }
-.fleet-summary .kpi-context .kpi-value {
-  color: var(--text-2);
+.fleet-summary .kpi-sub span {
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  max-width: 100%;
 }
 
 .fleet-toolbar .notice {
-  flex: 1;
+  flex: 1 1 100%;
   min-width: 280px;
   align-items: center;
   padding: 7px 12px;
-}
-.fleet-toolbar .why {
-  font-size: var(--fs-11);
-  color: var(--text-3);
 }
 
 /* Right-hand stack beside the map */
@@ -367,3 +366,647 @@
   margin-top: var(--s-4);
 }
 
+
+/* ── Simulate bar ───────────────────────────────────────────────────────── */
+
+.fv-sim {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 6px;
+  width: 100%;
+}
+.fv-sim-k {
+  font-size: var(--fs-11);
+  color: var(--text-3);
+  margin-right: 2px;
+}
+.fv-why {
+  font-size: var(--fs-11);
+  color: var(--text-3);
+}
+.fv-sim-done {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  font-size: var(--fs-11);
+  color: var(--text-2);
+  margin-left: auto;
+}
+.fv-sim-done svg {
+  color: var(--good);
+}
+
+/* ── Truck pipeline ─────────────────────────────────────────────────────── */
+
+.fv-pipe {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: grid;
+  grid-auto-flow: column;
+  grid-auto-columns: minmax(150px, 1fr);
+  overflow-x: auto;
+}
+.fv-stage {
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+  border-left: 1px solid var(--line);
+  padding: 10px 10px 8px;
+}
+.fv-stage:first-child {
+  border-left: 0;
+}
+.fv-stage.staging {
+  background: var(--bg-0);
+}
+.fv-stage header {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-size: var(--fs-12);
+  min-width: 0;
+}
+.fv-stage header b {
+  font-weight: var(--fw-semibold);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  min-width: 0;
+}
+.fv-stage header svg {
+  color: var(--text-3);
+  flex: none;
+}
+.fv-step,
+.fv-stepno {
+  display: inline-grid;
+  place-items: center;
+  width: 16px;
+  height: 16px;
+  border-radius: 50%;
+  border: 1px solid var(--line-3);
+  font: var(--fw-medium) 10px var(--mono);
+  color: var(--text-2);
+  flex: none;
+}
+.fv-stepno {
+  margin-right: 6px;
+}
+.fv-count {
+  margin-left: auto;
+  min-width: 22px;
+  height: 20px;
+  padding: 0 6px;
+  border-radius: var(--r-1);
+  background: var(--accent-soft);
+  border: 1px solid var(--accent-line);
+  color: var(--text-1);
+  font: var(--fw-semibold) var(--fs-12) var(--sans);
+  font-variant-numeric: tabular-nums;
+  display: inline-grid;
+  place-items: center;
+  flex: none;
+}
+.fv-count.zero {
+  background: none;
+  border-color: var(--line-2);
+  color: var(--text-3);
+}
+.fv-sub {
+  margin: 3px 0 8px;
+  font-size: var(--fs-11);
+  color: var(--text-3);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.fv-due {
+  color: var(--accent-strong);
+}
+.fv-chips {
+  display: flex;
+  flex-direction: column;
+  gap: 5px;
+  max-height: 268px;
+  overflow-y: auto;
+  min-height: 40px;
+}
+.fv-none {
+  font-size: var(--fs-11);
+  color: var(--text-4);
+  padding: 6px 0;
+}
+.fv-chip {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  width: 100%;
+  text-align: left;
+  padding: 5px 7px;
+  background: var(--bg-2);
+  border: 1px solid var(--line);
+  border-radius: var(--r-2);
+  color: var(--text-1);
+  font-size: var(--fs-11);
+  cursor: pointer;
+  min-width: 0;
+}
+.fv-chip:hover {
+  border-color: var(--line-3);
+}
+.fv-chip.sel {
+  border-color: var(--accent);
+  background: var(--accent-soft);
+}
+.fv-chip.scn {
+  box-shadow: inset 2px 0 0 var(--accent-line);
+}
+.fv-chip.due {
+  opacity: 0.7;
+  border-style: dashed;
+}
+.fv-chip .l1 {
+  display: flex;
+  align-items: center;
+  gap: 5px;
+  min-width: 0;
+}
+.fv-chip .l1 svg {
+  color: var(--text-3);
+  flex: none;
+}
+.fv-chip .l1 b {
+  font-weight: var(--fw-medium);
+  font-size: var(--fs-12);
+}
+.fv-chip .pos {
+  font-family: var(--mono);
+  color: var(--accent-strong);
+}
+.fv-chip .t {
+  margin-left: auto;
+  color: var(--text-2);
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+}
+.fv-chip .l2 {
+  color: var(--text-3);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.fv-chip .l3 {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  color: var(--text-2);
+}
+.fv-chip .l3.warn svg {
+  color: var(--warning);
+  flex: none;
+}
+.fv-meter {
+  display: block;
+  height: 3px;
+  border-radius: 2px;
+  background: var(--bg-4);
+  overflow: hidden;
+  margin: 2px 0 1px;
+}
+.fv-meter i {
+  display: block;
+  height: 100%;
+  background: var(--accent);
+}
+.fv-lane-f {
+  margin-top: auto;
+  padding-top: 8px;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  font-size: var(--fs-11);
+  color: var(--text-3);
+  font-variant-numeric: tabular-nums;
+}
+
+/* ── Selected vehicle extras ───────────────────────────────────────────── */
+
+.fv-stagebar {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-top: 10px;
+  padding: 7px 10px;
+  border: 1px solid var(--line-2);
+  border-radius: var(--r-2);
+  background: var(--bg-2);
+  font-size: var(--fs-12);
+  color: var(--text-2);
+}
+.fv-stagebar svg {
+  color: var(--text-3);
+  flex: none;
+}
+.fv-stagebar b {
+  color: var(--text-1);
+  font-weight: var(--fw-medium);
+}
+.fleet-durs.three {
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  row-gap: 10px;
+}
+.fleet-tl li.cur i {
+  background: var(--accent);
+  border-color: var(--accent);
+}
+.fleet-tl li.next i {
+  border-style: dashed;
+  border-color: var(--accent-line);
+}
+.fleet-tl li.next {
+  color: var(--text-2);
+}
+.fv-h4-note {
+  color: var(--text-4);
+}
+.fv-muted {
+  margin: 0;
+  font-size: var(--fs-12);
+  color: var(--text-3);
+}
+.fv-pad {
+  padding: var(--s-4);
+}
+.fv-list {
+  list-style: none;
+  margin: 6px 0 0;
+  padding: 0;
+  font-size: var(--fs-12);
+}
+.fv-list li {
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+  padding: 4px 0;
+  border-bottom: 1px solid var(--line);
+  min-width: 0;
+}
+.fv-list li:last-child {
+  border-bottom: 0;
+}
+.fv-list .t {
+  font-family: var(--mono);
+  font-size: var(--fs-11);
+  color: var(--text-2);
+  flex: none;
+}
+.fv-list .a {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.fv-kind {
+  display: inline-block;
+  font-size: 10.5px;
+  padding: 0 5px;
+  border-radius: var(--r-1);
+  border: 1px solid var(--line-2);
+  color: var(--text-2);
+  flex: none;
+}
+.fv-kind.pickup {
+  border-color: var(--accent-line);
+  color: var(--accent-strong);
+}
+.fv-handling {
+  margin: 0;
+  max-height: 404px;
+  overflow-y: auto;
+}
+.fv-handling li {
+  padding: 5px var(--s-4);
+}
+.fv-handling li.sel {
+  background: var(--accent-soft);
+}
+
+/* ── Tables ─────────────────────────────────────────────────────────────── */
+
+.fv-veh-cell {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+}
+.fv-veh-cell svg {
+  color: var(--text-3);
+}
+.fv-alert-t {
+  color: var(--text-2);
+  margin-left: 4px;
+}
+
+/* ── Vehicle events ─────────────────────────────────────────────────────── */
+
+.fv-ev-focus {
+  border-top: 1px solid var(--line-2);
+  padding: var(--s-3) var(--s-4) var(--s-4);
+}
+.fv-ev-head {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+  font-size: var(--fs-13);
+}
+.fv-ev-head b {
+  font-weight: var(--fw-semibold);
+}
+.fv-ev-sum {
+  margin: 6px 0 10px;
+  font-size: var(--fs-12);
+  color: var(--text-2);
+}
+.fv-ev-sub {
+  margin-top: 2px;
+  font-size: var(--fs-11);
+  color: var(--text-3);
+}
+.fv-ev-assume {
+  margin-top: 4px;
+  font-size: var(--fs-11);
+  color: var(--text-3);
+}
+.fv-ev-assume summary {
+  cursor: pointer;
+  color: var(--text-2);
+}
+.fv-ev-assume ul {
+  margin: 4px 0 0;
+  padding-left: 16px;
+}
+.fv-ev-sec {
+  margin-top: var(--s-3);
+  padding-top: var(--s-3);
+  border-top: 1px solid var(--line);
+}
+.fv-ev-sec h3 {
+  margin: 0 0 6px;
+  font-size: var(--fs-11);
+  font-weight: var(--fw-medium);
+  color: var(--text-3);
+}
+.fv-causes {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  font-size: var(--fs-12);
+}
+.fv-causes li {
+  display: flex;
+  gap: 8px;
+  align-items: baseline;
+  padding: 2px 0;
+}
+.fv-conf {
+  flex: none;
+  font-size: 10.5px;
+  padding: 0 5px;
+  border-radius: var(--r-1);
+  border: 1px solid var(--line-2);
+  color: var(--text-2);
+  text-transform: capitalize;
+}
+.fv-conf.confirmed {
+  border-color: var(--line-3);
+  color: var(--text-1);
+}
+.fv-conf.possible {
+  border-style: dashed;
+  color: var(--text-3);
+}
+.fv-evd + .fv-evd {
+  margin-top: 10px;
+}
+.fv-evd-h {
+  display: flex;
+  gap: 8px;
+  align-items: baseline;
+  flex-wrap: wrap;
+  font-size: var(--fs-12);
+}
+.fv-evd-h b {
+  font-weight: var(--fw-medium);
+}
+.fv-evd-h .dim {
+  font-size: var(--fs-11);
+}
+.fv-steps {
+  list-style: none;
+  margin: 8px 0 0;
+  padding: 0;
+  display: grid;
+  grid-auto-flow: column;
+  grid-auto-columns: minmax(78px, 1fr);
+  overflow-x: auto;
+}
+.fv-steps li {
+  position: relative;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  padding: 14px 6px 0 0;
+  font-size: var(--fs-11);
+  min-width: 0;
+}
+.fv-steps li::before {
+  content: '';
+  position: absolute;
+  top: 4px;
+  left: 0;
+  right: 0;
+  height: 1px;
+  background: var(--line-2);
+}
+.fv-steps li:last-child::before {
+  right: auto;
+  width: 9px;
+}
+.fv-steps i {
+  position: absolute;
+  top: 0;
+  left: 0;
+  width: 9px;
+  height: 9px;
+  border-radius: 50%;
+  background: var(--text-2);
+  border: 1px solid var(--text-2);
+}
+.fv-steps li.pending i {
+  background: var(--bg-1);
+  border-color: var(--line-3);
+}
+.fv-steps .l {
+  color: var(--text-2);
+}
+.fv-steps li.pending .l {
+  color: var(--text-3);
+}
+.fv-steps .t {
+  font-family: var(--mono);
+  color: var(--text-1);
+}
+.fv-steps li.pending .t {
+  color: var(--text-4);
+}
+.fv-steps .n {
+  color: var(--text-3);
+}
+.fv-ev-snap {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  margin-top: 10px;
+  font-size: var(--fs-12);
+}
+.fv-ev-snap img {
+  width: 132px;
+  height: auto;
+  border-radius: var(--r-1);
+  border: 1px solid var(--line-2);
+  flex: none;
+}
+.fv-ev-snap b {
+  font-weight: var(--fw-medium);
+}
+.fv-ev-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  margin-top: var(--s-3);
+}
+.fv-ev-fb {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  margin: 8px 0 0;
+  font-size: var(--fs-12);
+  color: var(--text-2);
+}
+.fv-ev-fb.ok svg {
+  color: var(--good);
+}
+.fv-ev-fb.err svg {
+  color: var(--critical);
+}
+.fv-ev-report {
+  margin-top: var(--s-3);
+  padding-top: var(--s-3);
+  border-top: 1px solid var(--line);
+}
+
+/* ── Rules, restricted zones, not available ─────────────────────────────── */
+
+.fv-thr-cell {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+}
+.fv-thr {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+}
+.fv-thr .input {
+  width: 68px;
+  height: 24px;
+  padding: 0 6px;
+  font-variant-numeric: tabular-nums;
+}
+.fv-zones {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  border-top: 1px solid var(--line-2);
+}
+.fv-zones li {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  gap: 2px 12px;
+  padding: 8px var(--s-4);
+  border-bottom: 1px solid var(--line);
+  font-size: var(--fs-12);
+}
+.fv-zones li:last-child {
+  border-bottom: 0;
+}
+.fv-zone-n {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  min-width: 0;
+}
+.fv-zone-n svg {
+  color: var(--critical);
+  flex: none;
+}
+.fv-zone-n b {
+  font-weight: var(--fw-medium);
+}
+.fv-zone-r {
+  color: var(--text-3);
+  text-align: right;
+}
+.fv-zone-s {
+  grid-column: 1 / -1;
+  color: var(--text-2);
+}
+.fv-na {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(260px, 1fr));
+  gap: var(--s-3);
+}
+.fv-na li {
+  border: 1px solid var(--line);
+  border-radius: var(--r-2);
+  padding: 10px 12px;
+  min-width: 0;
+}
+.fv-na-h {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  font-size: var(--fs-13);
+}
+.fv-na-h b {
+  font-weight: var(--fw-medium);
+}
+.fv-na p {
+  margin: 4px 0 8px;
+  font-size: var(--fs-11);
+}
+.fv-na .dl {
+  font-size: var(--fs-11);
+  gap: 4px 10px;
+}
+
+/* Selected vehicle's travelled route on the site map */
+.fm-trail {
+  stroke: var(--accent-strong);
+  stroke-opacity: 0.85;
+  stroke-linejoin: round;
+  stroke-linecap: round;
+  pointer-events: none;
+}
+.lg-trail {
+  fill: none;
+  stroke: var(--accent-strong);
+  stroke-width: 2;
+  stroke-linejoin: round;
+}

@@ -1,17 +1,22 @@
 /**
- * Quality Intelligence — inspection results for the shared reporting period.
- * Answers: how many tiles passed first time, what is being rejected, where it comes
- * from and which station / batch is affected. All records are simulated.
+ * AI Defect Monitoring — the inspection workflow made explicit and connected to the event system.
+ *
+ *   capture → (simulated) inference → classify & localise → associate → rule → store → counts & OEE → event
+ *
+ * One selected record drives every view on the page: the vision viewer, the workflow strip, the
+ * record detail (original frame + annotated defect crop), its quality event with evidence and
+ * lifecycle actions, the root-cause hypotheses and the scrap / rework impact. Records, classes,
+ * boxes and confidences are simulated by deterministic rules — no camera or vision model runs.
  */
-import { useMemo, useRef, useState } from 'react';
-import { Box, FlaskConical, Info, Locate, ScanLine, X } from 'lucide-react';
-import { useApp, openEquipment, openStation } from '../app/store';
-import { DEFECT_ACTIONS } from '../intel/insights';
+import { useRef, useState, useMemo } from 'react';
+import { BellRing, Cpu, FlaskConical, Info, Locate, Ruler, X } from 'lucide-react';
+import { openStation, useApp } from '../app/store';
+import { eventImpact } from '../intel/report';
 import { BASE_REJECT_RATE, DEFECTS, DEFECT_ORDER, INSPECTION_STATIONS, STAGE_BY_ID } from '../model/plant';
 import type { DefectCategory, ProductionBatch, QualityInspection, ScenarioActivation } from '../model/types';
 import { defectTrend, qualityIn, resolvePeriod } from '../sim/metrics';
 import type { Metric } from '../sim/oee';
-import { useSimValue } from '../sim/store';
+import { useSim, useSimValue } from '../sim/store';
 import { formatClock, formatDateTime, formatDay, shiftAt } from '../sim/time';
 import { RankedBars, StackedColumns, type RankedRow } from '../ui/kit/charts';
 import { DataTable, type Column } from '../ui/kit/DataTable';
@@ -19,10 +24,32 @@ import { fmtInt, fmtM2, fmtPct } from '../ui/kit/format';
 import { Empty, Panel } from '../ui/kit/Panel';
 import { MetricText, SourceBadge, SourceTag } from '../ui/kit/Status';
 import { DefectSeverity, ResultBadge } from './quality/badges';
-import { FrameThumb } from './quality/FrameArt';
-import { affectingScenario, frameById, isFrameStation, type Frame } from './quality/frames';
+import {
+  GAUGE_CLASSES,
+  SIM_MODEL,
+  VISION_CLASSES,
+  VISION_NOTE,
+  contextStates,
+  eventsOfRecord,
+  fmtMoney,
+  impactFigures,
+  inspectionEventLinks,
+  inspectionMethod,
+  isVisionRecord,
+  periodQualityImpact,
+  qualityEventsIn,
+  ruleChecks,
+} from './quality/derive';
+import { affectingScenario, frameById, isFrameStation, viewerFrame, type FeedMode } from './quality/frames';
 import { PRODUCT_BY_SKU, STATION_BY_ID } from './quality/lookup';
-import { VisionStation } from './quality/VisionStation';
+import { QualityEvents, type ImpactFigures } from './quality/QualityEvents';
+import { RecordDetail } from './quality/RecordDetail';
+import { RootCause } from './quality/RootCause';
+import { ScrapImpact } from './quality/ScrapImpact';
+import { FEED_SIZE, VisionStation } from './quality/VisionStation';
+import { WorkflowStrip, type WorkflowSubject } from './quality/WorkflowStrip';
+// Registers the inspection-image rasteriser (reports and the PDF draw the same frames).
+import './quality/rasterise';
 import './quality.css';
 
 const DEFECT_COLOR = Object.fromEntries(DEFECT_ORDER.map((d, i) => [d, `var(--series-${i + 1})`])) as Record<DefectCategory, string>;
@@ -34,7 +61,16 @@ type StationRow = { id: string; inspected: number; rejected: number; rate: numbe
 type BatchRow = { batch: ProductionBatch; rejectedTiles: number; topDefect: DefectCategory | null; affectedTiles: number };
 
 export function QualityPage() {
+  // Reset Demo rebuilds the seeded plant: filters, the pinned record and the focused event refer to
+  // records of the discarded run, so the workspace remounts with it (review finding #31).
+  const resets = useSim((s) => s.resets);
+  return <QualityWorkspace key={resets} />;
+}
+
+function QualityWorkspace() {
   const periodKey = useApp((s) => s.period);
+  const finance = useApp((s) => s.finance);
+  const tariffs = useApp((s) => s.tariffs);
 
   const data = useSimValue(
     (s) => {
@@ -76,12 +112,127 @@ export function QualityPage() {
         if (sc) affected.set(r.id, sc);
       }
 
-      return { p, q, records: records.reverse(), stations, trend, bucketMin, batches, affected };
+      // Events: the same OpEvent records as Events & Reports; impact = the report's EventImpact.
+      const links = inspectionEventLinks(s);
+      const events = qualityEventsIn(s, p);
+      const impacts = new Map<string, ImpactFigures>();
+      for (const e of [...events.open, ...events.resolved]) impacts.set(e.id, impactFigures(eventImpact(s, e, finance, tariffs)));
+      const impact = periodQualityImpact(s, p, finance, useSim.getState().baseline);
+
+      return { p, q, records: records.reverse(), stations, trend, bucketMin, batches, affected, links, events, impacts, impact };
     },
-    [periodKey],
+    [periodKey, finance, tariffs],
   );
 
-  const { q, stations, trend, bucketMin, batches } = data;
+  const { q, stations, trend, bucketMin, batches, events, impact } = data;
+
+  // ── Selection: one record / frame drives the viewer, workflow, detail and event focus ──────
+  const [mode, setMode] = useState<FeedMode>('all');
+  /** Selected record / frame id (null = the viewer follows the latest frame). */
+  const [selected, setSelected] = useState<string | null>(null);
+  /** Event focused by a click (null = follow the selected record's event, else the top open event). */
+  const [focus, setFocus] = useState<string | null>(null);
+  const visionRef = useRef<HTMLDivElement>(null);
+  const eventsRef = useRef<HTMLDivElement>(null);
+  const scrollTo = (el: HTMLElement | null) => el?.scrollIntoView({ behavior: 'smooth', block: 'start' });
+
+  /** Selecting a record lets its quality event take the focus. */
+  const selectRecord = (id: string | null) => {
+    setSelected(id);
+    setFocus(null);
+  };
+
+  // ── History filters ───────────────────────────────────────────────────────
+  const [fStation, setFStation] = useState('');
+  const [fDefect, setFDefect] = useState('');
+  const [fResult, setFResult] = useState('');
+  const [fSeverity, setFSeverity] = useState('');
+  const [fBatch, setFBatch] = useState<string | null>(null);
+  const [fAffected, setFAffected] = useState(false);
+  const [fEvent, setFEvent] = useState(false);
+
+  const filtered = useMemo(
+    () =>
+      data.records.filter(
+        (r) =>
+          (!fStation || r.stationId === fStation) &&
+          (!fDefect || r.defect === fDefect) &&
+          (!fResult || r.result === fResult) &&
+          (!fSeverity || r.severity === fSeverity) &&
+          (!fBatch || r.batchId === fBatch) &&
+          (!fAffected || data.affected.has(r.id)) &&
+          (!fEvent || data.links.has(r.id)),
+      ),
+    [data.records, data.affected, data.links, fStation, fDefect, fResult, fSeverity, fBatch, fAffected, fEvent],
+  );
+  const shown = filtered.slice(0, HISTORY_LIMIT);
+  const inEvents = useMemo(() => data.records.reduce((a, r) => a + (data.links.has(r.id) ? 1 : 0), 0), [data.records, data.links]);
+  const anyFilter = fStation || fDefect || fResult || fSeverity || fBatch || fAffected || fEvent;
+  const clearFilters = () => {
+    setFStation('');
+    setFDefect('');
+    setFResult('');
+    setFSeverity('');
+    setFBatch(null);
+    setFAffected(false);
+    setFEvent(false);
+  };
+
+  // ── Workflow subject: the selected record, else the frame the viewer shows ─────────────────
+  const flow = useSimValue(
+    (s): WorkflowSubject | null => {
+      const frame = viewerFrame(s, selected, FEED_SIZE, mode);
+      const selRec = selected ? (s.inspections.find((r) => r.id === selected) ?? null) : null;
+      const rec = selRec ?? frame?.rec ?? null;
+      // A lab sample has no frame: the viewer keeps the latest one, the workflow shows the sample.
+      const shownFrame = selRec && !isFrameStation(selRec.stationId) ? null : frame;
+      if (!rec && !shownFrame) return null;
+      const time = rec?.time ?? shownFrame!.time;
+      const stationId = rec?.stationId ?? shownFrame!.stationId;
+      const batchId = rec?.batchId ?? shownFrame!.batchId;
+      return {
+        rec,
+        frame: shownFrame,
+        time,
+        stationId,
+        batchId,
+        batch: s.batches.find((b) => b.id === batchId) ?? null,
+        pinned: !!selected && (!!selRec || frame?.id === selected),
+        rules: ruleChecks(s, { time, rec }),
+        events: rec ? eventsOfRecord(s, data.links, rec.id) : [],
+      };
+    },
+    [selected, mode, data.links],
+  );
+
+  const detail = useSimValue(
+    (s) => {
+      if (!selected) return null;
+      const rec = s.inspections.find((r) => r.id === selected);
+      if (!rec) return null;
+      return {
+        rec,
+        batch: s.batches.find((b) => b.id === rec.batchId) ?? null,
+        frame: frameById(s, rec.id),
+        scenario: affectingScenario(s, rec),
+        states: contextStates(s, rec),
+        events: eventsOfRecord(s, data.links, rec.id),
+      };
+    },
+    [selected, data.links],
+  );
+
+  const autoFocus = (flow?.pinned ? flow.events[0]?.id : undefined) ?? events.open[0]?.id ?? events.resolved[0]?.id ?? null;
+  const focusId = focus ?? autoFocus;
+  const showEvent = (id: string) => {
+    setFocus(id);
+    scrollTo(eventsRef.current);
+  };
+  const pinRecord = (id: string) => {
+    setFocus(focusId);
+    setSelected(id);
+    scrollTo(visionRef.current);
+  };
 
   // ── Summary figures ────────────────────────────────────────────────────────
   const fpy: Metric =
@@ -93,74 +244,25 @@ export function QualityPage() {
   const rejectRate = q.inspected > 0 ? q.rejected / q.inspected : null;
   const defectTotal = DEFECT_ORDER.reduce((a, d) => a + q.byDefect[d], 0);
   const topDefect = defectTotal > 0 ? [...DEFECT_ORDER].sort((a, b) => q.byDefect[b] - q.byDefect[a])[0] : null;
-  const worst = stations.filter((r) => !r.samples && r.rate != null).sort((a, b) => b.rate! - a.rate!)[0];
+  const activeConditions = events.open.filter((e) => e.end == null).length;
 
-  // ── History filters & selection ───────────────────────────────────────────
-  const [fStation, setFStation] = useState('');
-  const [fDefect, setFDefect] = useState('');
-  const [fResult, setFResult] = useState('');
-  const [fSeverity, setFSeverity] = useState('');
-  const [fBatch, setFBatch] = useState<string | null>(null);
-  const [fAffected, setFAffected] = useState(false);
-  /** Selected record / frame id, shared by the vision viewer and the history table (null = the viewer follows the latest frame). */
-  const [selected, setSelected] = useState<string | null>(null);
-  const visionRef = useRef<HTMLDivElement>(null);
-  const showInViewer = () => visionRef.current?.scrollIntoView({ behavior: 'smooth', block: 'start' });
-
-  const filtered = useMemo(
-    () =>
-      data.records.filter(
-        (r) =>
-          (!fStation || r.stationId === fStation) &&
-          (!fDefect || r.defect === fDefect) &&
-          (!fResult || r.result === fResult) &&
-          (!fSeverity || r.severity === fSeverity) &&
-          (!fBatch || r.batchId === fBatch) &&
-          (!fAffected || data.affected.has(r.id)),
-      ),
-    [data.records, data.affected, fStation, fDefect, fResult, fSeverity, fBatch, fAffected],
-  );
-  const shown = filtered.slice(0, HISTORY_LIMIT);
-  const anyFilter = fStation || fDefect || fResult || fSeverity || fBatch || fAffected;
-  const clearFilters = () => {
-    setFStation('');
-    setFDefect('');
-    setFResult('');
-    setFSeverity('');
-    setFBatch(null);
-    setFAffected(false);
-  };
-
-  const detail = useSimValue(
-    (s) => {
-      if (!selected) return null;
-      const rec = s.inspections.find((r) => r.id === selected);
-      if (!rec) return null;
-      return {
-        rec,
-        batch: s.batches.find((b) => b.id === rec.batchId) ?? null,
-        frame: isFrameStation(rec.stationId) ? frameById(s, rec.id) : null,
-        scenario: affectingScenario(s, rec),
-      };
-    },
-    [selected],
-  );
-
-  // ── Charts ────────────────────────────────────────────────────────────────
-  const defectRows: RankedRow[] = [...DEFECT_ORDER]
-    .sort((a, b) => q.byDefect[b] - q.byDefect[a])
-    .map((d) => ({
-      key: d,
-      label: (
-        <>
-          {DEFECTS[d].label}
-          <span className="muted"> · {STAGE_BY_ID[DEFECTS[d].origin].name}</span>
-        </>
-      ),
-      value: q.byDefect[d],
-      share: defectTotal > 0 ? q.byDefect[d] / defectTotal : 0,
-      color: DEFECT_COLOR[d],
-    }));
+  // ── Defect classes ─────────────────────────────────────────────────────────
+  const classRows = (list: DefectCategory[]): RankedRow[] =>
+    [...list]
+      .sort((a, b) => q.byDefect[b] - q.byDefect[a])
+      .map((d) => ({
+        key: d,
+        label: (
+          <>
+            {DEFECTS[d].label}
+            <span className="muted"> · {STAGE_BY_ID[DEFECTS[d].origin].name}</span>
+          </>
+        ),
+        value: q.byDefect[d],
+        share: defectTotal > 0 ? q.byDefect[d] / defectTotal : 0,
+        color: DEFECT_COLOR[d],
+      }));
+  const toggleDefect = (d: string) => setFDefect(fDefect === d ? '' : d);
 
   const trendLabels = trend.map((b) => (bucketMin >= 480 ? `${formatDay(b.start).split(' ').slice(0, 2).join(' ')} · ${shiftAt(b.start).id}` : formatClock(b.start)));
   const trendValues = trend.map((b) => DEFECT_ORDER.map((d) => b.byDefect[d]));
@@ -168,14 +270,22 @@ export function QualityPage() {
 
   // ── Tables ────────────────────────────────────────────────────────────────
   const stationCols: Column<StationRow>[] = [
-    {
-      key: 'station',
-      header: 'Station',
-      render: (r) => STATION_BY_ID[r.id].name,
-      sort: (r) => STATION_BY_ID[r.id].name,
-    },
+    { key: 'station', header: 'Station', render: (r) => STATION_BY_ID[r.id].name, sort: (r) => STATION_BY_ID[r.id].name },
     { key: 'eq', header: 'Equipment', render: (r) => <span className="mono">{STATION_BY_ID[r.id].equipmentId}</span> },
     { key: 'method', header: 'Method', render: (r) => <span className="dim">{STATION_BY_ID[r.id].method}</span> },
+    {
+      key: 'inference',
+      header: 'Result source',
+      render: (r) => {
+        const m = inspectionMethod(r.id);
+        return (
+          <span title={m.note}>
+            <span className={m.kind === 'vision' ? 'mono' : ''}>{m.source}</span>
+            <span className="sub">{m.classKind}</span>
+          </span>
+        );
+      },
+    },
     {
       key: 'detects',
       header: 'Defects detected',
@@ -199,15 +309,18 @@ export function QualityPage() {
     },
     { key: 'rejected', header: 'Rejected', numeric: true, render: (r) => fmtInt(r.rejected), sort: (r) => r.rejected },
     { key: 'rate', header: 'Reject rate', numeric: true, render: (r) => fmtPct(r.rate, 2), sort: (r) => r.rate },
-    { key: 'src', header: 'Source', render: () => <SourceBadge status="simulated" /> },
+    { key: 'src', header: 'Data source', render: () => <SourceBadge status="simulated" /> },
     {
       key: 'twin',
       header: '',
       render: (r) => (
-        <button className="row-link" onClick={(e) => {
+        <button
+          className="row-link"
+          onClick={(e) => {
             e.stopPropagation();
             openStation(r.id);
-          }}>
+          }}
+        >
           <Locate size={12} /> Show in twin
         </button>
       ),
@@ -241,6 +354,14 @@ export function QualityPage() {
       sort: (r) => (r.defect ? DEFECTS[r.defect].label : null),
     },
     {
+      key: 'conf',
+      header: 'Sim. conf.',
+      numeric: true,
+      title: 'Simulated classification confidence (vision tunnel only — gauge results are measurements)',
+      render: (r) => (isVisionRecord(r) && r.confidence != null ? fmtPct(r.confidence, 1) : <span className="muted">{r.stationId === 'ST-GAUGE' && r.defect ? 'gauge' : '—'}</span>),
+      sort: (r) => (isVisionRecord(r) ? r.confidence : null),
+    },
+    {
       key: 'sev',
       header: 'Severity',
       render: (r) => <DefectSeverity severity={r.severity} />,
@@ -248,6 +369,28 @@ export function QualityPage() {
     },
     { key: 'meas', header: 'Measurement', render: (r) => <span title={r.measurement ?? undefined}>{r.measurement ?? '—'}</span> },
     { key: 'tiles', header: 'Tiles', numeric: true, render: (r) => fmtInt(r.tiles), sort: (r) => r.tiles },
+    {
+      key: 'event',
+      header: 'Event',
+      render: (r) => {
+        const ids = data.links.get(r.id);
+        if (!ids?.length) return <span className="muted">—</span>;
+        return (
+          <button
+            className="row-link mono"
+            onClick={(e) => {
+              e.stopPropagation();
+              showEvent(ids[0]);
+            }}
+            title={`Part of ${ids.join(', ')} — show the event and its evidence`}
+          >
+            {ids[0]}
+            {ids.length > 1 && <span className="muted"> +{ids.length - 1}</span>}
+          </button>
+        );
+      },
+      sort: (r) => data.links.get(r.id)?.[0] ?? null,
+    },
     { key: 'src', header: 'Source', render: (r) => <SourceTag source={r.source} /> },
   ];
 
@@ -280,24 +423,26 @@ export function QualityPage() {
     { key: 'top', header: 'Top defect', render: (r) => (r.topDefect ? DEFECTS[r.topDefect].label : <span className="muted">—</span>) },
   ];
 
+  const eventRows = [...events.open, ...events.resolved].map((ev) => ({ ev, f: data.impacts.get(ev.id)! })).filter((r) => r.f);
+
   return (
     <div className="page quality-page">
       <div className="col-12 notice">
         <Info size={14} aria-hidden />
         <span>
-          <b>Inspection records are simulated and illustrative.</b> No camera feed or computer vision runs in this release; this module is the foundation
-          for a future vision-system integration.
+          <b>Simulated inference — no vision model.</b> Inspection records, classes, boxes and confidences come from deterministic simulation rules (
+          <span className="mono">{SIM_MODEL}</span>); frames are illustrations of those records, not camera images. {VISION_NOTE}
         </span>
       </div>
 
-      <section className="summary" aria-label="Quality summary">
+      <section className="summary" aria-label="Defect monitoring summary">
         <div>
           <div className="kpi-label">First-pass yield</div>
           <div className="kpi-value">
             <MetricText m={fpy} digits={1} />
           </div>
           <div className="kpi-sub">
-            <span>Accepted ÷ inspected · {data.p.label}</span>
+            <span>Quality rate (OEE Q) · {data.p.label}</span>
           </div>
           {fpy.status === 'ok' && (
             <div className="meter" aria-hidden>
@@ -311,15 +456,10 @@ export function QualityPage() {
             {fmtInt(q.inspected)}
             <small>tiles</small>
           </div>
-          <div className="kpi-sub">{fmtM2(q.inspected)} m² sorted</div>
-        </div>
-        <div>
-          <div className="kpi-label">Accepted</div>
-          <div className="kpi-value">
-            {fmtInt(q.accepted)}
-            <small>tiles</small>
+          <div className="kpi-sub">
+            <span>{fmtInt(q.accepted)} accepted</span>
+            <span>{fmtM2(q.accepted)} m²</span>
           </div>
-          <div className="kpi-sub">{fmtM2(q.accepted)} m² first quality</div>
         </div>
         <div>
           <div className="kpi-label">Rejected</div>
@@ -339,78 +479,65 @@ export function QualityPage() {
             {topDefect && (
               <>
                 <span>{fmtPct(q.byDefect[topDefect] / defectTotal, 0)} of rejects</span>
-                <span>origin: {STAGE_BY_ID[DEFECTS[topDefect].origin].name}</span>
+                <span>{DEFECTS[topDefect].station === 'ST-VIS' ? 'vision class' : 'gauge measurement'}</span>
               </>
             )}
           </div>
         </div>
         <div>
-          <div className="kpi-label">Worst station</div>
-          <div className="kpi-headline">{worst ? STATION_BY_ID[worst.id].name : 'No inspections'}</div>
-          <div className="kpi-sub">{worst && <span>{fmtPct(worst.rate, 2)} reject rate</span>}</div>
+          <div className="kpi-label">Open quality events</div>
+          <div className="kpi-value">
+            <button className="q-kpi-link" onClick={() => scrollTo(eventsRef.current)} title="Go to the quality events">
+              {fmtInt(events.open.length)}
+            </button>
+          </div>
+          <div className="kpi-sub">
+            <span>{activeConditions} condition{activeConditions === 1 ? '' : 's'} active</span>
+            <span>{fmtInt(events.resolved.length)} resolved in period</span>
+          </div>
+        </div>
+        <div>
+          <div className="kpi-label">Scrap & rework</div>
+          <div className="kpi-value">{fmtMoney(finance.currency, impact.total)}</div>
+          <div className="kpi-sub">
+            <span className="tag sim">estimate · assumptions shown</span>
+          </div>
         </div>
       </section>
 
-      <div className="col-12 q-vis-anchor" ref={visionRef}>
-        <VisionStation selected={selected} onSelect={setSelected} batchFilter={fBatch} onFilterBatch={setFBatch} />
+      <div className="col-12">
+        <WorkflowStrip
+          subject={flow}
+          counts={{ label: data.p.label, inspected: q.inspected, accepted: q.accepted, rejected: q.rejected, quality: impact.quality, oee: impact.oee }}
+          onShowEvent={showEvent}
+        />
       </div>
 
-      <div className="col-7">
-        <Panel
-          title="Inspection stations"
-          subtitle="Registry of inspection points mapped to 3D equipment"
-          flush
-          footer="Inline stations check every sorted tile; the QC bench checks hourly samples (counts are sample tiles)."
-        >
-          <DataTable columns={stationCols} rows={stations} rowKey={(r) => r.id} onRowClick={(r) => setFStation(r.id)} maxHeight="none" />
-        </Panel>
+      <div className="col-12 q-anchor" ref={visionRef}>
+        <VisionStation selected={selected} onSelect={selectRecord} mode={mode} onMode={setMode} batchFilter={fBatch} onFilterBatch={setFBatch} />
       </div>
 
-      <div className="col-5">
-        <Panel title="Defects by category" subtitle="Rejected tiles · origin stage · share of rejects" footer="Click a category to filter the inspection history.">
-          {defectTotal > 0 ? (
-            <RankedBars rows={defectRows} format={fmtInt} valueHeader="Tiles" showCumulative={false} onSelect={(r) => setFDefect(r.key)} />
-          ) : (
-            <Empty title="No rejects in this period" />
-          )}
-        </Panel>
-      </div>
-
-      <div className="col-7">
-        <Panel title="Defect trend" subtitle={`Rejected tiles per ${bucketMin >= 480 ? 'shift' : 'hour'}, by defect category`}>
-          {trend.length ? (
-            <StackedColumns
-              labels={trendLabels}
-              series={DEFECT_ORDER.map((d) => ({ key: d, label: DEFECTS[d].label, color: DEFECT_COLOR[d] }))}
-              values={trendValues}
-              format={fmtInt}
-              tickEvery={tickEvery}
-              height={210}
-            />
-          ) : (
-            <Empty title="No inspection data in this period" />
-          )}
-        </Panel>
+      <div className="col-7 q-anchor" ref={eventsRef}>
+        <QualityEvents
+          open={events.open}
+          resolved={events.resolved}
+          impacts={data.impacts}
+          focusId={focusId}
+          focusAuto={focus == null}
+          periodLabel={data.p.label}
+          onFocus={setFocus}
+          onPinRecord={pinRecord}
+        />
       </div>
 
       <div className="col-5">
-        <Panel title="Production batches" subtitle="Batches active in the period · click to filter records" flush>
-          <DataTable
-            columns={batchCols}
-            rows={batches}
-            rowKey={(r) => r.batch.id}
-            onRowClick={(r) => setFBatch(fBatch === r.batch.id ? null : r.batch.id)}
-            selectedKey={fBatch}
-            maxHeight={280}
-            empty="No batches in this period"
-          />
-        </Panel>
+        <RootCause eventId={focusId} onFocus={setFocus} />
       </div>
 
       <div className={detail ? 'col-8' : 'col-12'}>
         <Panel
-          title="Inspection event history"
-          subtitle={`${fmtInt(filtered.length)} records · newest first${filtered.length > HISTORY_LIMIT ? ` · showing latest ${HISTORY_LIMIT}` : ''}`}
+          title="Inspection records"
+          subtitle={`${fmtInt(filtered.length)} records · newest first${filtered.length > HISTORY_LIMIT ? ` · showing latest ${HISTORY_LIMIT}` : ''} · select one for its frames, context and event`}
           flush
           actions={
             <div className="q-filters">
@@ -419,6 +546,14 @@ export function QualityPage() {
                   Batch {fBatch} <X size={12} />
                 </button>
               )}
+              <button
+                className={`btn sm ${fEvent ? 'on' : ''}`}
+                aria-pressed={fEvent}
+                onClick={() => setFEvent(!fEvent)}
+                title="Only records referenced by a quality event (event refs or inspection-image evidence)"
+              >
+                <BellRing size={12} /> In an event {fmtInt(inEvents)}
+              </button>
               {(fAffected || data.affected.size > 0) && (
                 <button
                   className={`btn sm ${fAffected ? 'on' : ''}`}
@@ -468,165 +603,91 @@ export function QualityPage() {
             columns={historyCols}
             rows={shown}
             rowKey={(r) => r.id}
-            onRowClick={(r) => setSelected(r.id === selected ? null : r.id)}
+            onRowClick={(r) => selectRecord(r.id === selected ? null : r.id)}
             selectedKey={selected}
-            maxHeight={440}
+            maxHeight={480}
             empty={anyFilter ? 'No records match the filters' : 'No inspection records in this period'}
           />
         </Panel>
       </div>
 
       {detail && (
-        <RecordDetail
-          rec={detail.rec}
-          batch={detail.batch}
-          frame={detail.frame}
-          scenario={detail.scenario}
-          onShowFrame={showInViewer}
-          onClose={() => setSelected(null)}
-        />
-      )}
-    </div>
-  );
-}
-
-function RecordDetail({
-  rec,
-  batch,
-  frame,
-  scenario,
-  onShowFrame,
-  onClose,
-}: {
-  rec: QualityInspection;
-  batch: ProductionBatch | null;
-  frame: Frame | null;
-  scenario: ScenarioActivation | null;
-  onShowFrame: () => void;
-  onClose: () => void;
-}) {
-  const st = STATION_BY_ID[rec.stationId];
-  const product = batch ? PRODUCT_BY_SKU[batch.sku] : undefined;
-  const origin = rec.defect ? STAGE_BY_ID[DEFECTS[rec.defect].origin] : null;
-  return (
-    <div className="col-4">
-      <Panel
-        title={<span className="mono">{rec.id}</span>}
-        subtitle="Inspection record"
-        actions={
-          <button className="btn sm icon ghost" onClick={onClose} aria-label="Close detail">
-            <X size={14} />
-          </button>
-        }
-        footer={
-          <>
-            <SourceTag source={rec.source} /> Illustrative record generated by the simulation.
-          </>
-        }
-      >
-        <div className="q-detail">
-          {frame && (
-            <section className="q-rd-frame">
-              <button className="q-rd-thumb" onClick={onShowFrame} title="Show this frame in the vision viewer">
-                <FrameThumb frame={frame} />
-              </button>
-              <div>
-                <h3>Inspection frame</h3>
-                <p className="muted">Illustrative frame · simulated classification. Selected in the vision viewer.</p>
-                {scenario && (
-                  <p>
-                    <span className="tag scenario" title={`Raised by scenario: ${scenario.label}`}>
-                      <FlaskConical size={11} aria-hidden /> Scenario-affected
-                    </span>
-                  </p>
-                )}
-                <button className="btn sm" onClick={onShowFrame}>
-                  <ScanLine size={13} /> Show in vision viewer
-                </button>
-              </div>
-            </section>
-          )}
-          <section>
-            <h3>Record</h3>
-            <dl className="dl">
-              <dt>Time</dt>
-              <dd>{formatDateTime(rec.time)}</dd>
-              <dt>Result</dt>
-              <dd>
-                <ResultBadge result={rec.result} />
-              </dd>
-              <dt>Defect</dt>
-              <dd>{rec.defect ? DEFECTS[rec.defect].label : '—'}</dd>
-              <dt>Severity</dt>
-              <dd>
-                <DefectSeverity severity={rec.severity} />
-              </dd>
-              <dt>Measurement</dt>
-              <dd>{rec.measurement ?? '—'}</dd>
-              {rec.confidence != null && (
-                <>
-                  <dt>Confidence</dt>
-                  <dd title="Simulated classification confidence (no model runs)">{fmtPct(rec.confidence, 1)} · simulated</dd>
-                </>
-              )}
-              <dt>Tiles</dt>
-              <dd>{fmtInt(rec.tiles)}</dd>
-              {origin && (
-                <>
-                  <dt>Origin stage</dt>
-                  <dd>{origin.name}</dd>
-                </>
-              )}
-            </dl>
-          </section>
-          <section>
-            <h3>Batch</h3>
-            {batch ? (
-              <dl className="dl">
-                <dt>Batch</dt>
-                <dd className="mono">{batch.id}</dd>
-                <dt>SKU</dt>
-                <dd className="mono">{batch.sku}</dd>
-                <dt>Product</dt>
-                <dd>{product?.name ?? '—'}</dd>
-                <dt>Start</dt>
-                <dd>{formatDateTime(batch.start)}</dd>
-                <dt>End</dt>
-                <dd>{batch.end == null ? 'Active' : formatDateTime(batch.end)}</dd>
-              </dl>
-            ) : (
-              <p className="muted">Batch {rec.batchId} not found.</p>
-            )}
-          </section>
-          {rec.defect && (
-            <section>
-              <h3>Recommended investigation</h3>
-              <p>{DEFECT_ACTIONS[rec.defect]}</p>
-            </section>
-          )}
-          <section>
-            <h3>Station</h3>
-            <dl className="dl">
-              <dt>Station</dt>
-              <dd>{st?.name ?? rec.stationId}</dd>
-              <dt>Equipment</dt>
-              <dd className="mono">{st?.equipmentId ?? '—'}</dd>
-              <dt>Method</dt>
-              <dd>{st?.method ?? '—'}</dd>
-            </dl>
-          </section>
-          <div className="q-actions">
-            <button className="btn sm" onClick={() => openStation(rec.stationId)}>
-              <Locate size={13} /> View station in Factory Twin
-            </button>
-            {origin && (
-              <button className="btn sm" onClick={() => openEquipment(origin.machines[0])} title={`${origin.name}: ${origin.machines[0]}`}>
-                <Box size={13} /> View origin stage machine
-              </button>
-            )}
-          </div>
+        <div className="col-4">
+          <RecordDetail
+            {...detail}
+            periodInspected={q.inspected}
+            periodLabel={data.p.label}
+            onShowFrame={() => scrollTo(visionRef.current)}
+            onShowEvent={showEvent}
+            onClose={() => selectRecord(null)}
+          />
         </div>
-      </Panel>
+      )}
+
+      <div className="col-7">
+        <ScrapImpact impact={impact} rows={eventRows} periodLabel={data.p.label} focusId={focusId} onFocus={showEvent} />
+      </div>
+
+      <div className="col-5">
+        <Panel title="Defect classes" subtitle="Rejected tiles by class · share of all rejects · click to filter the records" footer="Gauge results are measurements against a tolerance — they carry no classification confidence.">
+          {defectTotal > 0 ? (
+            <div className="q-cls">
+              <div className="q-cls-h">
+                <Cpu size={13} aria-hidden /> Vision classes · <span className="mono">{SIM_MODEL}</span>
+              </div>
+              <RankedBars rows={classRows(VISION_CLASSES)} format={fmtInt} labelHeader="Class" valueHeader="Tiles" showCumulative={false} onSelect={(r) => toggleDefect(r.key)} selectedKey={fDefect || null} />
+              <div className="q-cls-h">
+                <Ruler size={13} aria-hidden /> Gauge measurements · non-vision
+              </div>
+              <RankedBars rows={classRows(GAUGE_CLASSES)} format={fmtInt} labelHeader="Measurement" valueHeader="Tiles" showCumulative={false} onSelect={(r) => toggleDefect(r.key)} selectedKey={fDefect || null} />
+            </div>
+          ) : (
+            <Empty title="No rejects in this period" />
+          )}
+        </Panel>
+      </div>
+
+      <div className="col-7">
+        <Panel title="Defect trend" subtitle={`Rejected tiles per ${bucketMin >= 480 ? 'shift' : 'hour'}, by defect category`}>
+          {trend.length ? (
+            <StackedColumns
+              labels={trendLabels}
+              series={DEFECT_ORDER.map((d) => ({ key: d, label: DEFECTS[d].label, color: DEFECT_COLOR[d] }))}
+              values={trendValues}
+              format={fmtInt}
+              tickEvery={tickEvery}
+              height={210}
+            />
+          ) : (
+            <Empty title="No inspection data in this period" />
+          )}
+        </Panel>
+      </div>
+
+      <div className="col-5">
+        <Panel title="Production batches" subtitle="Batches active in the period · click to filter records" flush>
+          <DataTable
+            columns={batchCols}
+            rows={batches}
+            rowKey={(r) => r.batch.id}
+            onRowClick={(r) => setFBatch(fBatch === r.batch.id ? null : r.batch.id)}
+            selectedKey={fBatch}
+            maxHeight={280}
+            empty="No batches in this period"
+          />
+        </Panel>
+      </div>
+
+      <div className="col-12">
+        <Panel
+          title="Inspection stations"
+          subtitle="Registry of inspection points mapped to 3D equipment · click a row to filter the records"
+          flush
+          footer="Inline stations check every sorted tile; the QC bench checks hourly samples (counts are sample tiles)."
+        >
+          <DataTable columns={stationCols} rows={stations} rowKey={(r) => r.id} onRowClick={(r) => setFStation(fStation === r.id ? '' : r.id)} selectedKey={fStation || null} maxHeight="none" />
+        </Panel>
+      </div>
     </div>
   );
 }

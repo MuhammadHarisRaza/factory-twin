@@ -8,6 +8,7 @@ import { TwinStatusBar } from '../TwinStatusBar';
 import { LineStrip } from './LineStrip';
 import { Timeline } from './Timeline';
 import { LiveList } from './LiveList';
+import { CameraWindow } from './CameraWindow';
 import './twin.css';
 
 /**
@@ -15,7 +16,7 @@ import './twin.css';
  * every panel in its own region so nothing overlaps; the empty centre stays the scene:
  *
  *   KPI chips ─────────────────────────────────────────────
- *   zones │ rail  [flow legend]                 │ inspector
+ *   zones │ rail  [flow legend]        [camera] │ inspector
  *         │            3D                       │
  *         │       [hint]            [site plan] │
  *   line status / visit stepper  ·  timeline     │ live list
@@ -35,6 +36,7 @@ export function TwinOverlays() {
       <div className="tw-mid">
         <Toolbar />
         <FlowLegend />
+        <CameraWindow />
         <Hint />
         <Minimap />
       </div>

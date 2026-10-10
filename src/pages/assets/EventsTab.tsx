@@ -58,25 +58,36 @@ function scenarioTarget(sc: ScenarioActivation): Pick<EventRow, 'equipmentId' | 
   return { equipmentId: 'K-DOCK', subject: sc.dockId ? (DOCK_NAME[sc.dockId] ?? sc.dockId) : 'Dispatch yard', subjectSub: 'K-DOCK' };
 }
 
+/** Scenario an alert announces ("Scenario started: <label>"), matched by label and, when possible, start minute. */
+function scenarioOfAlert(s: SimState, a: SimState['alerts'][number]): ScenarioActivation | undefined {
+  const candidates = s.scenarios.filter((x) => a.title.endsWith(x.label));
+  return candidates.find((x) => x.start === a.time) ?? candidates[candidates.length - 1];
+}
+
 function buildEvents(s: SimState): EventRow[] {
   const out: EventRow[] = [];
   const now = s.minute;
   const vLabel = (id: string) => s.logistics.vehicles[id]?.label ?? id;
 
-  for (const a of s.alerts)
+  for (const a of s.alerts) {
+    // Scenario alerts without a subject (stage or truck scenarios) locate the scenario's own target;
+    // only vehicle alerts fall back to the dispatch area (finding #29).
+    const sc = !a.equipmentId && a.source === 'scenario' ? scenarioOfAlert(s, a) : undefined;
+    const tgt = sc ? scenarioTarget(sc) : null;
     out.push({
       key: a.id,
       time: a.time,
       type: 'alert',
-      subject: a.equipmentId ?? (a.vehicleId ? vLabel(a.vehicleId) : '—'),
-      subjectSub: a.equipmentId ? EQUIPMENT_BY_ID[a.equipmentId]?.name : undefined,
+      subject: a.equipmentId ?? (a.vehicleId ? vLabel(a.vehicleId) : (tgt?.subject ?? '—')),
+      subjectSub: a.equipmentId ? EQUIPMENT_BY_ID[a.equipmentId]?.name : a.vehicleId ? undefined : tgt?.subjectSub,
       detail: `${a.title} — ${a.detail}`,
       severity: a.severity,
       source: a.source,
-      equipmentId: a.equipmentId,
+      equipmentId: a.equipmentId ?? tgt?.equipmentId,
       vehicleId: a.vehicleId,
-      fallback: 'K-DOCK',
+      fallback: a.vehicleId ? 'K-DOCK' : undefined,
     });
+  }
 
   for (const d of s.downtime) {
     if (d.category === 'Starved' || d.category === 'Blocked') continue;

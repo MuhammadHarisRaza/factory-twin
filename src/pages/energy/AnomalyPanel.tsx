@@ -1,15 +1,16 @@
-import { ChartLine, CircleCheck, Locate, OctagonX, TriangleAlert } from 'lucide-react';
-import { openEquipment } from '../../app/store';
+import { ChartLine, CircleCheck, ClipboardList, Locate, OctagonX, TriangleAlert } from 'lucide-react';
+import { openEquipment, openEvent } from '../../app/store';
 import type { EnergyRow, Period } from '../../sim/metrics';
 import { Panel } from '../../ui/kit/Panel';
-import { SourceTag, StatusBadge } from '../../ui/kit/Status';
+import { EventStatusBadge, SourceTag, StatusBadge } from '../../ui/kit/Status';
 import { fmtInt } from '../../ui/kit/format';
 import { ConsumerType, DevBadge } from './badges';
 import { MONTH_HOURS, fmtMoney, fmtSigned, largestDeviation, type AnomalyRow } from './derive';
 
 /**
  * Consumers deviating more than 8 % from the energy model (period or last hour): how far,
- * what it costs now and per month if sustained, what to check and where it is.
+ * what it costs now and per month if sustained, what to check, where it is, and the
+ * energy-deviation event it raised (opened in Events & Reports — the same record as the PDF).
  */
 export function AnomalyPanel({
   rows,
@@ -124,6 +125,20 @@ function AnomalyItem({ r, currency, scenario, onTrend }: { r: AnomalyRow; curren
       </p>
 
       <div className="en-actions-row">
+        {r.event ? (
+          <>
+            <button className="btn sm primary" onClick={() => openEvent(r.event!.id)} title={`Open the report of ${r.event.id}: ${r.event.title}`}>
+              <ClipboardList size={13} aria-hidden />
+              Event report · {r.event.id}
+            </button>
+            <EventStatusBadge status={r.event.status} />
+          </>
+        ) : (
+          <span className="muted" title="The energy-deviation rule compares the last full hour with the model every 15 min">
+            No event yet — the rule checks the last full hour
+          </span>
+        )}
+        <span className="spacer" />
         <button className="btn sm" onClick={() => openEquipment(r.id)}>
           <Locate size={13} aria-hidden />
           Locate in Factory Twin

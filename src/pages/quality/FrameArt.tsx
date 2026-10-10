@@ -15,6 +15,8 @@ import {
   TILE_X,
   TILE_Y,
   scaleBar,
+  stillScaleBar,
+  stillView,
   tileGeometry,
   tileTransform,
   zoomOnBox,
@@ -39,6 +41,17 @@ export const DEFECT_SHORT: Record<keyof typeof DEFECTS, string> = {
   shade: 'Shade',
   planarity: 'Planarity',
   dimension: 'Caliber',
+};
+
+/**
+ * Text drawn on the detection box: the tunnel's class and simulated confidence ("sim" — no model
+ * produced it), or "gauge" for a gauge result, which is a measurement out of tolerance, not a
+ * classification with a confidence.
+ */
+export const detectionLabel = (rec: QualityInspection | null) => {
+  if (!rec?.defect) return '';
+  if (rec.stationId !== 'ST-VIS') return `${DEFECT_SHORT[rec.defect]} · gauge`;
+  return `${DEFECT_SHORT[rec.defect]}${rec.confidence != null ? ` ${(rec.confidence * 100).toFixed(1)}% sim` : ''}`;
 };
 
 const useUid = () => `q${useId().replace(/[^a-zA-Z0-9_-]/g, '')}`;
@@ -301,7 +314,7 @@ export function FrameView({
   const bar = scaleBar(k);
   const rec = frame.rec;
   const color = severityColor(rec?.severity ?? null);
-  const text = rec?.defect ? `${DEFECT_SHORT[rec.defect]} ${rec.confidence != null ? `${(rec.confidence * 100).toFixed(1)}%` : ''}`.trim() : '';
+  const text = detectionLabel(rec);
   const lw = text.length * LABEL_FS * 0.6 + 24;
   const box = g.box;
   const lx = box ? Math.min(Math.max(box.x, -40), TILE + 40 - lw) : 0;
@@ -392,6 +405,129 @@ export function FrameView({
           {bar.mm} mm
         </text>
       </g>
+    </svg>
+  );
+}
+
+// ── Stills: record detail and raster export ──────────────────────────────────
+
+const SEV_HEX: Record<NonNullable<QualityInspection['severity']>, string> = { minor: '#fab219', major: '#ec835a', critical: '#e05252' };
+
+/** Styles a standalone still embeds (an SVG drawn as an image cannot see the page's CSS or tokens). */
+export const STILL_CSS = [
+  '.q-gauge-nominal{stroke:#ffffff80;stroke-width:1.2px;stroke-dasharray:8 6}',
+  '.q-gauge-line{stroke:#79bdd6;stroke-width:2px}',
+  '.q-gauge-glow{stroke:#5aa7c3;stroke-opacity:0.28;stroke-width:12}',
+  '.q-gauge-text{font:500 30px ui-monospace,Menlo,Consolas,monospace;fill:#79bdd6;paint-order:stroke;stroke:#0e1114;stroke-width:7px;stroke-opacity:0.75}',
+  '.q-still-label{font-family:ui-monospace,Menlo,Consolas,monospace;font-weight:600;fill:#0e1114}',
+  '.q-still-bar{font-family:ui-monospace,Menlo,Consolas,monospace;font-weight:500;fill:#ffffffd9}',
+].join('');
+
+const f1 = (n: number) => (Math.round(n * 10) / 10).toString();
+const clampN = (v: number, a: number, b: number) => (b < a ? a : Math.min(b, Math.max(a, v)));
+
+/**
+ * Square still of a frame: the original tile (no overlays) or the annotated frame (gauge overlay,
+ * detection box with class and simulated confidence, scale bar), optionally cropped around the box.
+ * `standalone` makes a self-contained SVG (namespace, pixel size, embedded styles, no CSS
+ * variables) that can be drawn into a canvas for reports and the PDF.
+ */
+export function FrameStill({
+  frame,
+  annotated,
+  crop = false,
+  standalone,
+  className,
+  label,
+}: {
+  frame: Frame;
+  annotated: boolean;
+  crop?: boolean;
+  standalone?: { size: number };
+  className?: string;
+  /** Accessible description; omitted = decorative. */
+  label?: string;
+}) {
+  const uid = useUid();
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  const g = useMemo(() => tileGeometry(frame), [frame.id, frame.sku]);
+  const v = stillView(g, crop);
+  const rec = frame.rec;
+  const sev = rec?.severity ?? null;
+  const color = standalone ? SEV_HEX[sev ?? 'major'] : severityColor(sev);
+  const showBox = annotated && !!g.box;
+  const text = showBox ? detectionLabel(rec) : '';
+  const pad = v.side * 0.03;
+  const lh = v.side * 0.068;
+  const fs = lh * 0.6;
+  const lw = text.length * fs * 0.62 + lh * 0.5;
+  let lx = 0;
+  let ly = 0;
+  if (v.box && text) {
+    const gap = pad * 0.4;
+    lx = clampN(v.box.x0, v.x + pad, v.x + v.side - pad - lw);
+    ly =
+      v.box.y0 - lh - gap >= v.y + pad
+        ? v.box.y0 - lh - gap
+        : v.box.y1 + gap + lh <= v.y + v.side - pad
+          ? v.box.y1 + gap
+          : Math.max(v.y + pad, v.box.y0 + gap);
+  }
+  const bar = stillScaleBar(v.side);
+  const bx = v.x + v.side - pad - bar.len;
+  const by = v.y + v.side - pad * 1.4;
+  const tick = v.side * 0.012;
+  return (
+    <svg
+      xmlns={standalone ? 'http://www.w3.org/2000/svg' : undefined}
+      width={standalone?.size}
+      height={standalone?.size}
+      viewBox={`${f1(v.x)} ${f1(v.y)} ${f1(v.side)} ${f1(v.side)}`}
+      preserveAspectRatio="xMidYMid slice"
+      className={className}
+      role="img"
+      aria-label={label}
+      aria-hidden={label ? undefined : true}
+      focusable="false"
+    >
+      {standalone && <style>{STILL_CSS}</style>}
+      <defs>
+        <pattern id={`${uid}-rollers`} width="96" height="200" patternUnits="userSpaceOnUse">
+          <rect width="96" height="200" fill="#0c0f11" />
+          <rect x="8" width="80" height="200" fill="#1c2226" />
+          <rect x="28" width="12" height="200" fill="#262d32" />
+          <rect x="74" width="6" height="200" fill="#161b1e" />
+        </pattern>
+      </defs>
+      <rect x={v.x} y={v.y} width={v.side} height={v.side} fill={`url(#${uid}-rollers)`} />
+      <g transform={tileTransform(g)}>
+        <TileBody g={g} uid={uid} shadow />
+        {annotated && g.defect && <GaugeOverlay d={g.defect} labels={!crop} />}
+        {showBox && <BoxMark box={g.box!} color={color} />}
+      </g>
+      {text && (
+        <g style={{ color }} transform={`translate(${f1(lx)} ${f1(ly)})`}>
+          <rect width={lw} height={lh} rx={lh * 0.12} fill="currentColor" />
+          <text x={lh * 0.25} y={lh / 2} dominantBaseline="central" className="q-still-label" style={{ fontSize: fs }}>
+            {text}
+          </text>
+        </g>
+      )}
+      {annotated && (
+        <g>
+          <rect x={bx - pad * 0.5} y={by - fs * 1.9} width={bar.len + pad} height={fs * 2.5} rx={pad * 0.3} fill="#0a0d0fb3" />
+          <path
+            d={`M${f1(bx)} ${f1(by)} L${f1(bx + bar.len)} ${f1(by)} M${f1(bx)} ${f1(by - tick)} L${f1(bx)} ${f1(by + tick)} M${f1(bx + bar.len)} ${f1(by - tick)} L${f1(bx + bar.len)} ${f1(by + tick)}`}
+            fill="none"
+            stroke="#ffffffd9"
+            strokeWidth={1.6}
+            vectorEffect="non-scaling-stroke"
+          />
+          <text x={bx + bar.len / 2} y={by - fs * 0.55} textAnchor="middle" className="q-still-bar" style={{ fontSize: fs * 0.8 }}>
+            {bar.mm} mm
+          </text>
+        </g>
+      )}
     </svg>
   );
 }

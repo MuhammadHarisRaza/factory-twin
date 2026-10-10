@@ -2,10 +2,15 @@
  * Product moving along the main conveyors — green tiles from the presses over the collector
  * into the dryer and along the glaze line to the kiln, fired tiles from the kiln exit through
  * inspection and sorting to packing. One InstancedMesh per conveyor segment; items are
- * emitted at a rate proportional to the live output of the machine feeding the segment and
- * travel with its belt, which stands still while that machine is down, starved or blocked
- * (or the simulation is paused). Tiles diverted onto the sorter's reject branch are tinted
- * red while a quality exception is active ("affected products").
+ * emitted at a rate proportional to the live output of the machine feeding the segment.
+ *
+ * On an operational conveyor (E-COL, CV-*) the items travel with that conveyor: a stopped
+ * conveyor stands still with its load, a running one carries what is on it (and runs empty when
+ * nothing is fed), and when the receiving machine or conveyor is stopped or blocked the items
+ * queue up at the end and accumulate back up the belt. Short transfer tables without their own
+ * drive move only while the machine feeding them runs. Everything stands still while the
+ * simulation is paused. Tiles diverted onto the sorter's reject branch are tinted red while a
+ * quality exception is active ("affected products").
  */
 import { memo, useMemo, useRef, type MutableRefObject } from 'react';
 import { useFrame } from '@react-three/fiber';
@@ -15,7 +20,7 @@ import { useSim, useSimValue } from '../../sim/store';
 import { useTwin } from '../../store';
 import { MAT, UNIT_BOX } from '../materials';
 import { PRESS_X } from '../zones/PressingDrying';
-import { createBelt, groupFlow, pointAt, polyline, seedBelt, sharedQualityStatus, stepBelt, type PolylinePoint } from './model';
+import { createBelt, groupFlow, outletHeld, pointAt, polyline, seedBelt, sharedQualityStatus, stepBelt, type PolylinePoint } from './model';
 
 type Item = 'tile' | 'stack' | 'carton';
 
@@ -40,6 +45,10 @@ type Segment = {
   material: Material;
   /** Machines whose output feeds the segment. */
   feed: string[];
+  /** Operational conveyor carrying the segment (its run state moves or stops the items). */
+  conveyor?: string;
+  /** Machines / conveyors taking the items at the end: stopped or blocked → items accumulate. */
+  receiver?: string[];
   /** Share of the feed travelling on this segment (grade branches). */
   share?: number;
   /** The sorter's reject branch. */
@@ -72,6 +81,8 @@ const SEGMENTS: Segment[] = [
     item: 'tile',
     material: MAT.greenTile,
     feed: ['E-PRS1', 'E-PRS2', 'E-PRS3'],
+    conveyor: 'E-COL',
+    receiver: ['F-DRY'],
   },
   {
     key: 'dryer-exit',
@@ -92,6 +103,8 @@ const SEGMENTS: Segment[] = [
     item: 'tile',
     material: MAT.greenTile,
     feed: ['G-LINE'],
+    conveyor: 'CV-GLZ',
+    receiver: ['G-LINE'],
   },
   {
     key: 'glaze-out',
@@ -102,6 +115,8 @@ const SEGMENTS: Segment[] = [
     item: 'tile',
     material: MAT.glazedTile,
     feed: ['G-LINE'],
+    conveyor: 'CV-GLZ',
+    receiver: ['G-INK'],
   },
   {
     key: 'decoration-out',
@@ -112,6 +127,8 @@ const SEGMENTS: Segment[] = [
     item: 'tile',
     material: MAT.glazedTile,
     feed: ['G-INK'],
+    conveyor: 'CV-GLZ',
+    receiver: ['CV-KIN'],
   },
   {
     key: 'kiln-infeed',
@@ -124,6 +141,8 @@ const SEGMENTS: Segment[] = [
     item: 'tile',
     material: MAT.glazedTile,
     feed: ['G-INK'],
+    conveyor: 'CV-KIN',
+    receiver: ['H-KILN'],
   },
   // Kiln exit → planarity gauge → vision tunnel → grade marking → diverters.
   {
@@ -134,7 +153,9 @@ const SEGMENTS: Segment[] = [
     ],
     item: 'tile',
     material: MAT.glazedTile,
-    feed: ['I-SORT'],
+    feed: ['H-KILN'],
+    conveyor: 'CV-SORT',
+    receiver: ['I-SORT'],
   },
   {
     key: 'reject',
@@ -156,6 +177,8 @@ const SEGMENTS: Segment[] = [
     item: 'tile',
     material: MAT.glazedTile,
     feed: ['I-SORT'],
+    conveyor: 'CV-SORT',
+    receiver: ['CV-PACK'],
   },
   ...[-24.5, -28, -31.5].map(
     (x, i): Segment => ({
@@ -179,7 +202,9 @@ const SEGMENTS: Segment[] = [
     ],
     item: 'stack',
     material: MAT.glazedTile,
-    feed: ['J-BOX'],
+    feed: ['I-SORT'],
+    conveyor: 'CV-PACK',
+    receiver: ['J-BOX'],
   },
   {
     key: 'cartons',
@@ -190,6 +215,8 @@ const SEGMENTS: Segment[] = [
     item: 'carton',
     material: MAT.carton,
     feed: ['J-BOX'],
+    conveyor: 'CV-PACK',
+    receiver: ['J-PAL', 'CV-PAL'],
   },
 ];
 
@@ -222,12 +249,17 @@ const FlowSegment = memo(function FlowSegment({ seg, quality }: { seg: Segment; 
       const spacing = (spec.spacing / Math.max(0.05, share)) * ((0.6 + 0.4 * rate) / Math.max(0.3, rate));
       seedBelt(belt, line.length, Math.max(spec.gap, spacing), spec.spacing * 0.37);
     }
-    const moving = running && f.moving;
+    // A driven conveyor runs unless it is stopped (it then carries what is on it, or runs empty);
+    // a transfer table without its own drive moves only while its feeding machine does.
+    const cv = seg.conveyor ? sim.machines[seg.conveyor] : undefined;
+    const beltRuns = running && (cv ? cv.state !== 'down' && cv.state !== 'planned' : f.moving);
+    const emitting = beltRuns && f.moving;
     stepBelt(belt, dt, {
       length: line.length,
-      targetSpeed: moving ? speed : 0,
-      emitPerSec: moving ? (V0 / spec.spacing) * rate * share : 0,
+      targetSpeed: beltRuns ? (emitting ? speed : V0 * 0.6) : 0,
+      emitPerSec: emitting ? (V0 / spec.spacing) * rate * share : 0,
       minGap: spec.gap,
+      hold: outletHeld(sim, seg.receiver),
     });
 
     const [sx, sy, sz] = spec.size;

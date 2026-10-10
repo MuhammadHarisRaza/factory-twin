@@ -68,7 +68,13 @@ function passFrame(s: SimState, t: number): Frame {
 }
 
 function recordFrame(s: SimState, r: QualityInspection & { stationId: FrameStation }): Frame {
-  return { id: r.id, kind: r.result, time: r.time, stationId: r.stationId, batchId: r.batchId, sku: skuOf(s, r.batchId), rec: r };
+  return frameForRecord(r, skuOf(s, r.batchId))!;
+}
+
+/** The illustrative frame of a tunnel / gauge record (null for lab samples, which have no frame). */
+export function frameForRecord(r: QualityInspection, sku: string): Frame | null {
+  if (!isFrameStation(r.stationId)) return null;
+  return { id: r.id, kind: r.result, time: r.time, stationId: r.stationId, batchId: r.batchId, sku, rec: r };
 }
 
 const idNum = (id: string) => Number(id.slice(id.lastIndexOf('-') + 1)) || 0;
@@ -116,6 +122,14 @@ export function frameById(s: SimState, id: string): Frame | null {
     if (r.id === id) return isFrameStation(r.stationId) ? recordFrame(s, r as QualityInspection & { stationId: FrameStation }) : null;
   }
   return null;
+}
+
+/** The frame the vision viewer shows: the pinned one, else the latest of the feed. */
+export function viewerFrame(s: SimState, selected: string | null, n: number, mode: FeedMode): Frame | null {
+  const pinned = selected ? frameById(s, selected) : null;
+  if (pinned) return pinned;
+  const feed = latestFrames(s, n, mode);
+  return feed[feed.length - 1] ?? null;
 }
 
 /** Previous (dir −1) or next (dir +1) frame in the feed order; null at either end. */

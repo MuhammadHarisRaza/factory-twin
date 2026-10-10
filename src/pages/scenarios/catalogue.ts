@@ -1,13 +1,13 @@
 /**
  * Scenario catalogue shared by the Scenario Simulator workspace and the quick drawer:
  * what each scenario does, its parameters, how its activation is built, where its effect
- * shows, and pure helpers for status, parameter summaries, outcomes and the impact window.
- * No React here (unit-tested in catalogue.test.ts).
+ * shows, and pure helpers for status, parameter summaries, outcomes, linked events and the
+ * impact window. No React here (unit-tested in catalogue.test.ts).
  */
 import type { WorkspaceId } from '../../app/store';
 import { EQUIPMENT_BY_ID } from '../../data/equipment';
-import { DOCKS, PROCESS_MACHINES, STAGES, STAGE_BY_ID } from '../../model/plant';
-import type { ScenarioActivation, ScenarioKind, StageId } from '../../model/types';
+import { CONVEYOR_BY_ID, DOCKS, GEOFENCES, PROCESS_MACHINES, STAGES, STAGE_BY_ID } from '../../model/plant';
+import type { MonitoredStageId, OpEvent, ScenarioActivation, ScenarioKind, StageId } from '../../model/types';
 import { scenariosActive, type SimState } from '../../sim/engine';
 import { CONSUMER_BY_ID } from '../../sim/energy';
 import { HEALTH_ASSETS, HEALTH_BY_ID } from '../../sim/health';
@@ -26,15 +26,38 @@ export type ParamDef = {
   options: ParamOption[] | ((s: SimState) => ParamOption[]);
   /** Rendered with the follow-up maintenance action instead of the main parameters. */
   section?: 'maintenance';
+  /** Shown only when this returns true for the current values (e.g. a duration only for a stop). */
+  visible?: (v: Values) => boolean;
 };
 
-export type ShowTarget = { type: 'equipment'; id: string } | { type: 'vehicle'; id: string } | { type: 'workspace'; id: WorkspaceId };
+/** Where a "Show me" button goes. */
+export type ShowTarget =
+  | { type: 'equipment'; id: string }
+  | { type: 'vehicle'; id: string }
+  | { type: 'workspace'; id: WorkspaceId }
+  /** A stage's detail view in Production Monitoring. */
+  | { type: 'stage'; id: MonitoredStageId }
+  /** An event's report in Events & Reports. */
+  | { type: 'event'; id: string }
+  /** The copilot, asked about one event. */
+  | { type: 'copilot'; question: string; eventId?: string };
+
+export const targetKey = (t: ShowTarget) => (t.type === 'copilot' ? `copilot:${t.eventId ?? ''}` : `${t.type}:${t.id}`);
+
+export type CatalogueGroup = 'production' | 'quality' | 'logistics';
+export const GROUP_TITLE: Record<CatalogueGroup, string> = {
+  production: 'Production, equipment & data',
+  quality: 'Quality & energy',
+  logistics: 'Vehicles & logistics',
+};
 
 export type CatalogueEntry = {
-  /** Presenter reference letter. */
+  /** Stable key (parameter store, tests). */
   id: string;
+  /** Presenter reference number shown on the card. */
+  ref: number;
   kind: ScenarioKind;
-  group: 'core' | 'more';
+  group: CatalogueGroup;
   /** What the scenario does. */
   summary: string;
   /** Where the effect becomes visible. */
@@ -52,11 +75,11 @@ export type CatalogueEntry = {
 
 // ── Labels ────────────────────────────────────────────────────────────────────
 
-export const machineLabel = (id: string) => `${id} · ${EQUIPMENT_BY_ID[id]?.name ?? id}`;
+export const machineLabel = (id: string) => `${id} · ${EQUIPMENT_BY_ID[id]?.name ?? CONVEYOR_BY_ID[id]?.name ?? id}`;
 export const stageLabel = (id: StageId) => STAGE_BY_ID[id]?.name ?? id;
 const pct = (f: number) => `${Math.round(f * 100)} %`;
 const plusPct = (f: number) => `+${Math.round((f - 1) * 100)} %`;
-const dockName = (id: string) => DOCKS.find((d) => d.id === id)?.name ?? id;
+export const dockName = (id: string) => DOCKS.find((d) => d.id === id)?.name ?? id;
 
 const machineOptions: ParamOption[] = PROCESS_MACHINES.map((id) => ({ value: id, label: machineLabel(id) }));
 const stageOptions: ParamOption[] = STAGES.map((s) => ({ value: s.id, label: s.name }));
@@ -76,7 +99,7 @@ export const PROGRESSION: Record<string, { label: string; factor: number | undef
 const progressionOf = (factor: number | undefined) =>
   Object.values(PROGRESSION).find((p) => p.factor === factor)?.label ?? (factor == null ? PROGRESSION.typical.label : 'Custom progression');
 
-const DURATIONS: ParamOption[] = [
+export const DURATIONS: ParamOption[] = [
   { value: 0, label: 'Until cleared' },
   { value: 15, label: '15 min' },
   { value: 30, label: '30 min' },
@@ -96,28 +119,45 @@ export function dockOptions(s: SimState): ParamOption[] {
   ];
 }
 
-const str = (v: ParamValue) => String(v);
-const num = (v: ParamValue) => Number(v);
+export const str = (v: ParamValue) => String(v);
+export const num = (v: ParamValue) => Number(v);
 
 /** Trucks injected or affected by a scenario. */
 export const scenarioTrucks = (s: SimState, scenarioId: string) =>
   Object.values(s.logistics.vehicles).filter((v): v is TruckRuntime => v.class === 'external' && v.visit?.scenarioId === scenarioId);
 
+/**
+ * Trucks a scenario injected or holds. A later dock hold re-tags the truck it holds with its own
+ * scenario id, so an arrival also finds its truck through such a hold.
+ */
+export function injectedTrucks(s: SimState, sc: ScenarioActivation): TruckRuntime[] {
+  const direct = scenarioTrucks(s, sc.id);
+  if (sc.kind !== 'truck-arrival' || direct.length) return direct;
+  const holds = new Set(s.scenarios.filter((x) => x.kind === 'prolonged-dock-stay' && x.start >= sc.start).map((x) => x.id));
+  return Object.values(s.logistics.vehicles).filter(
+    (v): v is TruckRuntime => v.class === 'external' && v.visit?.arrival === sc.start && !!v.visit.scenarioId && holds.has(v.visit.scenarioId),
+  );
+}
+
 /** A scenario truck currently visible on site (to follow in the twin). */
 function truckOnSite(s: SimState, sc: ScenarioActivation | null) {
   if (!sc) return null;
-  return scenarioTrucks(s, sc.id).find((v) => s.logistics.active.includes(v.id) && v.spawned <= s.minute) ?? null;
+  return injectedTrucks(s, sc).find((v) => s.logistics.active.includes(v.id) && v.spawned <= s.minute) ?? null;
 }
+
+/** Forklift a restricted-zone entry scenario forces across the walkway. */
+export const RESTRICTED_FORKLIFT = 'FL-05';
 
 // ── Catalogue ─────────────────────────────────────────────────────────────────
 
 export const CATALOGUE: CatalogueEntry[] = [
   {
-    id: 'A',
+    id: 'bottleneck',
+    ref: 1,
     kind: 'bottleneck',
-    group: 'core',
+    group: 'production',
     summary: 'Cuts the capacity of one stage. Downstream stages starve once the buffer between them drains, and the line constraint can shift away from the kiln.',
-    effect: 'Production & OEE bottleneck view and stage table; output vs baseline; amber reduced-rate machines in the twin.',
+    effect: 'OEE & Loss bottleneck view and stage table; output vs baseline; amber reduced-rate machines in the twin; below-rate and starvation events.',
     params: [
       { key: 'stage', label: 'Stage', initial: 'GLAZE', options: stageOptions },
       { key: 'factor', label: 'Capacity', initial: 0.45, options: [0.7, 0.55, 0.45, 0.3].map((f) => ({ value: f, label: pct(f) })) },
@@ -128,11 +168,12 @@ export const CATALOGUE: CatalogueEntry[] = [
     workspaces: ['production'],
   },
   {
-    id: 'B',
+    id: 'breakdown',
+    ref: 2,
     kind: 'machine-stop',
-    group: 'core',
+    group: 'production',
     summary: 'Stops a machine with an unplanned downtime event. Availability and OEE fall; buffers absorb the loss for a while or pass it on to the line.',
-    effect: 'Red machine in the twin, downtime events and Pareto in Production & OEE, prioritised issue in the Command Center.',
+    effect: 'Red machine in the twin, stop event and report, downtime Pareto in OEE & Loss, prioritised issue in the Command Center.',
     params: [
       { key: 'machine', label: 'Machine', initial: 'H-KILN', options: machineOptions },
       { key: 'duration', label: 'Duration', initial: 30, options: DURATIONS },
@@ -148,54 +189,29 @@ export const CATALOGUE: CatalogueEntry[] = [
     workspaces: ['production', 'command'],
   },
   {
-    id: 'C',
-    kind: 'quality-deterioration',
-    group: 'core',
-    summary: 'Raises the reject rate for defects that originate at the chosen stage. Rejects are detected at inspection; quality rate and OEE fall.',
-    effect: 'Quality Intelligence defect Pareto and trend, inspection records, OEE quality component in Production & OEE.',
+    id: 'rate',
+    ref: 3,
+    kind: 'reduced-rate',
+    group: 'production',
+    summary: 'Runs one machine below its ideal rate. It stays available, so the loss shows as performance, not downtime.',
+    effect: 'Amber reduced-rate state in the twin, below-rate event, performance and output in OEE & Loss.',
     params: [
-      { key: 'stage', label: 'Defect origin', initial: 'GLAZE', options: (['PRESS', 'GLAZE', 'DECOR', 'KILN'] as StageId[]).map((id) => ({ value: id, label: stageLabel(id) })) },
-      { key: 'factor', label: 'Severity', initial: 4, options: [2, 4, 6].map((f) => ({ value: f, label: `×${f} reject rate` })) },
+      { key: 'machine', label: 'Machine', initial: 'H-KILN', options: machineOptions },
+      { key: 'factor', label: 'Rate', initial: 0.6, options: [0.8, 0.6, 0.4].map((f) => ({ value: f, label: `${pct(f)} of ideal` })) },
     ],
     oneOff: false,
-    build: (v) => ({
-      kind: 'quality-deterioration',
-      stage: str(v.stage) as StageId,
-      factor: num(v.factor),
-      end: null,
-      label: `${stageLabel(str(v.stage) as StageId)} defects ×${num(v.factor)}`,
-    }),
-    focus: (v, sc) => ({ type: 'equipment', id: STAGE_BY_ID[(sc?.stage ?? str(v.stage)) as StageId].machines[0] }),
-    workspaces: ['quality', 'production'],
+    build: (v) => ({ kind: 'reduced-rate', equipmentId: str(v.machine), factor: num(v.factor), end: null, label: `${machineLabel(str(v.machine))} at ${pct(num(v.factor))} rate` }),
+    focus: (v, sc) => ({ type: 'equipment', id: sc?.equipmentId ?? str(v.machine) }),
+    workspaces: ['production'],
   },
   {
-    id: 'D',
-    kind: 'energy-anomaly',
-    group: 'core',
-    summary: 'Makes one consumer draw more energy than the energy model expects for its load (gas for the kiln and hot-air generator, electricity otherwise).',
-    effect: 'Energy Intelligence deviation table, cost and kWh/m²; energy alert; energy cost vs baseline.',
-    params: [
-      { key: 'consumer', label: 'Consumer', initial: 'H-KILN', options: ENERGY_CONSUMERS.map((id) => ({ value: id, label: consumerLabel(id) })) },
-      { key: 'factor', label: 'Excess', initial: 1.2, options: [1.1, 1.2, 1.3, 1.4].map((f) => ({ value: f, label: `${plusPct(f)} vs model` })) },
-    ],
-    oneOff: false,
-    build: (v) => ({
-      kind: 'energy-anomaly',
-      equipmentId: str(v.consumer),
-      factor: num(v.factor),
-      end: null,
-      label: `${CONSUMER_BY_ID[str(v.consumer)]?.label ?? str(v.consumer)} energy ${plusPct(num(v.factor))}`,
-    }),
-    focus: (v, sc) => ({ type: 'equipment', id: sc?.equipmentId ?? str(v.consumer) }),
-    workspaces: ['energy', 'command'],
-  },
-  {
-    id: 'E',
+    id: 'fault',
+    ref: 4,
     kind: 'degradation',
-    group: 'core',
+    group: 'production',
     summary:
       'Starts a developing component fault. Vibration and temperature drift upward; rule-based detection flags it before it fails. Untreated, a typical fault ends in an unplanned breakdown about 1½–2 h later.',
-    effect: 'Machine Health condition list, signal trends and recommendation; alerts; then either a breakdown or a short planned stop.',
+    effect: 'Machine Health condition list, signal trends, condition event and recommendation; then either a breakdown or a short planned stop.',
     params: [
       {
         key: 'asset',
@@ -228,26 +244,78 @@ export const CATALOGUE: CatalogueEntry[] = [
     },
   },
   {
-    id: 'F',
-    kind: 'reduced-rate',
-    group: 'more',
-    summary: 'Runs one machine below its ideal rate. It stays available, so the loss shows as performance, not downtime.',
-    effect: 'Amber reduced-rate state in the twin, performance and output in Production & OEE.',
+    id: 'feed',
+    ref: 5,
+    kind: 'signal-loss',
+    group: 'production',
+    summary:
+      'Cuts the simulated PLC / gateway link of one machine. Its counter, state and rate freeze at the last value; the machine keeps producing, but its status becomes unknown until data resumes.',
+    effect: 'Unknown — data stale status in the twin, Production Monitoring and the Command Center; counter-inactivity (data quality) event; line output still counted at sorting.',
     params: [
-      { key: 'machine', label: 'Machine', initial: 'H-KILN', options: machineOptions },
-      { key: 'factor', label: 'Rate', initial: 0.6, options: [0.8, 0.6, 0.4].map((f) => ({ value: f, label: `${pct(f)} of ideal` })) },
+      { key: 'machine', label: 'Machine', initial: 'E-PRS1', options: machineOptions },
+      { key: 'duration', label: 'Duration', initial: 30, options: DURATIONS },
     ],
     oneOff: false,
-    build: (v) => ({ kind: 'reduced-rate', equipmentId: str(v.machine), factor: num(v.factor), end: null, label: `${machineLabel(str(v.machine))} at ${pct(num(v.factor))} rate` }),
+    build: (v, now) => ({
+      kind: 'signal-loss',
+      equipmentId: str(v.machine),
+      end: num(v.duration) > 0 ? now + num(v.duration) : null,
+      label: `Data feed loss ${machineLabel(str(v.machine))}${num(v.duration) > 0 ? ` · ${formatDuration(num(v.duration))}` : ''}`,
+    }),
     focus: (v, sc) => ({ type: 'equipment', id: sc?.equipmentId ?? str(v.machine) }),
-    workspaces: ['production'],
+    workspaces: ['monitoring', 'command'],
   },
   {
-    id: 'G',
+    id: 'quality',
+    ref: 6,
+    kind: 'quality-deterioration',
+    group: 'quality',
+    summary: 'Raises the reject rate for defects that originate at the chosen stage. Rejects are detected at inspection; quality rate and OEE fall.',
+    effect: 'AI Defect Monitoring defect Pareto and trend, inspection records, quality events; OEE quality component in OEE & Loss.',
+    params: [
+      { key: 'stage', label: 'Defect origin', initial: 'GLAZE', options: (['PRESS', 'GLAZE', 'DECOR', 'KILN'] as StageId[]).map((id) => ({ value: id, label: stageLabel(id) })) },
+      { key: 'factor', label: 'Severity', initial: 4, options: [2, 4, 6].map((f) => ({ value: f, label: `×${f} reject rate` })) },
+    ],
+    oneOff: false,
+    build: (v) => ({
+      kind: 'quality-deterioration',
+      stage: str(v.stage) as StageId,
+      factor: num(v.factor),
+      end: null,
+      label: `${stageLabel(str(v.stage) as StageId)} defects ×${num(v.factor)}`,
+    }),
+    focus: (v, sc) => ({ type: 'equipment', id: STAGE_BY_ID[(sc?.stage ?? str(v.stage)) as StageId].machines[0] }),
+    workspaces: ['quality', 'production'],
+  },
+  {
+    id: 'energy',
+    ref: 7,
+    kind: 'energy-anomaly',
+    group: 'quality',
+    summary: 'Makes one consumer draw more energy than the energy model expects for its load (gas for the kiln and hot-air generator, electricity otherwise).',
+    effect: 'Energy Intelligence deviation table, cost and kWh/m²; energy-deviation event; energy cost vs baseline.',
+    params: [
+      { key: 'consumer', label: 'Consumer', initial: 'H-KILN', options: ENERGY_CONSUMERS.map((id) => ({ value: id, label: consumerLabel(id) })) },
+      { key: 'factor', label: 'Excess', initial: 1.2, options: [1.1, 1.2, 1.3, 1.4].map((f) => ({ value: f, label: `${plusPct(f)} vs model` })) },
+    ],
+    oneOff: false,
+    build: (v) => ({
+      kind: 'energy-anomaly',
+      equipmentId: str(v.consumer),
+      factor: num(v.factor),
+      end: null,
+      label: `${CONSUMER_BY_ID[str(v.consumer)]?.label ?? str(v.consumer)} energy ${plusPct(num(v.factor))}`,
+    }),
+    focus: (v, sc) => ({ type: 'equipment', id: sc?.equipmentId ?? str(v.consumer) }),
+    workspaces: ['energy', 'command'],
+  },
+  {
+    id: 'truck',
+    ref: 8,
     kind: 'truck-arrival',
-    group: 'more',
+    group: 'logistics',
     summary: 'An additional outbound truck arrives at the gate now, waits for a dock, loads and departs.',
-    effect: 'Fleet & Logistics vehicle list, gate events and dock board; the truck drives through the twin.',
+    effect: 'Vehicle Monitoring list, gate events and dock board; the truck drives through the twin.',
     params: [],
     oneOff: true,
     build: () => ({ kind: 'truck-arrival', end: null, label: 'Additional truck arrival' }),
@@ -258,11 +326,12 @@ export const CATALOGUE: CatalogueEntry[] = [
     workspaces: ['fleet'],
   },
   {
-    id: 'H',
+    id: 'congestion',
+    ref: 9,
     kind: 'yard-congestion',
-    group: 'more',
+    group: 'logistics',
     summary: 'A burst of outbound trucks arrives two minutes apart. The holding area fills, waiting time and turnaround rise.',
-    effect: 'Fleet & Logistics waiting time, holding area and turnaround; queued trucks in the twin.',
+    effect: 'Vehicle Monitoring waiting time, holding area and turnaround; yard-congestion and truck-waiting events; queued trucks in the twin.',
     params: [{ key: 'count', label: 'Trucks', initial: 10, options: [6, 10, 14].map((n) => ({ value: n, label: `${n} trucks` })) }],
     oneOff: true,
     build: (v) => ({ kind: 'yard-congestion', count: num(v.count), end: null, label: `Yard congestion · ${num(v.count)} trucks` }),
@@ -270,11 +339,12 @@ export const CATALOGUE: CatalogueEntry[] = [
     workspaces: ['fleet'],
   },
   {
-    id: 'I',
+    id: 'dock',
+    ref: 10,
     kind: 'prolonged-dock-stay',
-    group: 'more',
+    group: 'logistics',
     summary: 'Holds a docked truck after loading (documentation hold). Dock time, turnaround and dock utilisation rise; queued trucks wait longer.',
-    effect: 'Fleet & Logistics dock board ("Held"), dock time and utilisation.',
+    effect: 'Vehicle Monitoring dock board ("Held"), dock time and utilisation; dock-overstay event once the stay passes the threshold.',
     params: [
       { key: 'dock', label: 'Dock', initial: 'auto', options: dockOptions },
       { key: 'count', label: 'Hold', initial: 75, options: [45, 75, 120].map((n) => ({ value: n, label: `+${n} min` })) },
@@ -302,6 +372,23 @@ export const CATALOGUE: CatalogueEntry[] = [
       return ok ? null : 'No truck is at a dock right now, so a hold would have no effect. Try again when one docks.';
     },
   },
+  {
+    id: 'zone',
+    ref: 11,
+    kind: 'restricted-entry',
+    group: 'logistics',
+    summary: `Forklift ${RESTRICTED_FORKLIFT} takes its next empty-pallet run across the hall pedestrian walkway, a no-entry zone. The geofence rule fires on its simulated position (zone level).`,
+    effect: 'Vehicle Monitoring safety events, the forklift route in the twin and the restricted-zone entry event report.',
+    params: [],
+    oneOff: true,
+    build: () => ({ kind: 'restricted-entry', vehicleId: RESTRICTED_FORKLIFT, end: null, label: `Restricted-zone entry · ${RESTRICTED_FORKLIFT}` }),
+    focus: (_v, sc, s) => {
+      const id = sc?.vehicleId ?? RESTRICTED_FORKLIFT;
+      return s.logistics.active.includes(id) ? { type: 'vehicle', id } : { type: 'equipment', id: 'J-PAL' };
+    },
+    workspaces: ['fleet'],
+    unavailable: (_v, s) => (s.logistics.vehicles[RESTRICTED_FORKLIFT] ? null : `Forklift ${RESTRICTED_FORKLIFT} is not in the simulation.`),
+  },
 ];
 
 export const ENTRY_BY_ID = Object.fromEntries(CATALOGUE.map((e) => [e.id, e])) as Record<string, CatalogueEntry>;
@@ -315,7 +402,7 @@ export const initialValues = (): Record<string, Values> =>
 export const paramOptions = (p: ParamDef, s: SimState) => (typeof p.options === 'function' ? p.options(s) : p.options);
 
 /** Values with any option that no longer exists (e.g. a dock that emptied) replaced by the parameter's first option. */
-export function resolveValues(e: CatalogueEntry, v: Values | undefined, s: SimState): Values {
+export function resolveValues(e: { params: ParamDef[] }, v: Values | undefined, s: SimState): Values {
   const out: Values = {};
   for (const p of e.params) {
     const opts = paramOptions(p, s);
@@ -340,6 +427,15 @@ export function sameTarget(sc: ScenarioActivation, def: ScenarioDef) {
   return (sc.equipmentId ?? null) === (def.equipmentId ?? null) && (sc.stage ?? null) === (def.stage ?? null);
 }
 
+/** Generic "Show me" focus of a logged scenario: its catalogue entry, else its equipment. */
+export function scenarioFocus(s: SimState, sc: ScenarioActivation): ShowTarget | null {
+  const entry = ENTRY_BY_KIND[sc.kind];
+  if (entry) return entry.focus(resolveValues(entry, undefined, s), sc, s);
+  if (sc.equipmentId) return { type: 'equipment', id: sc.equipmentId };
+  if (sc.stage) return { type: 'equipment', id: STAGE_BY_ID[sc.stage].machines[0] };
+  return null;
+}
+
 // ── Status, parameters, outcome ───────────────────────────────────────────────
 
 export type StatusKey = 'active' | 'resolved' | 'applied' | 'ended' | 'completed';
@@ -351,6 +447,10 @@ const tripOf = (s: SimState, sc: ScenarioActivation) => s.downtime.find((d) => d
 /** Condition-based maintenance on the same asset after the fault started (latest first). */
 export const maintenanceFor = (s: SimState, sc: ScenarioActivation) =>
   s.scenarios.filter((m) => m.kind === 'maintenance' && m.equipmentId === sc.equipmentId && m.start >= sc.start && (sc.end == null || m.start < sc.end)).reverse();
+
+/** Outcome labels of a developing fault that is over (scenarioStatus key 'resolved'). */
+export const FAULT_REMOVED = 'Fault removed';
+export const FAULT_BROKE_DOWN = 'Broke down';
 
 export function scenarioStatus(s: SimState, sc: ScenarioActivation): ScenarioStatus {
   const now = s.minute;
@@ -369,12 +469,29 @@ export function scenarioStatus(s: SimState, sc: ScenarioActivation): ScenarioSta
   if (sc.kind === 'degradation') {
     const trip = tripOf(s, sc);
     // The engine closes a developing-fault scenario when its fault trips the machine or is repaired.
-    if (trip && (!ended || trip.start <= sc.end!)) return { key: 'resolved', label: 'Broke down', at: trip.start, note: `Unplanned breakdown at ${formatClock(trip.start)}` };
+    if (trip && (!ended || trip.start <= sc.end!)) return { key: 'resolved', label: FAULT_BROKE_DOWN, at: trip.start, note: `Unplanned breakdown at ${formatClock(trip.start)}` };
     const fix = maintenanceFor(s, sc).find((m) => m.end != null && m.end <= now && m.end >= m.start + (m.count ?? 45));
-    if (fix && (!ended || fix.end! <= sc.end!)) return { key: 'resolved', label: 'Fault removed', at: fix.end, note: `Removed by maintenance at ${formatClock(fix.end!)}` };
+    if (fix && (!ended || fix.end! <= sc.end!)) return { key: 'resolved', label: FAULT_REMOVED, at: fix.end, note: `Removed by maintenance at ${formatClock(fix.end!)}` };
   }
   if (ended) return { key: 'ended', label: 'Ended', at: sc.end, note: null };
   return { key: 'active', label: 'Active', at: sc.start, note: sc.end != null ? `Until ${formatClock(sc.end)}` : null };
+}
+
+/** Whether a scenario can still be cleared (it is in effect; condition-based maintenance is left to complete). */
+export const isClearable = (s: SimState, sc: ScenarioActivation) => sc.kind !== 'maintenance' && scenarioStatus(s, sc).key === 'active';
+
+/** Developing faults that are over, by outcome (a breakdown is not a resolved fault). */
+export function faultOutcomes(s: SimState) {
+  let removed = 0;
+  let brokeDown = 0;
+  for (const sc of s.scenarios) {
+    if (sc.kind !== 'degradation') continue;
+    const st = scenarioStatus(s, sc);
+    if (st.key !== 'resolved') continue;
+    if (st.label === FAULT_REMOVED) removed++;
+    else if (st.label === FAULT_BROKE_DOWN) brokeDown++;
+  }
+  return { removed, brokeDown };
 }
 
 /** Human summary of a logged scenario's parameters. */
@@ -402,21 +519,27 @@ export function paramSummary(sc: ScenarioActivation): string {
     case 'prolonged-dock-stay':
       return `${sc.dockId ? dockName(sc.dockId) : 'First docked truck'} · +${sc.count ?? 75} min hold`;
     case 'conveyor-stop':
-      return sc.equipmentId ?? '—';
+      return machineLabel(sc.equipmentId ?? '—');
     case 'signal-loss':
       return `${machineLabel(sc.equipmentId ?? '—')} · data feed stale`;
     case 'restricted-entry':
-      return sc.vehicleId ?? 'Packaging forklift';
+      return `${sc.vehicleId ?? RESTRICTED_FORKLIFT} · forced walkway crossing`;
   }
 }
+
+const stoppedFor = (s: SimState, sc: ScenarioActivation) =>
+  s.downtime.filter((d) => d.scenarioId === sc.id).reduce((a, d) => a + ((d.end != null ? Math.min(d.end, s.minute) : s.minute) - d.start), 0);
 
 /** Short description of what a scenario has done so far (from records, never from hidden model state). */
 export function outcomeOf(s: SimState, sc: ScenarioActivation): string | null {
   const now = s.minute;
   switch (sc.kind) {
-    case 'machine-stop': {
-      const min = s.downtime.filter((d) => d.scenarioId === sc.id).reduce((a, d) => a + ((d.end != null ? Math.min(d.end, now) : now) - d.start), 0);
-      return `Stopped ${formatDuration(Math.max(0, min))}`;
+    case 'machine-stop':
+    case 'conveyor-stop':
+      return `Stopped ${formatDuration(Math.max(0, stoppedFor(s, sc)))}`;
+    case 'signal-loss': {
+      const end = Math.min(sc.end ?? now, now);
+      return `Data stale ${formatDuration(Math.max(0, end - sc.start))}`;
     }
     case 'degradation': {
       const st = scenarioStatus(s, sc);
@@ -428,7 +551,7 @@ export function outcomeOf(s: SimState, sc: ScenarioActivation): string | null {
       return `Planned stop ${formatClock(sc.start)}–${formatClock(sc.end ?? now)}`;
     case 'truck-arrival':
     case 'yard-congestion': {
-      const trucks = scenarioTrucks(s, sc.id);
+      const trucks = injectedTrucks(s, sc);
       const left = trucks.filter((v) => v.despawned != null && v.despawned <= now).length;
       return `${trucks.length} truck${trucks.length === 1 ? '' : 's'} · ${left} departed`;
     }
@@ -436,9 +559,28 @@ export function outcomeOf(s: SimState, sc: ScenarioActivation): string | null {
       const t = scenarioTrucks(s, sc.id)[0];
       return t ? `${t.label} held +${sc.count ?? 75} min` : 'No truck was at a dock — no effect';
     }
+    case 'restricted-entry': {
+      const id = sc.vehicleId ?? RESTRICTED_FORKLIFT;
+      const r = s.logistics.restrictedEvents.find((x) => x.vehicleId === id && x.source === 'scenario' && x.time >= sc.start);
+      if (!r) return 'Waiting for the next empty-pallet run';
+      const gf = GEOFENCES.find((g) => g.id === r.geofenceId);
+      return `Entered ${gf?.name ?? r.geofenceId} at ${formatClock(r.time)}`;
+    }
     default:
       return null;
   }
+}
+
+/**
+ * Operational events created by a scenario (the same records as Events & Reports): events that
+ * carry its id, plus restricted-zone entries of its forklift, which are keyed by the geofence record.
+ */
+export function scenarioEvents(s: SimState, sc: ScenarioActivation): OpEvent[] {
+  if (sc.kind === 'restricted-entry') {
+    const id = sc.vehicleId ?? RESTRICTED_FORKLIFT;
+    return s.events.filter((e) => e.type === 'restricted-entry' && e.asset.vehicleId === id && e.source === 'scenario' && e.start >= sc.start);
+  }
+  return s.events.filter((e) => e.refs.scenarioId === sc.id);
 }
 
 /** Duration so far (active) or in total (ended). */

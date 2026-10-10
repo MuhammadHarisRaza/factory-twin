@@ -58,7 +58,7 @@ export function ShiftCompare() {
       title="Shift performance"
       subtitle={`${c.period.label} (to now) vs ${p.period.label}`}
       actions={
-        <button type="button" className="btn ghost sm" onClick={() => go('production')} title="Open shift history in Production & OEE">
+        <button type="button" className="btn ghost sm" onClick={() => go('production')} title="Open shift history in OEE & Loss Intelligence">
           History
           <ArrowRight size={12} aria-hidden />
         </button>

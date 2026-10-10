@@ -42,7 +42,7 @@ function TwinActions() {
         <RotateCcw size={14} />
         <span className="btn-label">Overview</span>
       </button>
-      <button className="btn ghost" onClick={() => setUiHidden(true)} title="Presentation mode — hide the interface (H)" aria-label="Present">
+      <button className="btn ghost" onClick={() => setUiHidden(true)} title="Presentation mode — hide the interface; the demo mark stays visible (H, Esc to leave)" aria-label="Present">
         <Presentation size={14} />
         <span className="btn-label">Present</span>
       </button>

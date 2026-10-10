@@ -5,6 +5,7 @@
  */
 import type { Insight } from '../../intel/insights';
 import { M2_PER_TILE, TARGET } from '../../model/plant';
+import type { OpEvent } from '../../model/types';
 import { CONSUMER_BY_ID, type Tariffs } from '../../sim/energy';
 import type { SimState } from '../../sim/engine';
 import { energyIn, energyTrend, kilnIdleBurn, lineGoodIn, sumBuckets, type EnergyRow, type Period } from '../../sim/metrics';
@@ -89,7 +90,33 @@ export type AnomalyRow = {
   recommendation: string;
   /** 'insight' when an energy insight (last 2 h rule) backs it; 'early' while only the last hour shows it. */
   recommendationSource: 'insight' | 'early';
+  /**
+   * The consumer's energy-deviation event (the same record as Events & Reports and the PDF), when
+   * the event rule — last full hour vs the model — has raised one; null while only this page's
+   * windows show the deviation.
+   */
+  event: OpEvent | null;
 };
+
+/**
+ * Energy-deviation event of a consumer to link from its anomaly: the open one if any, else the
+ * latest whose condition overlapped the period. Read from the event log, never recomputed here.
+ */
+export function energyEventFor(s: SimState, id: string, p: Period): OpEvent | null {
+  let best: OpEvent | null = null;
+  for (const e of s.events) {
+    if (e.type !== 'energy-deviation' || e.asset.equipmentId !== id) continue;
+    const open = e.status !== 'resolved';
+    const overlaps = (e.end ?? s.minute) >= p.from && e.start <= p.to;
+    if (!open && !overlaps) continue;
+    if (!best) best = e;
+    else {
+      const bo = best.status !== 'resolved';
+      if (open !== bo ? open : e.start > best.start) best = e;
+    }
+  }
+  return best;
+}
 
 /**
  * Same investigation text as the energy insight rule (src/intel/insights.ts), used while
@@ -140,6 +167,7 @@ export function findAnomalies(s: SimState, p: Period, tariffs: Tariffs, energyIn
       projectedMonth: inRecent ? perH * MONTH_HOURS : null,
       recommendation: insight?.recommendation ?? FALLBACK_INVESTIGATION[isGas(r.id) ? 'gas' : 'electric'],
       recommendationSource: insight ? 'insight' : 'early',
+      event: energyEventFor(s, r.id, p),
     });
   });
   const mag = (a: AnomalyRow) => Math.max(Math.abs(a.recentDev ?? 0), Math.abs(a.periodDev ?? 0));

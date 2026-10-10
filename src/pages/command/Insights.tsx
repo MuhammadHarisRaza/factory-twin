@@ -1,6 +1,6 @@
-/** Operational insights feed and the prioritised next-actions checklist. */
+/** Operational insights feed (rule-based on the current demo state). */
 import { useState } from 'react';
-import { ChevronDown, ChevronRight, ListChecks } from 'lucide-react';
+import { ChevronDown, ChevronRight } from 'lucide-react';
 import type { Insight } from '../../intel/insights';
 import { Empty, Panel } from '../../ui/kit/Panel';
 import { LinkButton } from '../../ui/copilot/links';
@@ -95,71 +95,5 @@ function InsightCard({ insight: i, open, onToggle }: { insight: Insight; open: b
         </ul>
       )}
     </article>
-  );
-}
-
-export function NextActions({ items }: { items: Insight[] }) {
-  // Acknowledgement is view state only: it is not saved anywhere and resets with the page.
-  const [ack, setAck] = useState<Set<string>>(() => new Set());
-  const done = items.filter((i) => ack.has(i.id)).length;
-  const toggle = (id: string) =>
-    setAck((prev) => {
-      const next = new Set(prev);
-      if (next.has(id)) next.delete(id);
-      else next.add(id);
-      return next;
-    });
-
-  return (
-    <Panel
-      title="Recommended next actions"
-      subtitle={items.length ? `Priority order · ${done} of ${items.length} acknowledged` : 'Priority order'}
-      actions={
-        done > 0 ? (
-          <button type="button" className="btn ghost sm" onClick={() => setAck(new Set())}>
-            Reset
-          </button>
-        ) : undefined
-      }
-      footer={<span>Rule-based recommendations from the current demo state. Acknowledgement is local to this view and is not saved or sent anywhere.</span>}
-    >
-      {items.length === 0 ? (
-        <div className="empty">
-          <ListChecks size={22} aria-hidden />
-          <b>Nothing needs intervention</b>
-          No stoppages, health warnings, quality or energy exceptions are active.
-        </div>
-      ) : (
-        <ol className="cc-acts">
-          {items.map((i, n) => {
-            const on = ack.has(i.id);
-            const link = visibleLinks(i)[0];
-            return (
-              <li key={i.id} className={on ? 'ack' : undefined}>
-                <label className="cc-act-check" title={on ? 'Mark as not acknowledged' : 'Mark as acknowledged'}>
-                  <input type="checkbox" checked={on} onChange={() => toggle(i.id)} aria-label={`Acknowledge: ${i.title}`} />
-                  <span className="cc-act-n">{n + 1}</span>
-                </label>
-                <div className="cc-act-b">
-                  <div className="cc-act-t">
-                    <b>{i.title}</b>
-                  </div>
-                  <p>{i.recommendation}</p>
-                  <div className="cc-act-meta">
-                    <InsightBadge severity={i.severity} />
-                    {i.impact && <span className="cc-act-impact">{i.impact}</span>}
-                  </div>
-                </div>
-                {link && (
-                  <div className="cc-act-link">
-                    <LinkButton link={link} />
-                  </div>
-                )}
-              </li>
-            );
-          })}
-        </ol>
-      )}
-    </Panel>
   );
 }

@@ -396,6 +396,44 @@
   height: 1px;
   background: var(--line-3);
 }
+/* A conveyor between two stages: a thin bar in its operational colour; the line style repeats the
+   state (solid moving · dashed stopped / fault · dotted data stale) and the tooltip names it. */
+.tw-conn.cv {
+  position: relative;
+  flex: 1 1 10px;
+  min-width: 9px;
+  max-width: 30px;
+  height: 16px;
+  padding: 0;
+  border: 0;
+  border-radius: var(--r-1);
+  background: none;
+  cursor: pointer;
+}
+.tw-conn.cv::before {
+  content: '';
+  position: absolute;
+  left: 1px;
+  right: 1px;
+  top: 50%;
+  margin-top: -1.5px;
+  border-top: 3px solid var(--c);
+  border-radius: 1px;
+}
+.tw-conn.cv.stop::before {
+  border-top-style: dashed;
+}
+.tw-conn.cv.stale::before {
+  border-top-style: dotted;
+}
+.tw-conn.cv:hover,
+.tw-conn.cv.on {
+  background: var(--bg-3);
+}
+.tw-conn.cv:focus-visible {
+  outline: 1.5px solid var(--accent);
+  outline-offset: 1px;
+}
 .tw-stage {
   position: relative;
   flex: none;
@@ -618,7 +656,7 @@
 }
 .tw-tl-track {
   position: relative;
-  height: 27px;
+  height: 33px;
   border: 1px solid var(--line);
   border-radius: var(--r-1);
   background: var(--bg-1);
@@ -638,25 +676,32 @@
   width: 1px;
   background: var(--line-2);
 }
+/* Five lanes: production & equipment · quality · vehicles & logistics · data quality · scenario inputs. */
 .tw-tl-lane {
   position: absolute;
   left: 0;
   right: 0;
-  height: 6px;
+  height: 5px;
 }
-.tw-tl-lane.l1 {
-  top: 3px;
+.tw-tl-lane.production {
+  top: 2px;
 }
-.tw-tl-lane.l2 {
-  top: 10px;
+.tw-tl-lane.quality {
+  top: 8px;
 }
-.tw-tl-lane.l3 {
-  top: 17px;
+.tw-tl-lane.logistics {
+  top: 14px;
+}
+.tw-tl-lane.data {
+  top: 20px;
+}
+.tw-tl-lane.scenario {
+  top: 26px;
 }
 .tw-mk {
   position: absolute;
   top: 0;
-  height: 6px;
+  height: 5px;
   padding: 0;
   border: 0;
   border-radius: 2px;
@@ -666,7 +711,7 @@
 .tw-mk::before {
   content: '';
   position: absolute;
-  inset: -3px -2px;
+  inset: -1px -2px;
 }
 .tw-mk.critical {
   background: var(--critical);
@@ -680,12 +725,6 @@
 }
 .tw-mk.accent {
   background: var(--accent);
-}
-.tw-mk.alert {
-  width: 6px;
-  height: 6px;
-  border-radius: 1px;
-  transform: translateX(-50%) rotate(45deg);
 }
 .tw-mk.open {
   box-shadow: inset -2px 0 0 #ffffffb3;
@@ -873,6 +912,108 @@
   color: var(--text-3);
 }
 
+/* Event rows: the row opens the event record, the locate button frames its object in 3D. */
+.tw-evrow {
+  display: flex;
+  align-items: center;
+  gap: 2px;
+  border-radius: var(--r-1);
+}
+.tw-evrow:hover {
+  background: var(--bg-3);
+}
+.tw-evrow.on {
+  background: var(--accent-soft);
+}
+.tw-evrow .tw-row {
+  flex: 1;
+  min-width: 0;
+  background: none;
+}
+.tw-loc {
+  flex: none;
+  margin-right: 2px;
+  color: var(--text-3);
+}
+.tw-loc:hover:not(:disabled) {
+  color: var(--text-1);
+}
+.tw-ev-meta {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  min-width: 0;
+  margin-top: 2px;
+}
+.tw-row-m .tw-ev-meta small {
+  flex: 1;
+  min-width: 0;
+}
+.tw-ev-pills {
+  display: inline-flex;
+  align-items: center;
+  gap: 3px;
+  flex: none;
+}
+.tw-mini {
+  display: inline-flex;
+  align-items: center;
+  height: 17px;
+  padding: 0 5px;
+  border: 1px solid var(--line-2);
+  border-radius: 9px;
+  background: var(--bg-1);
+}
+.tw-mini .status {
+  gap: 3px;
+  font-size: 10.5px;
+  color: var(--text-2);
+}
+
+/* ── Floating camera view ────────────────────────────────────────────────── */
+
+.tw-cam {
+  grid-column: 2;
+  grid-row: 1 / span 2;
+  justify-self: end;
+  align-self: start;
+  z-index: 1;
+  display: flex;
+  flex-direction: column;
+  width: min(330px, 100%);
+  overflow: hidden;
+}
+.tw-cam-h {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  min-width: 0;
+  padding: 3px 3px 3px 10px;
+  font-size: var(--fs-12);
+  white-space: nowrap;
+}
+.tw-cam-h > svg {
+  flex: none;
+  color: var(--text-3);
+}
+.tw-cam-h b {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  font-weight: var(--fw-medium);
+}
+.tw-cam-h .mono {
+  flex: none;
+  font-size: var(--fs-11);
+}
+.tw-cam-f {
+  margin: 0;
+  padding: 5px 10px 7px;
+  font-size: var(--fs-11);
+  line-height: 1.4;
+  color: var(--text-3);
+}
+
 /* ── Inspector with tabs ─────────────────────────────────────────────────── */
 
 .tw-insp {
@@ -902,6 +1043,67 @@
   border-top: 0;
 }
 .tw-insp .insp-f {
+  flex: none;
+}
+.tw-feed {
+  display: inline-flex;
+}
+.tw-insp-line {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  flex-wrap: wrap;
+  gap: 4px 10px;
+}
+.tw-insp-line .muted {
+  font-size: var(--fs-12);
+}
+.tw-stale {
+  margin-top: 7px;
+  padding-left: 8px;
+  border-left: 2px solid var(--warning);
+}
+.tw-more {
+  margin-top: 8px;
+  font-size: var(--fs-12);
+  color: var(--accent-strong);
+}
+/* Inspector event list: severity · record (title, id, type, window, status pills) · report link. */
+.tw-evl {
+  display: flex;
+  flex-direction: column;
+}
+.tw-evl-r {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr) auto;
+  align-items: start;
+  gap: 8px;
+  padding: 7px 0;
+  border-bottom: 1px solid var(--line);
+}
+.tw-evl-r:first-child {
+  padding-top: 1px;
+}
+.tw-evl-r > .status {
+  padding-top: 2px;
+}
+.tw-evl-m b {
+  display: block;
+  font-size: var(--fs-12);
+  font-weight: var(--fw-medium);
+  line-height: 1.35;
+}
+.tw-evl-m small {
+  display: block;
+  font-size: var(--fs-11);
+  line-height: 1.4;
+  color: var(--text-3);
+}
+.tw-evl-m .tw-ev-meta {
+  flex-wrap: wrap;
+  margin-top: 4px;
+}
+.tw-evl-rep {
   flex: none;
 }
 @container (max-width: 340px) {
@@ -998,43 +1200,6 @@
   font-size: var(--fs-11);
   line-height: 1.45;
   color: var(--text-3);
-}
-.tw-ev {
-  display: grid;
-  grid-template-columns: auto auto minmax(0, 1fr) auto;
-  align-items: start;
-  column-gap: 8px;
-}
-.tw-ev-r {
-  display: contents;
-}
-.tw-ev-r > * {
-  padding: 5px 0;
-  border-bottom: 1px solid var(--line);
-}
-.tw-ev-r .t {
-  font: var(--fs-11) var(--mono);
-  color: var(--text-3);
-  white-space: nowrap;
-  padding-top: 6px;
-}
-.tw-ev-r .status {
-  padding-top: 6px;
-}
-.tw-ev-r .m b {
-  display: block;
-  font-size: var(--fs-12);
-  font-weight: var(--fw-medium);
-}
-.tw-ev-r .m small {
-  display: block;
-  font-size: var(--fs-11);
-  color: var(--text-3);
-}
-.tw-ev-r .tag {
-  margin-top: 5px;
-  padding-bottom: 0;
-  border-bottom-color: var(--line-2);
 }
 .tw-recs {
   display: flex;

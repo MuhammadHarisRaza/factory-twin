@@ -51,8 +51,12 @@ export function SourcesTab() {
         <Panel title="Integration boundary" subtitle="What a live deployment would change">
           <ul className="a-list">
             <li>
-              <b>Same signal ids.</b> Future gateways (OPC UA, MQTT, REST) publish the signal ids listed under Signals &amp; mappings; metrics, tables and the
-              3D twin read them unchanged.
+              <b>Same signal ids.</b> Future gateways map plant tags to these signal ids; an adapter turns them into the same records the engine produces
+              today (state changes, counters, inspections), so metrics, tables and the 3D twin do not change.
+            </li>
+            <li>
+              <b>Cameras.</b> Streams are configured per camera under Camera sources (none by default). RTSP / ONVIF cameras need a gateway that
+              restreams them in a browser format; without a stream each camera shows its simulated view rendered from the digital twin.
             </li>
             <li>
               <b>Read-only.</b> The product subscribes to values; it never writes set-points or commands to PLCs or control systems.

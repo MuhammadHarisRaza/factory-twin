@@ -22,7 +22,7 @@ export function ReasonLosses() {
       title="Production losses"
       subtitle={`Unplanned downtime by reason · this shift · ${fmtInt(d.total)} min${d.rows.length > TOP ? ` · top ${TOP} of ${d.rows.length}` : ''}`}
       actions={
-        <button type="button" className="btn ghost sm" onClick={() => go('production')} title="Open the downtime Pareto in Production & OEE">
+        <button type="button" className="btn ghost sm" onClick={() => go('production')} title="Open the downtime Pareto in OEE & Loss Intelligence">
           Pareto
           <ArrowRight size={12} aria-hidden />
         </button>

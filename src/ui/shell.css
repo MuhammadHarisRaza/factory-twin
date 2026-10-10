@@ -1,0 +1,96 @@
+/* Shell additions (src/app/Shell.tsx): active-event badge in the navigation, demo reset state. */
+
+.nav-badge {
+  display: inline-flex;
+  align-items: center;
+  gap: 3px;
+  flex: none;
+  height: 18px;
+  margin-left: auto;
+  padding: 0 6px 0 5px;
+  border: 1px solid var(--line-2);
+  border-radius: 9px;
+  background: var(--bg-1);
+  color: var(--text-1);
+  font-size: 10.5px;
+  line-height: 1;
+}
+.nav-badge b {
+  font-weight: var(--fw-semibold);
+  font-variant-numeric: tabular-nums;
+}
+.nav-badge.critical {
+  border-color: #e0525280;
+}
+.nav-badge.critical svg {
+  color: var(--critical);
+}
+.nav-badge.serious {
+  border-color: #ec835a80;
+}
+.nav-badge.serious svg {
+  color: var(--serious);
+}
+.nav-badge.warning {
+  border-color: #fab21966;
+}
+.nav-badge.warning svg {
+  color: var(--warning);
+}
+.nav-badge.neutral svg {
+  color: var(--neutral);
+}
+/* `.nav-item span` hides labels when the navigation is collapsed; the badge stays as a corner mark. */
+.shell.nav-collapsed .nav-item .nav-badge {
+  display: inline-flex;
+  position: absolute;
+  top: 3px;
+  right: 2px;
+  height: 15px;
+  padding: 0 4px;
+  font-size: 9.5px;
+}
+.shell.nav-collapsed .nav-item .nav-badge svg {
+  display: none;
+}
+@media (max-width: 720px) {
+  .nav-item .nav-badge {
+    display: inline-flex;
+    position: absolute;
+    top: 3px;
+    right: 2px;
+    height: 15px;
+    padding: 0 4px;
+    font-size: 9.5px;
+  }
+  .nav-item .nav-badge svg {
+    display: none;
+  }
+}
+
+.demo-resetting {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 0 8px;
+  font-size: var(--fs-12);
+  color: var(--text-1);
+  white-space: nowrap;
+}
+.demo-resetting svg {
+  color: var(--accent-strong);
+}
+
+/* Three workspace groups (Operations · Intelligence · Platform): the first label sits close to the brand,
+   and the list scrolls on short screens instead of clipping the footer note. */
+.shell .nav {
+  overflow-x: hidden;
+  overflow-y: auto;
+  scrollbar-width: thin;
+}
+.nav-brand + .nav-items .nav-section {
+  padding-top: 4px;
+}
+.nav-items + .nav-items {
+  padding-top: 0;
+}

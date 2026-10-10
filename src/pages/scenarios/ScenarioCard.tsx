@@ -10,7 +10,9 @@ import {
   paramOptions,
   resolveValues,
   sameTarget,
+  scenarioEvents,
   scenarioStatus,
+  targetKey,
   when,
   type CatalogueEntry,
   type ShowTarget,
@@ -40,29 +42,40 @@ function healthOf(s: SimState, id: string) {
 
 /**
  * One scenario: what it does, its parameters, Activate / Clear, current status and
- * "Show me" links to where the effect is visible. Used by the workspace and the drawer.
+ * "Show me" links to where the effect is visible — including the report of the operational
+ * event the scenario produced (the same record everywhere). Used by the workspace and the drawer.
+ * Only instances still in effect can be cleared; a fault that broke down or was removed is over.
  */
 export function ScenarioCard({ entry, origin, compact = false, onNavigate }: { entry: CatalogueEntry; origin: Origin; compact?: boolean; onNavigate?: () => void }) {
   const values = useScenarioParams((s) => s.values[entry.id]);
   const setParam = useScenarioParams((s) => s.set);
   const clear = useSim((s) => s.clear);
+  const resetting = useSim((s) => s.resetting);
 
   const d = useSimValue(
     (s) => {
       const v = resolveValues(entry, values, s);
       const rows = s.scenarios.filter((sc) => sc.kind === entry.kind).map((sc) => ({ sc, st: scenarioStatus(s, sc) }));
-      const open = entry.oneOff ? [] : rows.filter((r) => r.st.key === 'active' || r.st.key === 'resolved');
+      // Only instances still in effect: a fault that broke down or was removed is over (finding #24).
+      const open = entry.oneOff ? [] : rows.filter((r) => r.st.key === 'active');
       const last = rows[rows.length - 1] ?? null;
       const def = entry.build(v, s.minute);
       const focus = entry.focus(v, open[open.length - 1]?.sc ?? null, s);
-      const targets: ShowTarget[] = [...(focus ? [focus] : []), ...entry.workspaces.map((id): ShowTarget => ({ type: 'workspace', id }))];
+      // The operational event of the latest instance (first that is not a consequence of another).
+      const evs = last ? scenarioEvents(s, last.sc) : [];
+      const ev = evs.find((e) => !e.consequenceOf) ?? evs[0] ?? null;
+      const targets: ShowTarget[] = [
+        ...(focus ? [focus] : []),
+        ...(ev ? [{ type: 'event', id: ev.id } as ShowTarget] : []),
+        ...entry.workspaces.map((id): ShowTarget => ({ type: 'workspace', id })),
+      ];
       return {
         now: s.minute,
         v,
         options: entry.params.map((p) => paramOptions(p, s)),
         open,
         last,
-        lastOutcome: entry.oneOff && last ? outcomeOf(s, last.sc) : null,
+        lastOutcome: last && (entry.oneOff || !open.length) ? outcomeOf(s, last.sc) : null,
         replaces: open.some((r) => r.st.key === 'active' && sameTarget(r.sc, def)),
         blocked: entry.unavailable?.(v, s) ?? null,
         targets: targets.map((t) => ({ t, label: targetLabel(t, s) })),
@@ -72,16 +85,18 @@ export function ScenarioCard({ entry, origin, compact = false, onNavigate }: { e
     [entry, values],
   );
 
-  const activate = () => runScenario(entry.build(d.v, useSim.getState().sim.minute), origin);
+  const activate = () => {
+    runScenario(entry.build(d.v, useSim.getState().sim.minute), origin);
+  };
   const main = entry.params.map((p, i) => ({ p, i })).filter(({ p }) => p.section !== 'maintenance');
   const cbm = entry.params.map((p, i) => ({ p, i })).find(({ p }) => p.section === 'maintenance');
   const title = SCENARIO_KIND_LABELS[entry.kind];
 
   return (
-    <article className={`scnp-card ${d.open.length ? 'on' : ''}`} aria-label={`Scenario ${entry.id}: ${title}`}>
+    <article className={`scnp-card ${d.open.length ? 'on' : ''}`} aria-label={`Scenario ${entry.ref}: ${title}`}>
       <header className="scnp-card-h">
         <span className="scnp-letter" aria-hidden>
-          {entry.id}
+          {entry.ref}
         </span>
         <h3>{title}</h3>
         <div className="spacer" />
@@ -115,8 +130,8 @@ export function ScenarioCard({ entry, origin, compact = false, onNavigate }: { e
         <button
           className="btn primary"
           onClick={activate}
-          disabled={!!d.blocked}
-          title={d.blocked ?? (d.replaces ? 'Replace the running instance on the same target with these parameters' : 'Start at the current plant time')}
+          disabled={!!d.blocked || resetting}
+          title={resetting ? 'Resetting the demo…' : (d.blocked ?? (d.replaces ? 'Replace the running instance on the same target with these parameters' : 'Start at the current plant time'))}
         >
           {d.replaces ? <RefreshCw size={14} aria-hidden /> : <Play size={14} aria-hidden />}
           {d.replaces ? 'Replace active' : 'Activate'}
@@ -171,7 +186,7 @@ export function ScenarioCard({ entry, origin, compact = false, onNavigate }: { e
             <div className="spacer" />
             <button
               className="btn"
-              disabled={!!d.health.blocked}
+              disabled={!!d.health.blocked || resetting}
               title={d.health.blocked ?? 'Planned stop now; the developing fault is removed when it ends'}
               onClick={() => runScenario(maintenanceDef(d.health!.id, Number(d.v[cbm.p.key])), origin)}
             >
@@ -190,7 +205,7 @@ export function ScenarioCard({ entry, origin, compact = false, onNavigate }: { e
       <footer className="scnp-card-f">
         <span className="scnp-show-l">Show me</span>
         {d.targets.map(({ t, label }) => (
-          <ShowButton key={`${t.type}:${t.id}`} target={t} label={label} onNavigate={onNavigate} />
+          <ShowButton key={targetKey(t)} target={t} label={label} onNavigate={onNavigate} />
         ))}
       </footer>
     </article>

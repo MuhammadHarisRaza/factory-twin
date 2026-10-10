@@ -1,4 +1,4 @@
-/* Copilot panel (docked in the Command Center and inside the global drawer). Tokens from styles.css. */
+/* Copilot panel (Factory Copilot page, Command Center dock, global drawer). Tokens from styles.css. */
 
 .cp {
   display: flex;
@@ -8,7 +8,8 @@
   height: 100%;
   background: var(--bg-1);
 }
-.cp-dock {
+.cp-dock,
+.cp-page {
   border: 1px solid var(--line);
   border-radius: var(--r-3);
   overflow: hidden;
@@ -54,6 +55,10 @@
   flex-direction: column;
   gap: 18px;
 }
+.cp-page .cp-log {
+  padding: var(--s-4) var(--s-5);
+  gap: 22px;
+}
 .cp-turn {
   display: flex;
   flex-direction: column;
@@ -77,28 +82,117 @@
   min-width: 0;
 }
 .cp-meta {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 4px 6px;
   font-size: var(--fs-11);
   color: var(--text-3);
   font-variant-numeric: tabular-nums;
 }
+.cp-about {
+  font-variant-numeric: tabular-nums;
+}
+
+/* Answer sections: Observed / Inferred / Estimate / How */
+.cp-secs {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  margin-top: 8px;
+}
+.cp-sec {
+  display: grid;
+  grid-template-columns: 74px minmax(0, 1fr);
+  gap: 10px;
+  min-width: 0;
+}
+.cp-sec-h {
+  padding-top: 2px;
+  font-size: var(--fs-11);
+  font-weight: var(--fw-semibold);
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  color: var(--text-2);
+  cursor: help;
+  line-height: 1.35;
+}
+.cp-sec-h small {
+  display: block;
+  margin-top: 1px;
+  font-size: 10px;
+  font-weight: var(--fw-regular);
+  letter-spacing: 0;
+  text-transform: none;
+  color: var(--text-3);
+}
+.cp-sec-b {
+  min-width: 0;
+  border-left: 1px solid var(--line-2);
+  padding-left: 10px;
+}
+.cp-sec-b p,
 .cp-text p {
-  margin: 6px 0 0;
+  margin: 0 0 5px;
   font-size: var(--fs-13);
   line-height: 1.5;
   color: var(--text-1);
+  overflow-wrap: anywhere;
 }
+.cp-sec-b p:last-child,
+.cp-text p:last-child {
+  margin-bottom: 0;
+}
+.cp-sec-b ol,
 .cp-text ol {
-  margin: 6px 0 0;
+  margin: 0 0 5px;
   padding-left: 20px;
   display: flex;
   flex-direction: column;
-  gap: 5px;
+  gap: 4px;
   font-size: var(--fs-13);
   line-height: 1.45;
 }
+.cp-sec-b li::marker,
 .cp-text li::marker {
   color: var(--text-3);
   font-variant-numeric: tabular-nums;
+}
+/* Inferred: hypotheses read lighter than observed facts. */
+.cp-sec-inferred .cp-sec-b p {
+  color: var(--text-2);
+}
+.cp-sec-estimate .cp-sec-b {
+  border-left-style: dashed;
+}
+.cp-sec-method .cp-sec-h,
+.cp-sec-method .cp-sec-b p {
+  color: var(--text-3);
+}
+.cp-sec-method .cp-sec-b p {
+  font-size: var(--fs-12);
+}
+.cp-sec-b p.cp-assume {
+  font-size: var(--fs-12);
+  color: var(--text-3);
+}
+
+/* Confidence of an inference (not a status: neutral outline, text carries the meaning). */
+.cp-conf {
+  display: inline-block;
+  margin-right: 6px;
+  padding: 0 5px;
+  border: 1px solid var(--line-3);
+  border-radius: var(--r-1);
+  font-size: 10.5px;
+  line-height: 16px;
+  color: var(--text-1);
+  vertical-align: 1px;
+}
+.cp-conf-likely,
+.cp-conf-possible {
+  border-style: dashed;
+  color: var(--text-2);
 }
 
 .cp-facts {
@@ -106,10 +200,15 @@
   font-size: var(--fs-12);
   font-variant-numeric: tabular-nums;
 }
-.cp-facts-h {
+.cp-facts summary {
   font-size: var(--fs-11);
   color: var(--text-3);
   padding-bottom: 3px;
+  cursor: pointer;
+  width: max-content;
+}
+.cp-facts summary:hover {
+  color: var(--text-1);
 }
 .cp-facts dl {
   margin: 0;
@@ -196,11 +295,33 @@
   color: var(--text-1);
 }
 
+/* Suggested questions grouped by use case */
+.cp-groups {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+.cp-groups-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(240px, 1fr));
+  gap: 14px 18px;
+}
+.cp-group-h {
+  font-size: var(--fs-11);
+  font-weight: var(--fw-semibold);
+  color: var(--text-2);
+  margin-bottom: 6px;
+}
+
 .cp-intro p {
   margin: 0 0 14px;
   font-size: var(--fs-13);
   line-height: 1.5;
   color: var(--text-2);
+  max-width: 72ch;
+}
+.cp-intro .cp-intro-hint {
+  color: var(--text-3);
 }
 .cp-intro-h {
   font-size: var(--fs-11);
@@ -208,13 +329,49 @@
   margin-bottom: 8px;
 }
 
-/* Input */
+/* Footer: event context, suggestions toggle, input */
 .cp-f {
   border-top: 1px solid var(--line);
   padding: 10px var(--s-4) 12px;
   display: flex;
   flex-direction: column;
   gap: 8px;
+}
+.cp-ctx {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  padding: 8px 10px;
+  border: 1px solid var(--accent-line);
+  border-radius: var(--r-2);
+  background: var(--accent-soft);
+}
+.cp-ctx-h {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  min-width: 0;
+  font-size: var(--fs-12);
+}
+.cp-ctx-icon {
+  flex: none;
+  color: var(--accent-strong);
+}
+.cp-ctx-l {
+  color: var(--text-3);
+  white-space: nowrap;
+}
+.cp-ctx-t {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  color: var(--text-2);
+}
+.cp-ctx .cp-chip {
+  padding: 2px 8px;
+  font-size: var(--fs-11);
 }
 .cp-sugg-toggle {
   align-self: flex-start;
@@ -230,8 +387,8 @@
 .cp-sugg-toggle:hover {
   color: var(--text-1);
 }
-.cp-f .cp-chips {
-  max-height: 168px;
+.cp-sugg {
+  max-height: 220px;
   overflow: auto;
 }
 .cp-form {
@@ -254,9 +411,14 @@
 
 /* Global drawer */
 .drawer.cp-drawer {
-  width: min(460px, 100vw);
+  width: min(500px, 100vw);
 }
 .drawer.cp-drawer .cp {
   flex: 1;
   height: auto;
+}
+.cp-drawer .cp-sec,
+.cp-dock .cp-sec {
+  grid-template-columns: 62px minmax(0, 1fr);
+  gap: 8px;
 }

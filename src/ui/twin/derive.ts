@@ -1,18 +1,44 @@
 /**
  * Factory Twin interface derivations. Pure functions over the one simulation state —
- * line status per process stage, a truck's visit milestones, the shift timeline, global
- * search and quick-view targets. Every figure comes from src/sim (metrics, health,
- * logistics); this file only shapes it for the overlays.
+ * line status per process stage (with the conveyors between stages), a truck's visit
+ * milestones, the shift timeline of operational events, the event lists of the live list
+ * and the inspector, global search and quick-view targets. Every figure comes from src/sim
+ * (metrics, events, health, logistics); this file only shapes it for the overlays.
  */
-import { EQUIPMENT } from '../../data/equipment';
+import { EQUIPMENT, EQUIPMENT_BY_ID } from '../../data/equipment';
 import { ZONES, ZONE_BY_ID } from '../../data/layout';
-import { DOCKS, PRODUCTS, REASON_BY_CODE, SCENARIO_KIND_LABELS, STAGE_BY_ID } from '../../model/plant';
-import type { AlertSeverity, MachineState, ProductionBatch, RecordSource, StageId, Vehicle } from '../../model/types';
+import {
+  CONVEYOR_BY_ID,
+  DOCKS,
+  GEOFENCES,
+  INSPECTION_STATIONS,
+  MONITORED_STAGES,
+  PRODUCTS,
+  REASON_BY_CODE,
+  SCENARIO_KIND_LABELS,
+  STAGE_BY_ID,
+  cameraFor,
+} from '../../model/plant';
+import type {
+  AlertSeverity,
+  CameraDef,
+  EventCategory,
+  EventStatus,
+  MachineState,
+  MonitoredStageId,
+  OpEvent,
+  OperationalState,
+  ProductionBatch,
+  RecordSource,
+  StageId,
+  Vehicle,
+} from '../../model/types';
 import { findDowntime, type SimState } from '../../sim/engine';
+import { EVENT_STATUS_LABEL, EVENT_TYPE_LABEL } from '../../sim/events';
 import type { HealthAssessment, HealthLevel } from '../../sim/health';
 import { phaseLabel, type TruckRuntime } from '../../sim/logistics';
-import { bottleneck } from '../../sim/metrics';
-import { formatClock, shiftAt } from '../../sim/time';
+import { bottleneck, operationalState } from '../../sim/metrics';
+import { formatClock, formatDuration, shiftAt } from '../../sim/time';
 
 // ── Production-line status strip ─────────────────────────────────────────────
 
@@ -41,39 +67,128 @@ export const LINE_STAGES: LineStageDef[] = [
   { key: 'WH', label: 'Warehouse', name: 'Finished-goods warehouse', stages: [], zone: 'K' },
 ];
 
-/** Severity order used to pick a stage's worst machine state. */
-export const STATE_RANK: Record<MachineState, number> = { running: 1, planned: 2, starved: 3, blocked: 4, reduced: 5, down: 6 };
+/**
+ * Conveyors drawn between two chips (`FROM>TO` chip keys). The glaze-line belt runs through
+ * glazing and decoration, so it links both gaps; the carton conveyor CV-PAL sits inside the
+ * packing & palletising chip. Raw → prep → spray (slip pumps) and pack → warehouse (forklifts)
+ * have no modelled conveyor.
+ */
+export const LINE_CONVEYORS_BETWEEN: Record<string, string[]> = {
+  'SPRAY>PRESS': ['D-BELT'],
+  'PRESS>DRY': ['E-COL'],
+  'DRY>GLAZE': ['CV-GLZ'],
+  'GLAZE>DECOR': ['CV-GLZ'],
+  'DECOR>KILN': ['CV-KIN'],
+  'KILN>SORT': ['CV-SORT'],
+  'SORT>PACK': ['CV-PACK'],
+};
+export const LINE_CONVEYORS_WITHIN: Record<string, string[]> = { PACK: ['CV-PAL'] };
+
+/**
+ * Order used to pick a chip's worst state, in the operational-state model the product shows:
+ * a stale feed ('unknown') outranks normal running but never hides a stop or a fault.
+ */
+export const OP_RANK: Record<OperationalState, number> = {
+  running: 1,
+  idle: 2,
+  planned: 3,
+  disconnected: 4,
+  unknown: 5,
+  starved: 6,
+  blocked: 7,
+  reduced: 8,
+  stopped: 9,
+  fault: 10,
+};
+
+/** One tracked asset (process machine or conveyor) as the twin shows it. */
+export type AssetStatus = {
+  id: string;
+  name: string;
+  /** Simulated machine state (engine truth; used only for timing and reasons). */
+  state: MachineState;
+  /** What the product shows: fault / stopped / planned / starved … or unknown while the feed is stale. */
+  op: OperationalState;
+  since: number;
+  /** Reason of the active stop (alarm code label), null while not stopped. */
+  reason: string | null;
+  /** Rate as reported by the feed (the last value received while it is stale), tiles/h. */
+  rate: number;
+  /** Minute the data feed went stale, null while it updates. */
+  staleSince: number | null;
+};
 
 export type LineStageStatus = {
   def: LineStageDef;
-  machines: { id: string; state: MachineState; reason: string | null }[];
-  /** Worst machine state in the stage; null where no machine state is modelled. */
-  worst: MachineState | null;
-  /** Machine to locate on click: the one in the worst state (first machine when all are equal). */
+  machines: AssetStatus[];
+  /** Conveyors inside the chip (CV-PAL in packing & palletising). */
+  conveyors: AssetStatus[];
+  /** Worst operational state of the chip's machines and internal conveyors; null where no machine state is modelled. */
+  worst: OperationalState | null;
+  /** Asset to locate on click: the one in the worst state (first machine when all are equal). */
   focusId: string | null;
   bottleneck: boolean;
 };
 
+/** Link between two consecutive chips; `conveyors` is empty where no conveyor is modelled. */
+export type LineConnector = { key: string; from: string; to: string; conveyors: AssetStatus[] };
+
+const reasonOf = (s: SimState, id: string) => {
+  const m = s.machines[id];
+  const dt = m?.activeDowntimeId ? findDowntime(s, m.activeDowntimeId) : undefined;
+  return dt ? REASON_BY_CODE[dt.reasonCode].label : null;
+};
+
+/**
+ * Status of a tracked asset from its signals: while the feed is stale the product only knows the
+ * last values received, so the state reads 'unknown', the rate is the frozen last rate and no
+ * stop reason is claimed.
+ */
+export function assetStatus(s: SimState, id: string): AssetStatus {
+  const m = s.machines[id];
+  const f = s.feeds[id];
+  const stale = f?.status === 'stale';
+  return {
+    id,
+    name: CONVEYOR_BY_ID[id]?.name ?? EQUIPMENT_BY_ID[id]?.name ?? id,
+    state: m.state,
+    op: operationalState(s, id),
+    since: stale ? f.since : m.since,
+    reason: stale ? null : reasonOf(s, id),
+    rate: stale ? (f.lastRate ?? 0) : m.ratePerHour,
+    staleSince: stale ? f.since : null,
+  };
+}
+
+/** The asset in the worst operational state (first one on ties). */
+export function worstOf<T extends { op: OperationalState }>(list: T[]): T | undefined {
+  let w: T | undefined;
+  for (const a of list) if (!w || OP_RANK[a.op] > OP_RANK[w.op]) w = a;
+  return w;
+}
+
 export function lineStatus(s: SimState) {
   const bn = bottleneck(s);
   const stages: LineStageStatus[] = LINE_STAGES.map((def) => {
-    const machines = def.stages
-      .flatMap((st) => STAGE_BY_ID[st].machines)
-      .map((id) => {
-        const m = s.machines[id];
-        const dt = m.activeDowntimeId ? findDowntime(s, m.activeDowntimeId) : undefined;
-        return { id, state: m.state, reason: dt ? REASON_BY_CODE[dt.reasonCode].label : null };
-      });
-    let worst: MachineState | null = null;
-    let focusId: string | null = null;
-    for (const m of machines)
-      if (worst == null || STATE_RANK[m.state] > STATE_RANK[worst]) {
-        worst = m.state;
-        focusId = m.id;
-      }
-    return { def, machines, worst, focusId, bottleneck: def.stages.includes(bn.current.stage) };
+    const machines = def.stages.flatMap((st) => STAGE_BY_ID[st].machines).map((id) => assetStatus(s, id));
+    const conveyors = (LINE_CONVEYORS_WITHIN[def.key] ?? []).map((id) => assetStatus(s, id));
+    const w = worstOf([...machines, ...conveyors]);
+    return { def, machines, conveyors, worst: w?.op ?? null, focusId: w?.id ?? null, bottleneck: def.stages.includes(bn.current.stage) };
   });
-  return { stages, bottleneckStage: bn.current.stage, bottleneckShare: bn.current.activeShare, window: bn.period.label };
+  const connectors: LineConnector[] = LINE_STAGES.slice(1).map((to, i) => {
+    const from = LINE_STAGES[i];
+    const key = `${from.key}>${to.key}`;
+    return { key, from: from.key, to: to.key, conveyors: (LINE_CONVEYORS_BETWEEN[key] ?? []).map((id) => assetStatus(s, id)) };
+  });
+  return {
+    stages,
+    connectors,
+    bottleneckStage: bn.current.stage,
+    /** Share of the window the bottleneck stage was producing at its own pace (its own downtime excluded). */
+    bottleneckWorking: bn.current.workingShare,
+    bottleneckDown: bn.current.downShare,
+    window: bn.period.label,
+  };
 }
 
 // ── Truck visit stepper ──────────────────────────────────────────────────────
@@ -129,31 +244,129 @@ export function vehicleActivity(v: Vehicle, now: number): { label: string; tone:
   return { label, tone: /idle|waiting|available/i.test(label) ? 'neutral' : 'good' };
 }
 
+/** Geofence a vehicle is in now (simulated position, zone level). */
+export function vehicleGeofence(s: SimState, id: string) {
+  const v = s.logistics.vehicles[id];
+  if (!v) return undefined;
+  const leg = [...v.legs].reverse().find((l) => l.start <= s.minute) ?? v.legs[0];
+  return GEOFENCES.find((g) => g.id === leg?.zone);
+}
+
+/** Camera covering the twin selection: the asset itself, or the geofence a selected vehicle is in. */
+export function selectionCamera(s: SimState, sel: { equipmentId?: string | null; vehicleId?: string | null }): CameraDef | null {
+  if (sel.vehicleId) return cameraFor(vehicleGeofence(s, sel.vehicleId)?.id);
+  return cameraFor(sel.equipmentId);
+}
+
+/** Monitored stage (Production Monitoring) of an asset; a conveyor counts for the stage it delivers to. */
+export function monitoredStageOf(id: string): MonitoredStageId | null {
+  const cv = CONVEYOR_BY_ID[id];
+  if (cv) return (MONITORED_STAGES.find((m) => m.conveyors.includes(id) && m.id === cv.to) ?? MONITORED_STAGES.find((m) => m.conveyors.includes(id)))?.id ?? null;
+  if (INSPECTION_STATIONS.some((st) => st.equipmentId === id)) return 'SORT';
+  return MONITORED_STAGES.find((m) => m.equipment.includes(id))?.id ?? null;
+}
+
+// ── Operational events (live list, inspector) ────────────────────────────────
+
+export const SEVERITY_RANK: Record<AlertSeverity, number> = { info: 0, warning: 1, serious: 2, critical: 3 };
+const FLOW_TYPES = new Set<OpEvent['type']>(['starvation', 'blockage']);
+
+/**
+ * Active conditions first (most severe, then newest), then events still open after their
+ * condition cleared, then resolved ones — both newest first.
+ */
+export function sortEvents(list: OpEvent[]): OpEvent[] {
+  const group = (e: OpEvent) => (e.end == null ? 0 : e.status !== 'resolved' ? 1 : 2);
+  return [...list].sort((a, b) => {
+    const ga = group(a);
+    const gb = group(b);
+    if (ga !== gb) return ga - gb;
+    if (ga === 0) return SEVERITY_RANK[b.severity] - SEVERITY_RANK[a.severity] || b.start - a.start;
+    return (b.end ?? b.lastUpdate) - (a.end ?? a.lastUpdate) || b.start - a.start;
+  });
+}
+
+/** Events for the live list: every active condition and every open event, plus those cleared in the last `windowMin`. */
+export function liveEvents(s: SimState, windowMin = 240, limit = 60): OpEvent[] {
+  const from = s.minute - windowMin;
+  return sortEvents(s.events.filter((e) => e.end == null || e.status !== 'resolved' || e.end >= from)).slice(0, limit);
+}
+
+/**
+ * Events concerning one asset: its own (eventsFor equipmentId), the stage-level starvation /
+ * blockage event of the stage it belongs to (raised once per stage), and logistics events in
+ * the geofences / docks that belong to it. Open events always; others from the last `windowMin`.
+ */
+export function assetEvents(s: SimState, id: string, windowMin = 1440): OpEvent[] {
+  const from = s.minute - windowMin;
+  const fences = new Set(GEOFENCES.filter((g) => g.equipmentId === id).map((g) => g.id));
+  const inStage = (stage: string | undefined) => !!stage && !!STAGE_BY_ID[stage as StageId]?.machines.includes(id);
+  return sortEvents(
+    s.events.filter(
+      (e) =>
+        (e.end == null || e.status !== 'resolved' || e.end >= from) &&
+        (e.asset.equipmentId === id ||
+          (FLOW_TYPES.has(e.type) && inStage(e.asset.stage)) ||
+          (!!e.asset.geofenceId && fences.has(e.asset.geofenceId)) ||
+          (id === 'K-DOCK' && !!e.asset.dockId)),
+    ),
+  );
+}
+
+/** Events concerning one vehicle (open, or from the last `windowMin`). */
+export function vehicleEvents(s: SimState, id: string, windowMin = 1440): OpEvent[] {
+  const from = s.minute - windowMin;
+  return sortEvents(s.events.filter((e) => e.asset.vehicleId === id && (e.end == null || e.status !== 'resolved' || e.end >= from)));
+}
+
+/** Short subject of an event (vehicle, asset, station or zone id). */
+export const eventSubject = (e: OpEvent) => e.asset.vehicleId ?? e.asset.equipmentId ?? e.asset.stationId ?? e.asset.dockId ?? e.asset.geofenceId ?? (e.asset.zone ? `Zone ${e.asset.zone}` : '—');
+
+/** "since 10:42 · ongoing 12 min" / "10:42–10:58" for an event's condition. */
+export function eventWhen(e: OpEvent, now: number) {
+  return e.end == null ? `since ${formatClock(e.start)} · ongoing ${formatDuration(now - e.start)}` : `${formatClock(e.start)}–${formatClock(e.end)}`;
+}
+
 // ── Shift timeline ───────────────────────────────────────────────────────────
 
 export type MarkerTone = 'critical' | 'serious' | 'warning' | 'neutral' | 'accent';
+export type TimelineLane = 'production' | 'quality' | 'logistics' | 'data' | 'scenario';
+
+/** Event lanes of the time strip (equipment-condition and energy events share the production lane). */
+export const TIMELINE_LANES: { id: Exclude<TimelineLane, 'scenario'>; label: string; categories: EventCategory[] }[] = [
+  { id: 'production', label: 'Production & equipment', categories: ['production', 'equipment', 'energy'] },
+  { id: 'quality', label: 'Quality', categories: ['quality'] },
+  { id: 'logistics', label: 'Vehicles & logistics', categories: ['logistics'] },
+  { id: 'data', label: 'Data quality', categories: ['data'] },
+];
+const LANE_OF = Object.fromEntries(TIMELINE_LANES.flatMap((l) => l.categories.map((c) => [c, l.id]))) as Record<EventCategory, TimelineLane>;
 
 export type TimelineMarker = {
   id: string;
-  kind: 'downtime' | 'alert' | 'scenario';
-  /** Marker position (event start, clipped to the shift). */
+  lane: TimelineLane;
+  /** Marker position (condition start, clipped to the shift). */
   t: number;
-  /** End of a span (downtime, scenario); null for point events. */
-  end: number | null;
-  /** True while the downtime / scenario is still running. */
+  /** End of the span, clipped to now. */
+  end: number;
+  /** True while the condition / scenario is still running. */
   open: boolean;
   tone: MarkerTone;
   title: string;
   detail: string;
+  /** Operational event the marker opens (all lanes except scenario inputs). */
+  eventId?: string;
+  status?: EventStatus;
+  severity?: AlertSeverity;
   equipmentId?: string;
   vehicleId?: string;
   source: RecordSource;
 };
 
-const SEVERITY_TONE: Record<AlertSeverity, MarkerTone> = { critical: 'critical', serious: 'serious', warning: 'warning', info: 'neutral' };
+export const SEVERITY_TONE: Record<AlertSeverity, MarkerTone> = { critical: 'critical', serious: 'serious', warning: 'warning', info: 'neutral' };
+const SEVERITY_WORD: Record<AlertSeverity, string> = { critical: 'Critical', serious: 'Serious', warning: 'Warning', info: 'Info' };
 
 /** Equipment that best locates a scenario in the 3D model. */
-const scenarioTarget = (sc: SimState['scenarios'][number]) =>
+export const scenarioTarget = (sc: SimState['scenarios'][number]) =>
   sc.equipmentId ??
   (sc.stage
     ? STAGE_BY_ID[sc.stage].machines[0]
@@ -165,61 +378,39 @@ const scenarioTarget = (sc: SimState['scenarios'][number]) =>
           ? 'K-DOCK'
           : undefined);
 
-/** Events of the current shift (06/14/22 boundaries) for the time strip, up to now. */
-export function shiftTimeline(s: SimState, maxAlerts = 80) {
+/** Operational events and scenario inputs of the current shift (06/14/22 boundaries), up to now. */
+export function shiftTimeline(s: SimState, maxEvents = 160) {
   const now = s.minute;
   const sh = shiftAt(now);
   const from = sh.start;
   const to = sh.end;
   const markers: TimelineMarker[] = [];
-  const downStarts = new Set<string>();
-  for (const d of s.downtime) {
-    if (d.category === 'Starved' || d.category === 'Blocked') continue;
-    const end = d.end ?? now;
-    if (d.start >= to || end < from) continue;
-    downStarts.add(`${d.equipmentId}@${d.start}`);
-    const planned = REASON_BY_CODE[d.reasonCode].planned;
+  const evs = s.events.filter((e) => e.start <= now && e.start < to && (e.end ?? now) >= from);
+  for (const e of evs.slice(-maxEvents)) {
+    const end = Math.min(e.end ?? now, now);
     markers.push({
-      id: d.id,
-      kind: 'downtime',
-      t: Math.max(from, d.start),
-      end,
-      open: d.end == null,
-      tone: planned ? 'neutral' : 'critical',
-      title: `${d.equipmentId} · ${REASON_BY_CODE[d.reasonCode].label}`,
-      detail: `${planned ? 'Planned stop' : d.category} from ${formatClock(d.start)}${d.end == null ? ' · still stopped' : ` to ${formatClock(d.end)}`}`,
-      equipmentId: d.equipmentId,
-      source: d.source,
+      id: e.id,
+      lane: LANE_OF[e.category] ?? 'production',
+      t: Math.max(from, e.start),
+      end: Math.max(Math.max(from, e.start), end),
+      open: e.end == null,
+      tone: SEVERITY_TONE[e.severity],
+      title: e.title,
+      detail: `${EVENT_TYPE_LABEL[e.type]} · ${SEVERITY_WORD[e.severity]} · ${EVENT_STATUS_LABEL[e.status]} · ${e.end == null ? `since ${formatClock(e.start)}, ongoing` : `${formatClock(e.start)}–${formatClock(e.end)}`}`,
+      eventId: e.id,
+      status: e.status,
+      severity: e.severity,
+      equipmentId: e.asset.equipmentId,
+      vehicleId: e.asset.vehicleId,
+      source: e.source,
     });
   }
-  const alerts = s.alerts.filter(
-    (a) =>
-      a.time >= from &&
-      a.time <= now &&
-      !a.title.startsWith('Scenario ') &&
-      // A stop alert duplicates the downtime marker that opened it.
-      !(a.equipmentId && a.title.endsWith(' stopped') && downStarts.has(`${a.equipmentId}@${a.time}`)),
-  );
-  for (const a of alerts.slice(-maxAlerts))
-    markers.push({
-      id: a.id,
-      kind: 'alert',
-      t: a.time,
-      end: null,
-      open: false,
-      tone: SEVERITY_TONE[a.severity],
-      title: a.title,
-      detail: a.detail,
-      equipmentId: a.equipmentId,
-      vehicleId: a.vehicleId,
-      source: a.source,
-    });
   for (const sc of s.scenarios) {
     const end = sc.end ?? now;
     if (sc.start >= to || end < from || sc.start > now) continue;
     markers.push({
       id: sc.id,
-      kind: 'scenario',
+      lane: 'scenario',
       t: Math.max(from, sc.start),
       end: Math.min(end, now),
       open: sc.end == null || sc.end > now,
@@ -227,6 +418,7 @@ export function shiftTimeline(s: SimState, maxAlerts = 80) {
       title: `Scenario · ${sc.label}`,
       detail: `${SCENARIO_KIND_LABELS[sc.kind]} · started ${formatClock(sc.start)}${sc.end != null && sc.end <= now ? `, ended ${formatClock(sc.end)}` : ''}`,
       equipmentId: scenarioTarget(sc),
+      vehicleId: sc.vehicleId,
       source: 'scenario',
     });
   }

@@ -421,3 +421,50 @@ export function scaleBar(k: number) {
   const mm = [200, 100, 50, 20, 10, 5].find((v) => v * perMm <= 230) ?? 5;
   return { mm, len: mm * perMm };
 }
+
+// ── Stills (record detail and raster export) ──────────────────────────────────
+
+export type StillView = {
+  /** Square view box in frame units. */
+  x: number;
+  y: number;
+  side: number;
+  /** Axis-aligned bounds of the detection box in frame units (null when the record has no box). */
+  box: { x0: number; y0: number; x1: number; y1: number } | null;
+};
+
+/** Square view of the whole tile, or a square crop around the detection box. */
+export function stillView(g: TileGeometry, crop: boolean): StillView {
+  const full = TILE_PX * 1.1;
+  const cx0 = TILE_X + g.dx + TILE_PX / 2;
+  const cy0 = TILE_Y + g.dy + TILE_PX / 2;
+  let box: StillView['box'] = null;
+  if (g.box) {
+    const b = g.box;
+    const pts = [toFrame(g, b.x, b.y), toFrame(g, b.x + b.w, b.y), toFrame(g, b.x + b.w, b.y + b.h), toFrame(g, b.x, b.y + b.h)];
+    box = {
+      x0: Math.min(...pts.map((p) => p[0])),
+      y0: Math.min(...pts.map((p) => p[1])),
+      x1: Math.max(...pts.map((p) => p[0])),
+      y1: Math.max(...pts.map((p) => p[1])),
+    };
+  }
+  if (!crop || !box) return { x: cx0 - full / 2, y: cy0 - full / 2, side: full, box };
+  const side = clamp(Math.max(box.x1 - box.x0, box.y1 - box.y0) * 1.5 + 60, 200, full);
+  const cx = (box.x0 + box.x1) / 2;
+  const cy = (box.y0 + box.y1) / 2;
+  return { x: cx - side / 2, y: cy - side / 2, side, box };
+}
+
+/** A round scale-bar length (mm) of at most `maxShare` of a still's side, and its length in frame units. */
+export function stillScaleBar(side: number, maxShare = 0.3) {
+  const perMm = UNITS_PER_MM * TILE_SCALE;
+  const mm = [200, 100, 50, 20, 10, 5].find((v) => v * perMm <= side * maxShare) ?? 5;
+  return { mm, len: mm * perMm };
+}
+
+/** Detection box in millimetres on the 600 mm tile (records carry it in 0–1 tile coordinates). */
+export function boxMm(b: { x: number; y: number; w: number; h: number }) {
+  const mm = (v: number) => Math.round(v * 600);
+  return { x: mm(b.x), y: mm(b.y), w: mm(b.w), h: mm(b.h) };
+}

@@ -1,0 +1,77 @@
+/* Event focus pin in the 3D twin (drei Html). Tokens from src/styles.css only. */
+
+.ev-pin {
+  display: inline-flex;
+  align-items: stretch;
+  height: 22px;
+  border-radius: var(--r-1);
+  background: #12171df0;
+  border: 1px solid var(--accent);
+  box-shadow: var(--shadow-1);
+  color: var(--text-1);
+  font: var(--fw-medium) 10.5px var(--sans);
+  white-space: nowrap;
+  pointer-events: auto;
+}
+/* Stack above the asset's name tag (lift 1) and its status pins (lift 2), which share the anchor. */
+.ev-pin.lift-1 {
+  transform: translateY(-26px);
+}
+.ev-pin.lift-2 {
+  transform: translateY(-52px);
+}
+
+.ev-pin button {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  margin: 0;
+  border: 0;
+  border-radius: var(--r-1);
+  background: none;
+  color: inherit;
+  font: inherit;
+  cursor: pointer;
+}
+.ev-pin button:hover {
+  background: #ffffff0f;
+}
+.ev-pin button:focus-visible {
+  outline: none;
+  box-shadow: var(--focus);
+}
+.ev-pin .ev-pin-open {
+  padding: 0 7px 0 5px;
+}
+.ev-pin-open .num {
+  font-variant-numeric: tabular-nums;
+}
+.ev-pin-type {
+  color: var(--text-2);
+}
+.ev-pin .ev-pin-close {
+  padding: 0 5px;
+  border-left: 1px solid var(--line-2);
+  border-radius: 0 var(--r-1) var(--r-1) 0;
+  color: var(--text-3);
+}
+.ev-pin .ev-pin-close:hover {
+  color: var(--text-1);
+}
+
+/* Severity icon (icon + label carry the meaning; the colour only reinforces it). */
+.ev-pin svg {
+  flex: none;
+}
+.ev-pin.sev-critical .ev-pin-open svg {
+  color: var(--critical);
+}
+.ev-pin.sev-serious .ev-pin-open svg {
+  color: var(--serious);
+}
+.ev-pin.sev-warning .ev-pin-open svg {
+  color: var(--warning);
+}
+.ev-pin.sev-neutral .ev-pin-open svg {
+  color: var(--neutral);
+}

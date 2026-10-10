@@ -1,17 +1,19 @@
 import { useState } from 'react';
-import { Bell, ChevronDown, ChevronUp, CirclePause, Cog, Forklift, Hourglass, Package, Route, Truck } from 'lucide-react';
+import { ChevronDown, ChevronUp, CirclePause, ClipboardList, Cog, Forklift, Hourglass, Package, Route, Truck } from 'lucide-react';
 import { useTwin } from '../../store';
 import { EQUIPMENT_BY_ID } from '../../data/equipment';
 import { OPS_BY_ID, PROCESS_MACHINES } from '../../model/plant';
 import { useSimValue } from '../../sim/store';
 import { formatClock } from '../../sim/time';
-import { MachineStatus, SEVERITY, StatusBadge } from '../kit/Status';
+import { OperationalStatus, StatusBadge } from '../kit/Status';
 import { fmtInt } from '../kit/format';
-import { vehicleActivity, type PhaseTone } from './derive';
+import { assetStatus, liveEvents, vehicleActivity, type PhaseTone } from './derive';
+import { LiveEventRow, eventTarget, locateEvent } from './EventRows';
 import { useMediaQuery } from './useMedia';
 import { useTwinUi, type LiveTab } from './uiStore';
 
-const ALERT_WINDOW = 240;
+/** Cleared events stay in the list this long (open events stay until resolved). */
+const EVENT_WINDOW = 240;
 
 /** Icon for a vehicle activity pill (always shown with its label). */
 export function phaseIcon(label: string, tone: PhaseTone) {
@@ -22,8 +24,9 @@ export function phaseIcon(label: string, tone: PhaseTone) {
 }
 
 /**
- * Bottom-right live list (simulated): alerts of the last 4 h, process machines with their
- * state, and vehicles on site with their phase. Clicking a row locates it in the twin.
+ * Bottom-right live list (simulated): operational events (active first, then open and recently
+ * cleared ones), process machines with their state, and vehicles on site with their phase.
+ * An event row opens the event record; its locate button and the other rows locate in the twin.
  */
 export function LiveList() {
   const tab = useTwinUi((s) => s.liveTab);
@@ -42,14 +45,8 @@ export function LiveList() {
 
   const data = useSimValue((s) => {
     const now = s.minute;
-    const alerts = s.alerts.filter((a) => a.time >= now - ALERT_WINDOW).reverse();
-    const machines = PROCESS_MACHINES.map((id) => ({
-      id,
-      name: EQUIPMENT_BY_ID[id].name,
-      state: s.machines[id].state,
-      rate: s.machines[id].ratePerHour,
-      ideal: OPS_BY_ID[id].idealRatePerHour ?? 0,
-    }));
+    const events = liveEvents(s, EVENT_WINDOW);
+    const machines = PROCESS_MACHINES.map((id) => ({ ...assetStatus(s, id), name: EQUIPMENT_BY_ID[id].name, ideal: OPS_BY_ID[id].idealRatePerHour ?? 0 }));
     const vehicles = s.logistics.active
       .map((id) => s.logistics.vehicles[id])
       .filter((v) => v.spawned <= now)
@@ -66,12 +63,12 @@ export function LiveList() {
         act: vehicleActivity(v, now),
       }))
       .sort((a, b) => Number(b.external) - Number(a.external) || a.label.localeCompare(b.label, 'en', { numeric: true }));
-    return { alerts, machines, vehicles };
+    return { now, events, active: events.filter((e) => e.end == null).length, machines, vehicles };
   });
 
-  const notRunning = data.machines.filter((m) => m.state !== 'running').length;
-  const tabs: { id: LiveTab; label: string; icon: typeof Bell; count: number | null }[] = [
-    { id: 'alerts', label: 'Alerts', icon: Bell, count: data.alerts.length },
+  const notRunning = data.machines.filter((m) => m.op !== 'running').length;
+  const tabs: { id: LiveTab; label: string; icon: typeof Cog; count: number | null }[] = [
+    { id: 'events', label: 'Events', icon: ClipboardList, count: data.active || null },
     { id: 'machines', label: 'Machines', icon: Cog, count: notRunning || null },
     { id: 'vehicles', label: 'Vehicles', icon: Truck, count: data.vehicles.length },
   ];
@@ -89,7 +86,7 @@ export function LiveList() {
   };
 
   return (
-    <section className={`tw-live overlay-panel ${isOpen ? '' : 'folded'}`} aria-label="Live lists (simulated)">
+    <section className={`tw-live overlay-panel ${isOpen ? '' : 'folded'}`} aria-label="Lists (simulated)">
       <header className="tw-live-h">
         <div className="tw-tabs" role="tablist" aria-label="Live list">
           {tabs.map((t) => {
@@ -104,7 +101,7 @@ export function LiveList() {
                   setTab(t.id);
                   if (!isOpen) toggle();
                 }}
-                title={t.id === 'alerts' ? 'Alerts raised in the last 4 h' : t.id === 'machines' ? 'Process machines · count = not running normally' : 'Vehicles on site'}
+                title={t.id === 'events' ? 'Operational events · count = active conditions; open and recently cleared events follow' : t.id === 'machines' ? 'Process machines · count = not running normally' : 'Vehicles on site'}
               >
                 <Icon size={13} aria-hidden />
                 {t.label}
@@ -119,41 +116,15 @@ export function LiveList() {
       </header>
       {isOpen && (
         <div className="tw-live-b" role="tabpanel">
-          {tab === 'alerts' &&
-            (data.alerts.length ? (
-              data.alerts.map((a) => {
-                const sev = SEVERITY[a.severity];
-                const Icon = sev.icon;
-                const target = a.equipmentId ? `e:${a.equipmentId}` : a.vehicleId ? `v:${a.vehicleId}` : null;
-                return (
-                  <button
-                    key={a.id}
-                    className={`tw-row ${target && target === selKey ? 'on' : ''}`}
-                    disabled={!target}
-                    onClick={() =>
-                      target &&
-                      pick(target, () =>
-                        a.equipmentId ? useTwin.getState().select(a.equipmentId) : useTwin.getState().selectVehicle(a.vehicleId!, true),
-                      )
-                    }
-                    title={a.equipmentId ? `Locate ${a.equipmentId}` : a.vehicleId ? 'Follow the vehicle' : undefined}
-                  >
-                    <span className={`status ${sev.tone}`} title={sev.label}>
-                      <Icon size={13} strokeWidth={2.2} aria-label={sev.label} />
-                    </span>
-                    <span className="tw-row-m">
-                      <b>{a.title}</b>
-                      <small>
-                        {a.detail}
-                        {a.source === 'scenario' ? ' · scenario' : ''}
-                      </small>
-                    </span>
-                    <span className="tw-row-t num">{formatClock(a.time)}</span>
-                  </button>
-                );
+          {tab === 'events' &&
+            (data.events.length ? (
+              data.events.map((ev) => {
+                const t = eventTarget(ev);
+                const key = t ? `${t.kind === 'vehicle' ? 'v' : t.kind === 'zone' ? 'z' : 'e'}:${t.id}` : null;
+                return <LiveEventRow key={ev.id} ev={ev} now={data.now} on={key != null && key === selKey} onLocate={() => key && pick(key, () => locateEvent(ev))} />;
               })
             ) : (
-              <div className="tw-live-empty">No alerts in the last 4 h.</div>
+              <div className="tw-live-empty">No active or open events, and none cleared in the last 4 h.</div>
             ))}
           {tab === 'machines' &&
             data.machines.map((m) => (
@@ -161,11 +132,11 @@ export function LiveList() {
                 <span className="tw-row-m">
                   <b>{m.name}</b>
                   <small className="num">
-                    {m.id} · {fmtInt(m.rate)} / {fmtInt(m.ideal)} tiles/h
+                    {m.id} · {m.staleSince != null ? `last ${fmtInt(m.rate)} tiles/h · stale since ${formatClock(m.staleSince)}` : `${fmtInt(m.rate)} / ${fmtInt(m.ideal)} tiles/h`}
                   </small>
                 </span>
                 <span className="tw-pill">
-                  <MachineStatus state={m.state} />
+                  <OperationalStatus state={m.op} />
                 </span>
               </button>
             ))}

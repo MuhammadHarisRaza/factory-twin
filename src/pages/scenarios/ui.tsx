@@ -2,12 +2,14 @@ import {
   Activity,
   Box,
   CircleCheck,
+  ClipboardList,
   CircleDot,
   CircleSlash,
   Eye,
   Gauge,
   HeartPulse,
   LayoutDashboard,
+  MessageSquareText,
   OctagonX,
   ScanSearch,
   TriangleAlert,
@@ -16,6 +18,7 @@ import {
   type LucideIcon,
 } from 'lucide-react';
 import type { WorkspaceId } from '../../app/store';
+import { MONITORED_STAGE_BY_ID } from '../../model/plant';
 import type { SimState } from '../../sim/engine';
 import type { HealthLevel } from '../../sim/health';
 import { StatusBadge, type Tone } from '../../ui/kit/Status';
@@ -71,42 +74,91 @@ export function ScenarioState({ st, now, time = true }: { st: ScenarioStatus; no
 // ── Show me ───────────────────────────────────────────────────────────────────
 
 export const WS_LABEL: Partial<Record<WorkspaceId, string>> = {
-  production: 'Production',
-  quality: 'Quality',
+  monitoring: 'Production Monitoring',
+  production: 'OEE & Loss',
+  quality: 'AI Defect Monitoring',
+  fleet: 'Vehicle Monitoring',
+  events: 'Events & Reports',
   health: 'Machine Health',
   energy: 'Energy',
   command: 'Command Center',
-  fleet: 'Fleet',
   twin: 'Factory Twin',
 };
 const WS_ICON: Partial<Record<WorkspaceId, LucideIcon>> = {
+  monitoring: Activity,
   production: Gauge,
   quality: ScanSearch,
+  fleet: Truck,
+  events: ClipboardList,
   health: HeartPulse,
   energy: Zap,
   command: LayoutDashboard,
-  fleet: Truck,
   twin: Box,
 };
 
 export function targetLabel(t: ShowTarget, s?: SimState) {
-  if (t.type === 'equipment') return `Twin · ${t.id}`;
-  if (t.type === 'vehicle') return `Twin · follow ${s?.logistics.vehicles[t.id]?.label ?? t.id}`;
-  return WS_LABEL[t.id] ?? t.id;
+  switch (t.type) {
+    case 'equipment':
+      return `Twin · ${t.id}`;
+    case 'vehicle':
+      return `Twin · follow ${s?.logistics.vehicles[t.id]?.label ?? t.id}`;
+    case 'stage':
+      return `Monitoring · ${MONITORED_STAGE_BY_ID[t.id]?.name ?? t.id}`;
+    case 'event':
+      return `Event report · ${t.id}`;
+    case 'copilot':
+      return 'Ask copilot';
+    default:
+      return WS_LABEL[t.id] ?? t.id;
+  }
 }
 
-export function ShowButton({ target, label, onNavigate }: { target: ShowTarget; label: string; onNavigate?: () => void }) {
-  const Icon = target.type === 'workspace' ? (WS_ICON[target.id] ?? Eye) : target.type === 'vehicle' ? Truck : Box;
-  const title =
-    target.type === 'equipment'
-      ? `Open the Factory Twin with ${target.id} selected`
-      : target.type === 'vehicle'
-        ? 'Open the Factory Twin following this truck'
-        : `Open ${label}`;
+const targetIcon = (t: ShowTarget): LucideIcon =>
+  t.type === 'workspace'
+    ? (WS_ICON[t.id] ?? Eye)
+    : t.type === 'vehicle'
+      ? Truck
+      : t.type === 'stage'
+        ? Activity
+        : t.type === 'event'
+          ? ClipboardList
+          : t.type === 'copilot'
+            ? MessageSquareText
+            : Box;
+
+function targetTitle(t: ShowTarget, label: string) {
+  switch (t.type) {
+    case 'equipment':
+      return `Open the Factory Twin with ${t.id} selected`;
+    case 'vehicle':
+      return 'Open the Factory Twin following this vehicle';
+    case 'stage':
+      return 'Open the stage in Production Monitoring';
+    case 'event':
+      return `Open the report of ${t.id} in Events & Reports (the same record as the PDF)`;
+    case 'copilot':
+      return `Ask the copilot (rule-based on the current demo state — no language model): “${t.question}”`;
+    default:
+      return `Open ${label}`;
+  }
+}
+
+export function ShowButton({
+  target,
+  label,
+  onNavigate,
+  primary = false,
+}: {
+  target: ShowTarget;
+  label: string;
+  onNavigate?: () => void;
+  primary?: boolean;
+}) {
+  const Icon = targetIcon(target);
   return (
     <button
-      className="btn sm"
-      title={title}
+      className={`btn sm ${primary ? 'primary' : ''}`}
+      title={targetTitle(target, label)}
       onClick={() => {
         onNavigate?.();
         showTarget(target);

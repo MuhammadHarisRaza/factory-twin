@@ -35,7 +35,7 @@ describe('twin overlays render', () => {
   it('renders the default layout', () => {
     useTwin.setState({ selected: null, vehicle: null, zone: null });
     const html = render();
-    for (const text of ['OEE', 'Output vs target', 'Downtime', 'Defect rate', 'Energy', 'Trucks on site', 'Warehouse', '+15 min', 'Alerts', 'Machines', 'Vehicles', 'Site plan'])
+    for (const text of ['OEE', 'Output vs target', 'Downtime', 'Defect rate', 'Energy', 'Trucks on site', 'Warehouse', '+15 min', 'Events', 'Machines', 'Vehicles', 'Site plan'])
       expect(html).toContain(text);
     expect(renderToStaticMarkup(<TwinSearch />)).toContain('Search the factory twin');
   });
@@ -54,8 +54,33 @@ describe('twin overlays render', () => {
     }
   });
 
+  it('renders a conveyor inspector with its metrics and the camera view', () => {
+    const sim = useSim.getState().sim;
+    activateScenario(sim, { kind: 'conveyor-stop', equipmentId: 'CV-SORT', end: null, label: 'stop' });
+    advance(sim, sim.minute + 5);
+    useTwin.getState().select('CV-SORT');
+    useTwinUi.getState().setTab('CV-SORT', 'overview');
+    useTwinUi.getState().setCamera('CAM-I1');
+    const html = render();
+    for (const text of ['Sorting line roller conveyor', 'Availability', 'Utilisation', 'Stops', 'Stopped', 'Camera', 'Sorting line', 'Simulated']) expect(html).toContain(text);
+    useTwinUi.getState().setTab('CV-SORT', 'events');
+    expect(render()).toContain('Conveyor stoppage');
+    useTwinUi.getState().setCamera(null);
+  });
+
+  it('shows a stale data feed instead of a state', () => {
+    const sim = useSim.getState().sim;
+    activateScenario(sim, { kind: 'signal-loss', equipmentId: 'H-KILN', end: null, label: 'feed' });
+    advance(sim, sim.minute + 10);
+    useTwin.getState().select('H-KILN');
+    useTwinUi.getState().setTab('H-KILN', 'overview');
+    const html = render();
+    expect(html).toContain('Stale since');
+    expect(html).toContain('Unknown');
+  });
+
   it('renders other equipment, zones and vehicles', () => {
-    for (const id of ['K-DOCK', 'I-VIS', 'D-SILO', 'A-PARK']) {
+    for (const id of ['K-DOCK', 'I-VIS', 'D-SILO', 'A-PARK', 'E-COL', 'D-BELT']) {
       useTwin.getState().select(id);
       for (const tab of ['overview', 'events', 'recs'] as InspectorTab[]) {
         useTwinUi.getState().setTab(id, tab);

@@ -8,6 +8,7 @@ import { formatDuration } from '../sim/time';
 import { MetricText } from './kit/Status';
 import { fmt1, fmtInt, fmtMetric, fmtPct } from './kit/format';
 import { useTip } from './twin/Tip';
+import { roundingCheck } from '../pages/production/derive';
 
 type ChipId = 'oee' | 'output' | 'downtime' | 'defects' | 'energy' | 'trucks';
 
@@ -37,6 +38,8 @@ export function TwinStatusBar() {
     [period, tariffs],
   );
   const { lm, e, fm } = d;
+  // The tooltip shows 1-dp components; '=' only when their product rounds to the shown OEE.
+  const rc = roundingCheck(lm.oee);
   const stops = lm.activeStops;
   const defectRate = lm.inspected > 0 ? lm.rejected / lm.inspected : null;
   const options = OTHER_PERIOD[period] ? [...PERIODS, { value: period, label: OTHER_PERIOD[period]! }] : PERIODS;
@@ -53,8 +56,9 @@ export function TwinStatusBar() {
         <>
           <b>Line OEE · {lm.period.label}</b>
           <div className="tw-tip-row">
-            A {fmtMetric(lm.oee.availability)} × P {fmtMetric(lm.oee.performance)} × Q {fmtMetric(lm.oee.quality)} = {fmtMetric(lm.oee.oee)}
+            A {fmtMetric(lm.oee.availability)} × P {fmtMetric(lm.oee.performance)} × Q {fmtMetric(lm.oee.quality)} {rc.matches ? '=' : '≈'} {fmtMetric(lm.oee.oee)}
           </div>
+          {!rc.matches && <div className="tw-tip-note">Components rounded to 0.1 %; OEE is computed from the unrounded values.</div>}
           <div className="tw-tip-note">
             Availability and performance at the line constraint (kiln), quality = first-pass yield at sorting. Target {fmtPct(TARGET.oeeTarget, 0)}.
           </div>

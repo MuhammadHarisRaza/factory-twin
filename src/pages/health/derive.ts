@@ -6,7 +6,7 @@
  */
 import { EQUIPMENT_BY_ID } from '../../data/equipment';
 import { REASON_BY_CODE } from '../../model/plant';
-import type { Alert, DowntimeEvent, MachineState } from '../../model/types';
+import type { Alert, DowntimeEvent, MachineState, OpEvent } from '../../model/types';
 import type { SimState } from '../../sim/engine';
 import {
   HEALTH_ASSETS,
@@ -40,6 +40,11 @@ export type AssetRow = {
   state: MachineState;
   /** End minute of a condition-based maintenance stop in progress, if any. */
   maintenanceUntil: number | null;
+  /**
+   * A developing-fault scenario is in effect on this asset (from the scenario inputs, never the
+   * hidden degradation state) — started here or anywhere else, e.g. the Scenario Simulator.
+   */
+  faultActive: boolean;
 };
 
 /** Worst first: level, then lowest score, then soonest predicted trip, then id. */
@@ -52,6 +57,10 @@ export function byConcern(a: AssetRow, b: AssetRow) {
   );
 }
 
+/** Whether a developing-fault scenario input is in effect on the asset (scenario log only). */
+export const faultActiveOn = (s: SimState, id: string) =>
+  s.scenarios.some((sc) => sc.kind === 'degradation' && sc.equipmentId === id && sc.start <= s.minute && (sc.end == null || sc.end > s.minute));
+
 export function assetRows(s: SimState): AssetRow[] {
   return HEALTH_ASSETS.map(
     (a): AssetRow => ({
@@ -61,6 +70,7 @@ export function assetRows(s: SimState): AssetRow[] {
       h: assess(s, a.id),
       state: s.machines[a.id]?.state ?? 'planned',
       maintenanceUntil: s.health.fixAt[a.id]?.at ?? null,
+      faultActive: faultActiveOn(s, a.id),
     }),
   ).sort(byConcern);
 }
@@ -175,6 +185,22 @@ export function alarmHistory(s: SimState, id: string, scope: HistoryScope): Hist
   return rows.sort((a, b) => b.time - a.time || (a.kind === b.kind ? 0 : a.kind === 'alert' ? -1 : 1));
 }
 
+/**
+ * The asset's condition-abnormal events (the same records as Events & Reports), newest first:
+ * open ones, then those cleared earlier.
+ */
+export function conditionEvents(s: SimState, id: string): OpEvent[] {
+  return s.events
+    .filter((e) => e.type === 'condition-abnormal' && e.asset.equipmentId === id)
+    .sort((a, b) => Number(b.status !== 'resolved') - Number(a.status !== 'resolved') || b.start - a.start);
+}
+
+/** Events the condition events led to or came with (e.g. the breakdown a fault tripped), newest first. */
+export function linkedStopEvents(s: SimState, events: OpEvent[]): OpEvent[] {
+  const ids = new Set(events.flatMap((e) => e.related));
+  return s.events.filter((e) => ids.has(e.id) && e.type !== 'condition-abnormal').sort((a, b) => b.start - a.start);
+}
+
 export function maintenanceHistory(s: SimState, id: string): MaintenanceRecord[] {
   return s.health.maintenance.filter((m) => m.equipmentId === id).sort((a, b) => b.start - a.start);
 }
@@ -199,6 +225,8 @@ export function maintenanceGate(r: AssetRow): Gate {
  */
 export function faultGate(r: AssetRow, requestedAt: number | null, now: number): Gate {
   if (r.maintenanceUntil != null) return { enabled: false, reason: `Maintenance in progress until ${formatClock(r.maintenanceUntil)}` };
+  // A fault started anywhere (e.g. the Scenario Simulator) blocks a second one before the signals show it (finding #25).
+  if (r.faultActive) return { enabled: false, reason: `A fault is already developing on ${r.id} (scenario input)` };
   if (isAbnormal(r.h.level)) return { enabled: false, reason: 'Fault simulation unavailable: the asset already shows an abnormal condition' };
   if (requestedAt != null && now >= requestedAt && now - requestedAt < 60)
     return { enabled: false, reason: `Fault simulation started at ${formatClock(requestedAt)} — waiting for it to show in the signals` };

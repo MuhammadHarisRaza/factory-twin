@@ -1,59 +1,60 @@
-/** Merged event stream of the last 4 h as a vertical timeline; an entry locates its subject. */
+/**
+ * Event timeline of the last 4 h from the operational events (condition started / cleared and,
+ * optionally, the lifecycle steps people took) plus the scenario inputs. An event entry opens its
+ * report; a scenario entry locates its target.
+ */
 import { useState } from 'react';
-import { CalendarClock, CircleCheck, CirclePlay, CircleStop, FlaskConical, Info, LogIn, LogOut, OctagonX, TriangleAlert, type LucideIcon } from 'lucide-react';
+import { CircleCheck, CircleStop, Eye, FlaskConical, Info, OctagonX, Search, TriangleAlert, type LucideIcon } from 'lucide-react';
+import { openEvent } from '../../app/store';
 import { useSimValue } from '../../sim/store';
 import { formatClock, formatDateTime } from '../../sim/time';
 import { Empty, Panel } from '../../ui/kit/Panel';
 import type { Tone } from '../../ui/kit/Status';
-import { timeline, type TimelineItem } from './derive';
+import { TIMELINE_WINDOW_MIN, timeline, type TimelineItem } from './derive';
 import { locate } from './nav';
 
 const LIMIT = 80;
 
-const SEV: Record<TimelineItem['severity'], { tone: Tone; icon: LucideIcon }> = {
-  critical: { tone: 'critical', icon: OctagonX },
-  serious: { tone: 'serious', icon: TriangleAlert },
-  warning: { tone: 'warning', icon: TriangleAlert },
-  info: { tone: 'neutral', icon: Info },
+const SEV: Record<TimelineItem['severity'], { tone: Tone; icon: LucideIcon; label: string }> = {
+  critical: { tone: 'critical', icon: OctagonX, label: 'Critical event' },
+  serious: { tone: 'serious', icon: TriangleAlert, label: 'Serious event' },
+  warning: { tone: 'warning', icon: TriangleAlert, label: 'Warning event' },
+  info: { tone: 'neutral', icon: Info, label: 'Info event' },
 };
 
 function look(i: TimelineItem): { tone: Tone; icon: LucideIcon; label: string } {
   switch (i.kind) {
-    case 'stop':
-      return { tone: SEV[i.severity].tone, icon: OctagonX, label: 'Stoppage' };
-    case 'restart':
-      return { tone: 'good', icon: CirclePlay, label: 'Restart' };
-    case 'planned':
-      return { tone: 'planned', icon: CalendarClock, label: 'Planned stop' };
-    case 'planned-end':
-      return { tone: 'good', icon: CircleCheck, label: 'Planned stop ended' };
+    case 'detected':
+      return SEV[i.severity];
+    case 'cleared':
+      return { tone: 'good', icon: CircleCheck, label: 'Condition cleared' };
+    case 'acknowledged':
+      return { tone: 'neutral', icon: Eye, label: 'Acknowledged' };
+    case 'investigating':
+      return { tone: 'planned', icon: Search, label: 'Investigating' };
+    case 'resolved':
+      return { tone: 'good', icon: CircleCheck, label: 'Resolved' };
     case 'scenario-start':
       return { tone: 'neutral', icon: FlaskConical, label: 'Scenario' };
-    case 'scenario-end':
-      return { tone: 'neutral', icon: CircleStop, label: 'Scenario ended' };
-    case 'gate-in':
-      return { tone: 'neutral', icon: LogIn, label: 'Gate entry' };
-    case 'gate-out':
-      return { tone: 'neutral', icon: LogOut, label: 'Gate exit' };
     default:
-      return { ...SEV[i.severity], label: `${i.severity[0].toUpperCase()}${i.severity.slice(1)} alert` };
+      return { tone: 'neutral', icon: CircleStop, label: 'Scenario ended' };
   }
 }
 
 export function EventTimeline() {
-  const [gate, setGate] = useState(false);
+  const [lifecycle, setLifecycle] = useState(true);
   const d = useSimValue((s) => {
-    const all = timeline(s, { gate });
+    const all = timeline(s, { lifecycle });
     return { items: all.slice(0, LIMIT), total: all.length };
-  }, [gate]);
+  }, [lifecycle]);
   return (
     <Panel
       title="Event timeline"
-      subtitle={`Last 4 h · newest first · ${d.total} events${d.total > LIMIT ? ` (latest ${LIMIT} shown)` : ''}`}
+      subtitle={`Last ${TIMELINE_WINDOW_MIN / 60} h · operational events and scenario inputs · newest first · ${d.total} entries${d.total > LIMIT ? ` (latest ${LIMIT} shown)` : ''}`}
       actions={
         <label className="cc-check">
-          <input type="checkbox" checked={gate} onChange={(e) => setGate(e.target.checked)} />
-          Gate events
+          <input type="checkbox" checked={lifecycle} onChange={(e) => setLifecycle(e.target.checked)} />
+          Lifecycle steps
         </label>
       }
       flush
@@ -65,9 +66,15 @@ export function EventTimeline() {
           {d.items.map((i) => {
             const l = look(i);
             const Icon = l.icon;
+            const toReport = !!i.eventId;
             return (
               <li key={i.key}>
-                <button type="button" className="cc-tl-item" onClick={() => locate(i)} title={`${formatDateTime(i.time)} · ${l.label} — click to locate`}>
+                <button
+                  type="button"
+                  className="cc-tl-item"
+                  onClick={() => (i.eventId ? openEvent(i.eventId) : locate(i))}
+                  title={`${formatDateTime(i.time)} · ${l.label} — ${toReport ? 'open the event report' : 'locate the scenario target'}`}
+                >
                   <span className="cc-tl-time">{formatClock(i.time)}</span>
                   <span className={`cc-tl-dot status ${l.tone}`} aria-label={l.label}>
                     <Icon size={13} strokeWidth={2.2} aria-hidden />

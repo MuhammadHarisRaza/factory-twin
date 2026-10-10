@@ -2,7 +2,22 @@ import { useRef, useState, type RefObject } from 'react';
 import { useFrame, useThree } from '@react-three/fiber';
 import { Box3, MathUtils, Vector3 } from 'three';
 import type { OrbitControls as OrbitControlsImpl } from 'three-stdlib';
+import { useSim } from '../../sim/store';
 import { equipmentBounds } from '../../store';
+import { machineFlow } from './model';
+
+/**
+ * Animation speed of a machine's moving parts from the shared simulation (finding #37), read in a
+ * render loop: its output relative to the ideal rate while it runs, 0 while it is down, on a planned
+ * stop, starved or blocked, and 0 for every machine while the simulation is paused (`paused`).
+ * Advance a local phase by `dt × rate` instead of using the clock, so a stopped machine stands still.
+ */
+export function machineAnimationRate(id: string): { rate: number; paused: boolean } {
+  const { sim, running } = useSim.getState();
+  if (!running) return { rate: 0, paused: true };
+  const f = machineFlow(sim, id);
+  return { rate: f.moving ? f.rate : 0, paused: false };
+}
 
 /**
  * Number of the given equipment ids whose bounds <Selectable> has registered. Re-renders the

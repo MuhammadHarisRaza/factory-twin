@@ -1,0 +1,473 @@
+/* ==========================================================================
+   Production Monitoring — page-specific layout only (tokens from styles.css).
+   ========================================================================== */
+
+.mon .mon-notice {
+  flex: 1 1 520px;
+}
+.mon-resetting {
+  padding: 0 var(--s-2);
+}
+
+/* ── Shared small pieces ─────────────────────────────────────────────────── */
+
+.mon-stack {
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+  min-width: 0;
+}
+.mon-stack.end {
+  align-items: flex-end;
+}
+.mon-inline {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  flex-wrap: wrap;
+}
+.mon-tags {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  flex-wrap: wrap;
+}
+.mon-strong {
+  font-weight: var(--fw-medium);
+  color: var(--text-1);
+}
+.mon-asset {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  white-space: nowrap;
+}
+.mon-asset .mono {
+  min-width: 52px;
+  color: var(--text-2);
+}
+.mon-step-n {
+  display: inline-grid;
+  place-items: center;
+  min-width: 20px;
+  height: 20px;
+  padding: 0 4px;
+  border-radius: var(--r-1);
+  border: 1px solid var(--line-2);
+  font: var(--fw-medium) var(--fs-11) var(--mono);
+  color: var(--text-2);
+  font-variant-numeric: tabular-nums;
+}
+.mon-share {
+  color: var(--text-3);
+  margin-left: 4px;
+}
+.mon-nm {
+  color: var(--text-3);
+  font-style: italic;
+  display: inline-flex;
+  flex-direction: column;
+  align-items: inherit;
+  gap: 2px;
+  white-space: normal;
+}
+.mon-nm small {
+  font-style: normal;
+  font-size: var(--fs-11);
+  color: var(--text-4);
+}
+.mon-nm.big {
+  font-size: var(--fs-16);
+}
+.mon-cause {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  flex-wrap: wrap;
+  white-space: normal;
+  font-size: var(--fs-12);
+  color: var(--text-2);
+}
+.mon-evcount {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+}
+.mon-bn {
+  color: var(--accent-strong);
+  border-color: var(--accent-line);
+}
+.mon-more {
+  margin: var(--s-2) 0 0;
+  font-size: var(--fs-12);
+}
+.mon-msg {
+  margin: var(--s-3) 0 0;
+  padding: 8px 10px;
+  border: 1px solid var(--line-2);
+  border-radius: var(--r-2);
+  background: var(--bg-2);
+  font-size: var(--fs-12);
+  color: var(--text-2);
+}
+.mon-msg.err {
+  border-color: #e0525266;
+  color: #f0b4b4;
+}
+.mon-sentence {
+  margin: 0 0 var(--s-3);
+  font-size: var(--fs-13);
+  line-height: 1.5;
+  color: var(--text-1);
+}
+.mon-dl dd .muted {
+  font-size: var(--fs-12);
+}
+.mon-sevs {
+  display: flex;
+  gap: 10px;
+  flex-wrap: wrap;
+  margin-top: 4px;
+}
+
+/* ── Summary bands ───────────────────────────────────────────────────────── */
+
+.mon-verdict {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-top: 6px;
+  font-size: var(--fs-16);
+  font-weight: var(--fw-medium);
+  line-height: 1.3;
+}
+.mon-verdict svg {
+  flex: none;
+}
+.mon-verdict.good svg {
+  color: var(--good);
+}
+.mon-verdict.warning svg,
+.mon-verdict.serious svg {
+  color: var(--warning);
+}
+.mon-verdict.critical svg {
+  color: var(--critical);
+}
+.mon-verdict.neutral svg {
+  color: var(--neutral);
+}
+.mon-verdict.planned svg {
+  color: var(--planned);
+}
+.mon-verdict.neutral {
+  color: var(--text-2);
+}
+.summary.mon-io {
+  grid-template-columns: 1.35fr repeat(6, minmax(0, 1fr));
+}
+.summary.mon-io .kpi-value {
+  font-size: var(--fs-20);
+}
+.summary .kpi-sub .row-link {
+  font-size: var(--fs-12);
+}
+@media (max-width: 1180px) {
+  .summary.mon-io {
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+  }
+  .summary.mon-io > :nth-child(7) {
+    border-left: 0;
+  }
+}
+
+/* ── Ordered stage flow ──────────────────────────────────────────────────── */
+
+.mon-flow {
+  display: flex;
+  align-items: stretch;
+  gap: 0;
+  overflow-x: auto;
+  padding-bottom: 2px;
+}
+.mon-flow-item {
+  display: flex;
+  align-items: center;
+  flex: 1 1 0;
+  min-width: 112px;
+}
+.mon-flow-arrow {
+  flex: none;
+  margin: 0 3px;
+  color: var(--text-4);
+}
+.mon-flow-step {
+  flex: 1 1 auto;
+  position: relative;
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 4px;
+  min-width: 0;
+  height: 100%;
+  padding: 8px 10px;
+  border: 1px solid var(--line);
+  border-radius: var(--r-2);
+  background: var(--bg-1);
+  color: var(--text-1);
+  text-align: left;
+  transition:
+    background var(--t-fast),
+    border-color var(--t-fast);
+}
+.mon-flow-step:hover {
+  background: var(--bg-2);
+  border-color: var(--line-3);
+}
+.mon-flow-step.bn {
+  border-color: var(--accent-line);
+  box-shadow: inset 0 2px 0 var(--accent);
+}
+.mon-step-name {
+  font-size: var(--fs-12);
+  font-weight: var(--fw-medium);
+  line-height: 1.3;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  max-width: 100%;
+  white-space: nowrap;
+}
+.mon-flow-step .status {
+  font-size: var(--fs-11);
+}
+.mon-bn-ico {
+  position: absolute;
+  top: 8px;
+  right: 8px;
+  color: var(--accent-strong);
+}
+
+/* ── Tables with multi-line cells ───────────────────────────────────────── */
+
+.mon-table .table td {
+  height: auto;
+  padding-top: 7px;
+  padding-bottom: 7px;
+  vertical-align: top;
+  max-width: none;
+}
+.mon-table .table td .status {
+  font-size: var(--fs-11);
+}
+.mon-table .table td.n .mon-nm {
+  align-items: flex-end;
+  text-align: right;
+  max-width: 170px;
+}
+.mon-reading {
+  font-size: var(--fs-11);
+  white-space: nowrap;
+}
+
+/* ── Stage detail ────────────────────────────────────────────────────────── */
+
+.mon-head {
+  gap: var(--s-3);
+}
+.mon-title {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  flex-wrap: wrap;
+  min-width: 0;
+}
+.mon-title h2 {
+  margin: 0;
+  font-size: var(--fs-20);
+  font-weight: var(--fw-medium);
+}
+.mon-nav {
+  display: flex;
+  gap: 6px;
+}
+.mon-nav .btn {
+  max-width: 220px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.mon-side {
+  display: flex;
+  flex-direction: column;
+  gap: var(--s-4);
+  min-width: 0;
+}
+.mon-chip-num {
+  font-size: var(--fs-12);
+  color: var(--text-2);
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+}
+
+/* Cameras */
+.mon-cams {
+  display: grid;
+  gap: var(--s-3);
+}
+.mon-cams.n2 {
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+}
+.mon-cam {
+  margin: 0;
+  min-width: 0;
+}
+.mon-cam figcaption {
+  margin-top: 6px;
+  font-size: var(--fs-11);
+  color: var(--text-2);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+/* Signal trends */
+.mon-sig-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--s-3);
+  margin-bottom: var(--s-3);
+  font-size: var(--fs-12);
+}
+.mon-charts {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(320px, 1fr));
+  gap: var(--s-4);
+}
+.mon-chart {
+  min-width: 0;
+  padding: 10px 12px 6px;
+  border: 1px solid var(--line);
+  border-radius: var(--r-2);
+  background: var(--bg-0);
+}
+.mon-chart header {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: var(--s-2);
+  font-size: var(--fs-12);
+}
+.mon-chart h3 {
+  margin: 0;
+  font-size: var(--fs-12);
+  font-weight: var(--fw-medium);
+  color: var(--text-1);
+}
+.mon-sig-id {
+  font-size: var(--fs-11);
+  margin: 2px 0 6px;
+}
+.mon-sig-table {
+  margin-top: var(--s-4);
+  border: 1px solid var(--line);
+  border-radius: var(--r-2);
+  overflow: hidden;
+}
+
+/* Losses */
+.mon-loss-sum {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  border-bottom: 1px solid var(--line);
+}
+.mon-loss-sum > div {
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+  padding: 10px var(--s-4);
+  min-width: 0;
+}
+.mon-loss-sum > div + div {
+  border-left: 1px solid var(--line);
+}
+.mon-loss-sum b {
+  font-size: var(--fs-20);
+  font-weight: var(--fw-medium);
+}
+.mon-loss-sum b small {
+  font-size: var(--fs-12);
+  color: var(--text-3);
+  font-weight: var(--fw-regular);
+}
+.mon-loss-sum .muted {
+  font-size: var(--fs-12);
+}
+.mon-reach {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+}
+
+/* Quick actions */
+.mon-qa {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: var(--s-3);
+}
+.mon-qa .select {
+  width: 100%;
+}
+.mon-qa-hint {
+  grid-column: 1 / -1;
+  margin: 0;
+  font-size: var(--fs-12);
+  line-height: 1.45;
+}
+.mon-qa-row {
+  grid-column: 1 / -1;
+  display: flex;
+  align-items: center;
+  gap: var(--s-2);
+  flex-wrap: wrap;
+  font-size: var(--fs-12);
+}
+.mon-qa-list {
+  margin-top: var(--s-4);
+  padding-top: var(--s-3);
+  border-top: 1px solid var(--line);
+}
+.mon-qa-list ul {
+  list-style: none;
+  margin: 6px 0 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+.mon-qa-list li {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: var(--fs-12);
+  min-width: 0;
+}
+.mon-qa-label {
+  flex: 1 1 auto;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.mon-qa-list p {
+  margin: 6px 0 0;
+  font-size: var(--fs-12);
+}
+
+@media (max-width: 1180px) {
+  .mon-qa {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+  .mon-nav .btn {
+    max-width: 160px;
+  }
+}

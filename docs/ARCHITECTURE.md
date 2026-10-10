@@ -28,6 +28,10 @@ Everything above is preserved; the product is built around it.
 | Energy model (electricity + gas per consumer, expected vs actual, tariffs) | `src/sim/energy.ts` |
 | Condition monitoring (simulated vibration / temperature / current, degradation, maintenance, rule-based assessment) | `src/sim/health.ts` |
 | Live store, demo clock, baseline twin | `src/sim/store.ts` |
+| **Event engine**: detection rules, dedupe / reopen, lifecycle, evidence, accumulated impact | `src/sim/events.ts` |
+| Event report model (in-app report, PDF and copilot all render it) and per-event impact | `src/intel/report.ts` |
+| Financial assumptions and estimate helpers | `src/sim/finance.ts` |
+| Twin renderer bridge (camera views, snapshot image store), inspection-image rasteriser | `src/twin/` |
 | Rule-based insights, recommendations, next actions | `src/intel/insights.ts` |
 | Rule-based copilot (intent → answer from the state) | `src/intel/copilot.ts` |
 | Simulated signal values (Assets & Data) | `src/sim/signals.ts` |
@@ -114,5 +118,43 @@ show up as brief, explainable shifts.
   insights, with facts, links and follow-ups. No language model is connected; the UI says so.
 - **Vision station**: inspection records carry an illustrative defect box and confidence; frames are drawn
   procedurally (SVG) from the record — no images, no vision model.
+
+## Events, evidence and reports (shared by the four use cases)
+
+One record per event (`OpEvent`, `src/model/types.ts`) for production, conveyors, OEE, quality, vehicles, energy
+and data feeds. Detection rules run inside the deterministic simulation step (`stepEvents`), so the same seed
+and scenario log always yield the same events; ~400 events are already in the 7-day pre-rolled history.
+
+- **Rules** (`EVENT_RULE_DEFS`, thresholds in `s.rules`, editable): unexpected stop / fault (alarm code decides),
+  conveyor stoppage, running below rate *at its own pace*, starvation / blockage (only for the kiln, or when a
+  stopped / slowed neighbour explains it — normal line balancing is not an event), counter inactivity (stale feed),
+  abnormal condition signals, input / output imbalance, reject rate, defect count, repeated defect,
+  deterioration vs baseline, critical defect review, truck waiting, dock overstay, yard congestion, turnaround,
+  restricted-zone entry (trajectory vs geofence), energy deviation. Proximity and route deviation are listed as
+  unavailable (no sensing).
+- **Lifecycle**: Detected → Active → Acknowledged → Investigating → Resolved. A condition that clears before
+  anyone acknowledged it auto-resolves; acknowledged / investigating events wait for the owner. Repeated signals
+  update the open event (dedupe key); a condition returning within 10 min reopens it. Events are never deleted on
+  recovery; recovery time and final duration are recorded.
+- **Observed vs inferred**: `facts` come from signals and records; `causes` carry a confidence (confirmed only for
+  directly observed facts or scenario inputs; likely / possible for inferences such as "starved because CV-PACK
+  stopped"). Consequence events link to their root (`consequenceOf`).
+- **Evidence** (`s.evidence`, by event id): state transitions and per-minute counter series frozen from the minute
+  log, condition-signal series, inspection frames (illustrations of simulated records), vehicle timelines, metric
+  snapshots, and camera snapshots rendered from the digital twin (or grabbed from a configured live stream).
+  Unavailable evidence is recorded with its reason, never fabricated.
+- **Impact** is accumulated minute by minute while the condition is active: asset-level loss vs typical rate, and
+  the minutes / tiles the kiln (line constraint) was held up *because of this event* — the only loss that costs
+  line output. Consequence events report their loss under the root event, so totals never double count.
+- **Report** (`buildEventReport`) is the single model for the in-app report, the PDF export and the copilot's
+  event investigation: summary, asset, detection, visual evidence, signals, context, impact, cost estimate with
+  assumptions, diagnosis (facts / causes / uncertainty), recommendations, resolution history, provenance.
+
+## Conveyors, cameras, feeds
+
+Seven conveyors (`CONVEYORS`) are operational assets: a stopped conveyor cuts the transfer it carries (no input
+for the stages it feeds, no discharge for the ones feeding it), so starvation and blocking follow through the
+buffers. Ten camera positions (`CAMERAS`) cover the plant; each renders a simulated view from the twin.
+Per-asset data-feed health (`s.feeds`) drives *Unknown — data stale* states and frozen signal values.
 
 See `INTEGRATION.md` for the path to real data.

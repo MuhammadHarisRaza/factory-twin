@@ -1,162 +1,151 @@
 import { useState } from 'react';
-import { Check, MessageSquareText, Pause, Play, SkipForward, type LucideIcon } from 'lucide-react';
+import { Check, ClipboardList, MessageSquareText, Pause, Play, SkipForward, type LucideIcon } from 'lucide-react';
 import { useApp } from '../../app/store';
-import type { ScenarioActivation, ScenarioKind } from '../../model/types';
-import type { SimState } from '../../sim/engine';
-import { HEALTH_BY_ID } from '../../sim/health';
 import { SPEEDS, useSim, useSimValue } from '../../sim/store';
 import { Panel, Segmented } from '../../ui/kit/Panel';
-import { ENTRY_BY_ID, maintenanceDef, sameTarget, scenarioStatus, type ScenarioDef, type ShowTarget } from './catalogue';
-import { openOverview, runScenario, showTarget } from './actions';
-
-const FAULT_ASSET = 'E-PRS2';
-const CBM_MIN = 45;
-const COPILOT_QUESTION = 'What should the shift supervisor do next?';
-
-/** Guide scenarios use the catalogue builders so labels match the cards exactly. */
-const guideDef = {
-  breakdown: (now: number) => ENTRY_BY_ID.B.build({ machine: 'H-KILN', duration: 30 }, now),
-  bottleneck: (now: number) => ENTRY_BY_ID.A.build({ stage: 'GLAZE', factor: 0.45 }, now),
-  quality: (now: number) => ENTRY_BY_ID.C.build({ stage: 'GLAZE', factor: 4 }, now),
-  energy: (now: number) => ENTRY_BY_ID.D.build({ consumer: 'H-KILN', factor: 1.2 }, now),
-  fault: (now: number) => ENTRY_BY_ID.E.build({ asset: FAULT_ASSET, progression: 'typical' }, now),
-};
-
-const isRunning = (s: SimState, def: ScenarioDef) => s.scenarios.some((sc) => sameTarget(sc, def) && scenarioStatus(s, sc).key === 'active');
-
-/** Activates the step's scenario unless the same one is already running, then navigates. */
-function ensureThen(build: (now: number) => ScenarioDef, target: ShowTarget) {
-  const { sim } = useSim.getState();
-  const def = build(sim.minute);
-  if (!isRunning(sim, def)) runScenario(def, 'guide');
-  showTarget(target);
-}
+import { resolveValues, type ShowTarget, type Values } from './catalogue';
+import { DEMO_BY_ID, demoKey, demoView, type DemoId } from './demos';
+import { currentRun, openOverview, setupDemo, showTarget, useDemoRuns, useScenarioParams } from './actions';
+import { RESET_CARD_ID } from './ResetDemo';
 
 type Action = { label: string; icon?: LucideIcon; run: () => void; disabled?: string | null; primary?: boolean };
 type Step = { key: string; title: string; text: string; done: boolean; actions: Action[] };
 
-const repairText = (id: string) => {
-  const r = HEALTH_BY_ID[id]?.repair;
-  return r ? `${(r[0] / 60).toFixed(1)}–${(r[1] / 60).toFixed(1)} h` : 'several hours';
-};
-
-/** Suggested demo path. Each step performs its activation and navigation in one click. */
+/**
+ * Suggested demo path through the four connected use cases. Each step sets up its demonstration
+ * (the same inputs and labels as the cards, unless it is already running) and navigates in one
+ * click; secondary buttons open the event report the step produced.
+ */
 export function PresenterGuide() {
   const [visited, setVisited] = useState<Record<string, boolean>>({});
   const running = useSim((s) => s.running);
   const speed = useSim((s) => s.speed);
+  const resetting = useSim((s) => s.resetting);
   const setSpeed = useSim((s) => s.setSpeed);
   const play = useSim((s) => s.play);
   const pause = useSim((s) => s.pause);
+  const runs = useDemoRuns((s) => s.runs);
+  const resets = useSim((s) => s.resets);
+  const values = useScenarioParams((s) => s.values);
   const visit = (key: string) => setVisited((v) => ({ ...v, [key]: true }));
 
-  const st = useSimValue((s) => {
-    const had = (kind: ScenarioKind) => s.scenarios.some((sc) => sc.kind === kind);
-    const now = s.minute;
-    const fault = [...s.scenarios].reverse().find((sc: ScenarioActivation) => sc.kind === 'degradation' && scenarioStatus(s, sc).key === 'active') ?? null;
-    const faultAsset = fault?.equipmentId ?? FAULT_ASSET;
+  const views = useSimValue(
+    (s) =>
+      Object.fromEntries(
+        (['A', 'B', 'C', 'D'] as DemoId[]).map((id) => {
+          const def = DEMO_BY_ID[id];
+          const v = resolveValues(def, values[demoKey(id)], s);
+          return [id, { v, view: demoView(s, def, v, currentRun(runs, id, resets)) }];
+        }),
+      ) as Record<DemoId, { v: Values; view: ReturnType<typeof demoView> }>,
+    [values, runs, resets],
+  );
+
+  /** Sets the demonstration up unless it is already running, then goes to `target`. */
+  const ensure = (id: DemoId, target: ShowTarget) => {
+    if (!views[id].view.active) setupDemo(id, views[id].v);
+    showTarget(target);
+  };
+  const eventAction = (id: DemoId, label: string): Action => {
+    const ev = views[id].view.primary;
     return {
-      had: {
-        breakdown: had('machine-stop'),
-        bottleneck: had('bottleneck'),
-        quality: had('quality-deterioration'),
-        energy: had('energy-anomaly'),
-        fault: had('degradation'),
-        maintenance: had('maintenance'),
-      },
-      running: {
-        breakdown: isRunning(s, guideDef.breakdown(now)),
-        bottleneck: isRunning(s, guideDef.bottleneck(now)),
-        quality: isRunning(s, guideDef.quality(now)),
-        energy: isRunning(s, guideDef.energy(now)),
-        fault: isRunning(s, guideDef.fault(now)),
-      },
-      fault: !!fault,
-      faultAsset,
-      maintRunning: s.scenarios.some((m) => m.kind === 'maintenance' && m.equipmentId === faultAsset && (m.end ?? now) > now),
+      label,
+      icon: ClipboardList,
+      disabled: ev ? null : views[id].view.run ? 'The event appears once its rule fires' : 'Set up first',
+      run: () => (ev ? showTarget({ type: 'event', id: ev.id }) : undefined),
     };
-  });
+  };
+  const a = views.A.view;
+  const conveyor = a.scenarios[0]?.sc.equipmentId ?? String(views.A.v.conveyor);
+  const stopEvent = a.primary;
+  const machineB = views.B.view.scenarios[0]?.sc.equipmentId ?? String(views.B.v.machine);
 
   const steps: Step[] = [
     {
       key: 'overview',
       title: 'Factory overview',
-      text: 'Start on the 3D twin: zones, machine states, material flow and vehicles all come from one simulated plant state.',
+      text: 'One simulated plant state: zones, machine and conveyor states, material flow, cameras and vehicles in the 3D twin.',
       done: !!visited.overview,
       actions: [{ label: 'Open overview', primary: true, run: () => (visit('overview'), openOverview()) }],
     },
     {
-      key: 'breakdown',
-      title: 'Kiln breakdown',
-      text: 'A 30-min stop at the line constraint: output drops at once, upstream machines block and the event lands in Production & OEE.',
-      done: st.had.breakdown,
+      key: 'A',
+      title: '1 · Production monitoring — conveyor stoppage',
+      text: `${conveyor} stops: the stop is raised as an event with its state transition, counters and a twin snapshot; the receiving stage starves once its buffer runs out.`,
+      done: !!a.run,
       actions: [
-        { label: st.running.breakdown ? 'Show H-KILN' : 'Break down H-KILN', primary: true, run: () => ensureThen(guideDef.breakdown, { type: 'equipment', id: 'H-KILN' }) },
-        { label: 'Production', run: () => showTarget({ type: 'workspace', id: 'production' }) },
+        { label: a.active ? `Show ${conveyor}` : `Stop ${conveyor} · 3D`, primary: true, run: () => ensure('A', { type: 'equipment', id: conveyor }) },
+        eventAction('A', 'Event report'),
       ],
     },
     {
-      key: 'bottleneck',
-      title: 'Glazing bottleneck',
-      text: 'Glazing at 45 % capacity: the small buffers to the kiln drain within minutes and the constraint shifts from the kiln to glazing.',
-      done: st.had.bottleneck,
-      actions: [
-        { label: st.running.bottleneck ? 'Open Production' : 'Activate · Production', primary: true, run: () => ensureThen(guideDef.bottleneck, { type: 'workspace', id: 'production' }) },
-        { label: 'Twin · G-LINE', run: () => showTarget({ type: 'equipment', id: 'G-LINE' }) },
-      ],
-    },
-    {
-      key: 'quality',
-      title: 'Glaze quality deterioration',
-      text: 'Glaze-origin defects ×4: rejects rise at the optical inspection tunnel; quality rate and OEE fall.',
-      done: st.had.quality,
-      actions: [
-        { label: st.running.quality ? 'Open Quality' : 'Activate · Quality', primary: true, run: () => ensureThen(guideDef.quality, { type: 'workspace', id: 'quality' }) },
-        { label: 'Twin · I-VIS', run: () => showTarget({ type: 'equipment', id: 'I-VIS' }) },
-      ],
-    },
-    {
-      key: 'energy',
-      title: 'Kiln energy anomaly',
-      text: 'Kiln gas 20 % above the energy model for its load: cost and kWh per m² rise and an energy alert is raised (illustrative tariffs).',
-      done: st.had.energy,
-      actions: [{ label: st.running.energy ? 'Open Energy' : 'Activate · Energy', primary: true, run: () => ensureThen(guideDef.energy, { type: 'workspace', id: 'energy' }) }],
-    },
-    {
-      key: 'fault',
-      title: `Developing fault on ${FAULT_ASSET}`,
-      text: 'A hydraulic-pump fault develops. Rule-based detection on the simulated vibration and temperature flags it before failure, typically within 10–30 simulated minutes.',
-      done: st.had.fault,
-      actions: [
-        { label: st.running.fault ? 'Open Machine Health' : 'Start fault · Machine Health', primary: true, run: () => ensureThen(guideDef.fault, { type: 'workspace', id: 'health' }) },
-        { label: `Twin · ${FAULT_ASSET}`, run: () => showTarget({ type: 'equipment', id: FAULT_ASSET }) },
-      ],
-    },
-    {
-      key: 'maintenance',
-      title: 'Condition-based maintenance',
-      text: `Schedule a ${CBM_MIN}-min planned stop on ${st.faultAsset} now instead of an unplanned ${repairText(st.faultAsset)} repair later; the impact band shows the difference.`,
-      done: st.had.maintenance,
+      key: 'copilot',
+      title: 'Copilot on the same event',
+      text: 'Ask what happened, why and the impact: the answer is built from the event record — observed facts, inferred causes and estimates kept apart (rule-based, no language model).',
+      done: !!visited.copilot,
       actions: [
         {
-          label: 'Schedule · Machine Health',
+          label: 'Ask about the stop',
+          icon: MessageSquareText,
           primary: true,
-          disabled: st.maintRunning ? 'Maintenance is already in progress' : !st.fault ? 'Start the developing fault first (step 6)' : null,
+          disabled: stopEvent ? null : 'Set up step 1 first — the copilot answers about its event',
           run: () => {
-            runScenario(maintenanceDef(st.faultAsset, CBM_MIN), 'guide');
-            showTarget({ type: 'workspace', id: 'health' });
+            if (!stopEvent) return;
+            visit('copilot');
+            useApp.getState().openCopilot(`What happened at ${conveyor}, why, and what is the impact?`, { eventId: stopEvent.id });
           },
         },
       ],
     },
     {
-      key: 'command',
-      title: 'Command Center & copilot',
-      text: 'Close on prioritised issues and recommendations; the copilot answers from the current demo state (rule-based, no language model connected).',
-      done: !!visited.command,
+      key: 'B',
+      title: '2 · OEE & loss — reduced rate or downtime',
+      text: `${machineB} loses performance (or availability): OEE, the capacity gap at the constraint and its estimated value (assumptions shown) move in OEE & Loss.`,
+      done: !!views.B.view.run,
       actions: [
-        { label: 'Command Center', primary: true, run: () => (visit('command'), showTarget({ type: 'workspace', id: 'command' })) },
-        { label: 'Ask the copilot', icon: MessageSquareText, run: () => (visit('command'), useApp.getState().openCopilot(COPILOT_QUESTION)) },
+        { label: views.B.view.active ? 'Open OEE & Loss' : 'Set up · OEE & Loss', primary: true, run: () => ensure('B', { type: 'workspace', id: 'production' }) },
+        eventAction('B', 'Event report'),
+      ],
+    },
+    {
+      key: 'C',
+      title: '3 · AI defect monitoring — defect deterioration',
+      text: 'Defects of one origin rise: inspection frames (illustrative, simulated classification), the defect Pareto and a quality event with the frames as evidence.',
+      done: !!views.C.view.run,
+      actions: [
+        { label: views.C.view.active ? 'Open AI Defect Monitoring' : 'Set up · Defects', primary: true, run: () => ensure('C', { type: 'workspace', id: 'quality' }) },
+        eventAction('C', 'Quality event'),
+      ],
+    },
+    {
+      key: 'D',
+      title: '4 · Vehicle monitoring — truck delay',
+      text: 'An extra truck goes gate → check-in → holding → dock; when it docks a documentation hold is added automatically and the dock-stay rule raises a dock event with the visit timeline.',
+      done: !!views.D.view.run,
+      actions: [
+        { label: views.D.view.active ? 'Open Vehicle Monitoring' : 'Set up · Vehicles', primary: true, run: () => ensure('D', { type: 'workspace', id: 'fleet' }) },
+        eventAction('D', 'Dock event'),
+      ],
+    },
+    {
+      key: 'command',
+      title: 'Command Center',
+      text: 'The four use cases side by side on one state: open events (unacknowledged first), next actions — acknowledge them here — and the docked copilot.',
+      done: !!visited.command,
+      actions: [{ label: 'Command Center', primary: true, run: () => (visit('command'), showTarget({ type: 'workspace', id: 'command' })) }],
+    },
+    {
+      key: 'reset',
+      title: 'Reset',
+      text: 'Back to the seeded start between meetings (card E, with confirmation); the check list confirms no scenario, no session events and counters on the baseline.',
+      done: false,
+      actions: [
+        {
+          label: 'Go to Reset (E)',
+          primary: true,
+          disabled: resetting ? 'Resetting…' : null,
+          run: () => document.getElementById(RESET_CARD_ID)?.scrollIntoView({ behavior: 'smooth', block: 'center' }),
+        },
       ],
     },
   ];
@@ -165,7 +154,7 @@ export function PresenterGuide() {
   return (
     <Panel
       title="Presenter guide"
-      subtitle="Suggested demo path · each button activates and navigates"
+      subtitle="The four use cases on one state · each button sets up and navigates"
       footer={
         <div className="scnp-guide-f">
           <button className="btn sm icon" onClick={running ? pause : play} title={running ? 'Pause simulation' : 'Run simulation'} aria-label={running ? 'Pause simulation' : 'Run simulation'}>
@@ -173,7 +162,7 @@ export function PresenterGuide() {
           </button>
           <Segmented label="Simulation speed" value={String(speed)} options={SPEEDS.map((x) => ({ value: String(x.value), label: x.label }))} onChange={(v) => setSpeed(Number(v))} />
           <div className="spacer" />
-          <button className="btn sm" onClick={() => useSim.getState().skip(15)} title="Simulate the next 15 minutes at once">
+          <button className="btn sm" disabled={resetting} onClick={() => useSim.getState().skip(15)} title="Simulate the next 15 minutes at once">
             <SkipForward size={13} aria-hidden />
             Skip 15 min
           </button>
@@ -190,22 +179,22 @@ export function PresenterGuide() {
               <b>{s.title}</b>
               <p>{s.text}</p>
               <div className="scnp-step-a">
-                {s.actions.map((a) => {
-                  const Icon = a.icon;
+                {s.actions.map((act) => {
+                  const Icon = act.icon;
                   return (
                     <button
-                      key={a.label}
-                      className={`btn sm ${a.primary && i === next ? 'primary' : ''}`}
-                      disabled={!!a.disabled}
-                      title={a.disabled ?? undefined}
-                      onClick={a.run}
+                      key={act.label}
+                      className={`btn sm ${act.primary && i === next ? 'primary' : ''}`}
+                      disabled={!!act.disabled || (resetting && act.primary)}
+                      title={act.disabled ?? undefined}
+                      onClick={act.run}
                     >
                       {Icon && <Icon size={13} aria-hidden />}
-                      {a.label}
+                      {act.label}
                     </button>
                   );
                 })}
-                {s.actions.some((a) => a.disabled) && <span className="scnp-step-why">{s.actions.find((a) => a.disabled)!.disabled}</span>}
+                {s.actions.some((x) => x.disabled) && <span className="scnp-step-why">{s.actions.find((x) => x.disabled)!.disabled}</span>}
               </div>
             </div>
           </li>

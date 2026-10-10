@@ -1,5 +1,5 @@
 /**
- * Fleet & Logistics page derivations. Pure helpers over the one simulation state; all
+ * Vehicle Monitoring page derivations. Pure helpers over the one simulation state; all
  * durations build on src/sim/metrics.ts (visitDurations, internalActivity) and only add
  * row shaping for the page's tables, board and charts.
  */
@@ -55,13 +55,16 @@ export type DockRow = {
 
 export function dockBoard(s: SimState): DockRow[] {
   const now = s.minute;
+  const docked = new Set(DOCKS.map((d) => s.logistics.docks[d.id].vehicleId).filter((x): x is string => !!x));
+  // Loading is complete at the dock 'loading-complete' event (pallets are credited when a forklift trip starts).
+  const complete = new Set(s.logistics.dockEvents.filter((e) => e.kind === 'loading-complete' && e.time <= now && docked.has(e.vehicleId)).map((e) => e.vehicleId));
   return DOCKS.map((d) => {
     const rt = s.logistics.docks[d.id];
     const id = rt.vehicleId ?? rt.reservedBy;
     const truck = id ? (s.logistics.vehicles[id] as TruckRuntime) : null;
     let status: DockStatus = 'free';
     if (rt.vehicleId && truck) {
-      const done = (truck.palletsLoaded ?? 0) >= truck.visit!.load;
+      const done = complete.has(truck.id);
       status = done ? (truck.holdExtra > 0 ? 'held' : 'paperwork') : 'loading';
     } else if (rt.reservedBy) status = 'reserved';
     const since = rt.vehicleId ? rt.since : (truck?.visit?.dockAssigned ?? null);
@@ -184,9 +187,11 @@ export function visitTimeline(s: SimState, v: TruckRuntime): TimelineStep[] {
   const now = s.minute;
   const vis = v.visit!;
   const past = (t: number | null | undefined) => (t != null && t <= now ? t : null);
+  const arrival: TimelineStep = { key: 'arrival', label: 'Arrival at the gate approach', time: past(vis.arrival), note: vis.scenarioId ? 'scenario' : undefined };
   if (vis.direction === 'inbound') {
     const weigh = v.legs.find((l) => l.activity.startsWith('Weighing'));
     return [
+      arrival,
       { key: 'gate-in', label: 'Gate in', time: past(vis.gateIn) },
       { key: 'weigh', label: 'Weighbridge', time: past(weigh?.start) },
       { key: 'unload-start', label: 'Unloading started', time: past(vis.dockStart), note: vis.material },
@@ -197,6 +202,7 @@ export function visitTimeline(s: SimState, v: TruckRuntime): TimelineStep[] {
   const ev = (kind: string) => s.logistics.dockEvents.find((e) => e.vehicleId === v.id && e.kind === kind)?.time ?? null;
   const dock = vis.dockId ? DOCK_NAME[vis.dockId] : undefined;
   return [
+    arrival,
     { key: 'gate-in', label: 'Gate in', time: past(vis.gateIn) },
     { key: 'holding', label: 'Arrived in holding', time: past(v.queuedAt) },
     { key: 'assigned', label: 'Dock assigned', time: past(vis.dockAssigned), note: dock },

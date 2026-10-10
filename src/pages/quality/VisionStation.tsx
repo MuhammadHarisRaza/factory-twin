@@ -44,6 +44,7 @@ import {
   type FrameContext,
   type QualityScenarioImpact,
 } from './frames';
+import { SIM_INFERENCE, inspectionMethod, isVisionRecord } from './derive';
 import { PRODUCT_BY_SKU, STATION_BY_ID } from './lookup';
 import { SURFACES, surfaceOf } from './tileGeometry';
 
@@ -53,12 +54,14 @@ type Props = {
   /** Selected frame / record id (shared with the history table); null = follow the latest frame. */
   selected: string | null;
   onSelect: (id: string | null) => void;
+  /** Feed mode (owned by the page so the inspection workflow follows the same frame). */
+  mode: FeedMode;
+  onMode: (m: FeedMode) => void;
   batchFilter: string | null;
   onFilterBatch: (batchId: string | null) => void;
 };
 
-export function VisionStation({ selected, onSelect, batchFilter, onFilterBatch }: Props) {
-  const [mode, setMode] = useState<FeedMode>('all');
+export function VisionStation({ selected, onSelect, mode, onMode, batchFilter, onFilterBatch }: Props) {
   const [zoomId, setZoomId] = useState<string | null>(null);
 
   const v = useSimValue(
@@ -229,7 +232,7 @@ export function VisionStation({ selected, onSelect, batchFilter, onFilterBatch }
           <Segmented
             label="Frames shown in the feed"
             value={mode}
-            onChange={setMode}
+            onChange={onMode}
             options={[
               { value: 'all', label: 'All frames' },
               { value: 'rejects', label: 'Rejects only' },
@@ -266,7 +269,11 @@ export function VisionStation({ selected, onSelect, batchFilter, onFilterBatch }
                 className={`q-thumb ${f.kind} ${sel ? 'sel' : ''} ${aff ? 'aff' : ''}`}
                 aria-pressed={sel}
                 onClick={() => onSelect(sel && !following ? null : f.id)}
-                title={`${formatDateTime(f.time)} · ${f.kind === 'reject' && defect ? `Reject · ${DEFECTS[defect].label} · ${fmtPct(f.rec?.confidence, 1)}` : 'Sampled pass frame'} · ${f.batchId}${aff ? ' · scenario-affected' : ''}`}
+                title={`${formatDateTime(f.time)} · ${
+                  f.kind === 'reject' && defect
+                    ? `Reject · ${DEFECTS[defect].label} · ${isVisionRecord(f.rec) ? `${fmtPct(f.rec?.confidence, 1)} simulated confidence` : (f.rec?.measurement ?? 'gauge measurement')}`
+                    : 'Sampled pass frame'
+                } · ${f.batchId}${aff ? ' · scenario-affected' : ''}`}
               >
                 <FrameThumb frame={f} />
                 <span className="q-thumb-cap">
@@ -381,6 +388,7 @@ function FrameDetail({
         <div className="q-vd-class">
           <div className="q-vd-k">Classification · simulated</div>
           <div className="q-vd-defect">No defect detected</div>
+          <div className="q-vd-src mono">{inspectionMethod('ST-VIS').source}</div>
           <p className="q-vd-note">Every tile passes the tunnel and the gauge; a passed tile is sampled every few minutes so the feed shows the stream between reject records. No box is drawn.</p>
         </div>
         <dl className="dl">
@@ -400,6 +408,8 @@ function FrameDetail({
 
   const d = DEFECTS[rec.defect];
   const origin = STAGE_BY_ID[d.origin];
+  const method = inspectionMethod(rec.stationId);
+  const vision = isVisionRecord(rec);
   return (
     <div className="q-vd">
       <div className="q-vd-head">
@@ -415,11 +425,15 @@ function FrameDetail({
       </div>
 
       <div className="q-vd-class">
-        <div className="q-vd-k">Classification · simulated</div>
+        <div className="q-vd-k">{vision ? 'Classification · simulated' : 'Gauge measurement · non-vision'}</div>
         <div className="q-vd-defect">{d.label}</div>
-        {rec.confidence != null && (
-          <div className="q-vd-conf" title="Simulated classification confidence (no model runs)">
-            <span>Confidence</span>
+        <div className="q-vd-src" title={method.note}>
+          <span className="mono">{method.source}</span>
+          <span className="dim"> · {vision ? SIM_INFERENCE : method.note}</span>
+        </div>
+        {vision && rec.confidence != null && (
+          <div className="q-vd-conf" title="Simulated classification confidence — produced by deterministic rules, not by a model">
+            <span>Simulated confidence</span>
             <div className="meter" aria-hidden>
               <i style={{ width: `${rec.confidence * 100}%` }} />
             </div>

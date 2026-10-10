@@ -1,8 +1,10 @@
 /**
- * Live 2D site map for Fleet & Logistics. Static layers (roads, yards, buildings,
- * geofences, docks) re-render once per simulated minute; vehicle glyphs are positioned
- * from `poseAt(vehicle, simClock.t)` in a requestAnimationFrame loop (~12 fps) that
- * writes SVG transforms directly, so motion is smooth without React renders per frame.
+ * 2D site map for Vehicle Monitoring (simulated positions, zone level). Static layers (roads,
+ * yards, buildings, geofences, docks) re-render once per simulated minute; vehicle glyphs are
+ * positioned from `poseAt(vehicle, simClock.t)` in a requestAnimationFrame loop (~12 fps) that
+ * writes SVG transforms directly, so motion is smooth without React renders per frame. The
+ * selected vehicle's travelled route (trucks: since arrival; internal vehicles: last 15 min) is
+ * drawn on the ground in the same loop.
  *
  * Coordinates are the 3D model's ground plane: x → right, z → down (south, main gate).
  */
@@ -14,6 +16,10 @@ import type { Vehicle } from '../../model/types';
 import { poseAt } from '../../sim/logistics';
 import { simClock, useSim, useSimValue } from '../../sim/store';
 import { dockBoard, type DockStatus } from './derive';
+import { trail, trailPath } from './pipeline';
+
+/** Route history drawn for a selected internal vehicle (min). */
+export const INTERNAL_TRAIL_MIN = 15;
 
 export type MapView = 'site' | 'warehouse';
 
@@ -48,6 +54,11 @@ export function SiteMap({ view, selectedId, onSelect }: { view: MapView; selecte
   const uid = useId().replace(/[^a-zA-Z0-9]/g, '');
   const vb = VIEWS[view];
   const nodes = useRef(new Map<string, SVGGElement>());
+  const trailRef = useRef<SVGPathElement>(null);
+  const selRef = useRef(selectedId);
+  useEffect(() => {
+    selRef.current = selectedId;
+  }, [selectedId]);
 
   const vehicles = useSimValue((s) => s.logistics.active.map((id) => s.logistics.vehicles[id]));
   const docks = useSimValue((s) => dockBoard(s));
@@ -72,6 +83,11 @@ export function SiteMap({ view, selectedId, onSelect }: { view: MapView; selecte
         g.setAttribute('transform', `translate(${p.x.toFixed(2)} ${p.z.toFixed(2)})`);
         (g.firstElementChild as SVGGElement | null)?.setAttribute('transform', `rotate(${deg(p.heading)})`);
       }
+      const path = trailRef.current;
+      if (path) {
+        const v = selRef.current ? L.vehicles[selRef.current] : undefined;
+        path.setAttribute('d', v && poseAt(v, t) ? trailPath(trail(v, v.class === 'external' ? v.spawned : t - INTERNAL_TRAIL_MIN, t)) : '');
+      }
     };
     raf = requestAnimationFrame(frame);
     return () => cancelAnimationFrame(raf);
@@ -90,7 +106,7 @@ export function SiteMap({ view, selectedId, onSelect }: { view: MapView; selecte
       viewBox={`${vb.x[0]} ${vb.z[0]} ${vb.x[1] - vb.x[0]} ${vb.z[1] - vb.z[0]}`}
       preserveAspectRatio="xMidYMid meet"
       role="img"
-      aria-label={view === 'site' ? 'Site map with live vehicle positions' : 'Warehouse and dispatch yard with live vehicle positions'}
+      aria-label={view === 'site' ? 'Site map with simulated vehicle positions' : 'Warehouse and dispatch yard with simulated vehicle positions'}
     >
       <defs>
         <pattern id={hatch} patternUnits="userSpaceOnUse" width={fs * 0.9} height={fs * 0.9} patternTransform="rotate(45)">
@@ -162,6 +178,9 @@ export function SiteMap({ view, selectedId, onSelect }: { view: MapView; selecte
             <title>{`${d.name}: ${DOCK_SHORT[d.status]}${d.truck ? ` · ${d.truck.id}` : ''}`}</title>
           </g>
         ))}
+
+        {/* Selected vehicle's travelled route (updated in the animation loop) */}
+        <path ref={trailRef} className="fm-trail" strokeWidth={fs * 0.22} fill="none" />
 
         {/* Vehicles */}
         {vehicles.map((v) => {
@@ -283,6 +302,13 @@ export function MapLegend() {
           <rect className="lg-dock reserved" x="1" y="2" width="14" height="8" />
         </svg>
         Dock reserved
+      </span>
+      <span className="sep" />
+      <span>
+        <svg width="18" height="10" aria-hidden>
+          <path className="lg-trail" d="M1,8 L7,3 L17,5" />
+        </svg>
+        Route travelled (selected)
       </span>
     </div>
   );

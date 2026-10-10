@@ -14,6 +14,7 @@ import { AssessmentPanel, SelectedAsset, type Feedback } from './health/AssetDet
 import { AssetTable } from './health/AssetTable';
 import { LEVEL_META, levelColor } from './health/badges';
 import { assetRows, fleetSummary, PM_SOON_H, type AssetRow } from './health/derive';
+import { ConditionEvents } from './health/ConditionEvents';
 import { AlarmHistory, MaintenanceHistory } from './health/Histories';
 import { SignalCharts } from './health/SignalCharts';
 import './health.css';
@@ -66,6 +67,7 @@ function HealthWorkspace() {
       />
       <SignalCharts row={row} />
       <AssessmentPanel row={row} />
+      <ConditionEvents id={row.id} />
       <AlarmHistory id={row.id} />
       <MaintenanceHistory id={row.id} />
     </div>

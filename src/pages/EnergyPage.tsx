@@ -44,6 +44,7 @@ import './energy.css';
 type Energy = ReturnType<typeof energyIn>;
 
 const TREND_ID = 'en-hourly';
+const TABLE_ID = 'en-consumers';
 const KILN_IDLE_KW = CONSUMER_BY_ID['H-KILN'].thermal![0];
 /** Shown when the kiln-idle insight (current shift, > 1,500 kWh) is not raised for this period. */
 const KILN_IDLE_ACTION = 'Reduce kiln starvation by protecting the glazing and decoration feed; use idle-mode firing setpoints for planned gaps.';
@@ -112,7 +113,7 @@ export function EnergyPage() {
         <KilnPanel periodKey={periodKey} tariffs={tariffs} recommendation={d.kilnInsight?.recommendation ?? null} />
       </div>
 
-      <div className="col-8 en-cell">
+      <div className="col-8 en-cell" id={TABLE_ID}>
         <ConsumerTable
           e={d.e}
           power={d.power}
@@ -305,9 +306,20 @@ function ConsumerShare({ e, focus, setFocus }: { e: Energy; focus: string | null
   const restKwh = rest.reduce((a, r) => a + r.total, 0);
   const share = (v: number) => (e.total > 0 ? v / e.total : 0);
   const rows: RankedRow[] = sorted.slice(0, SHOWN).map((r) => ({ key: r.id, label: r.label, value: r.total, share: share(r.total), color: isGas(r.id) ? GAS_COLOR : ELEC_COLOR }));
-  if (rest.length) rows.push({ key: '__rest', label: `${rest.length} smaller consumers`, value: restKwh, share: share(restKwh), color: 'var(--text-4)' });
   // A focused consumer outside the top rows highlights the "smaller consumers" row.
-  const selected = focus == null ? null : rows.some((r) => r.key === focus) ? focus : '__rest';
+  const selected = focus == null ? null : sorted.slice(0, SHOWN).some((r) => r.id === focus) ? focus : '__rest';
+  if (rest.length)
+    rows.push({
+      key: '__rest',
+      label: (
+        <span title={selected === '__rest' ? `Focused on ${focus} — click to show all consumers again` : 'Listed one by one in the consumer table — click to go there'}>
+          {rest.length} smaller consumers{selected === '__rest' && focus ? ` · ${focus} focused` : ''}
+        </span>
+      ),
+      value: restKwh,
+      share: share(restKwh),
+      color: 'var(--text-4)',
+    });
   return (
     <Panel title="Energy by consumer" subtitle="kWh in the period · share of plant total · click to focus the hourly chart">
       <div className="chart-legend">
@@ -335,7 +347,14 @@ function ConsumerShare({ e, focus, setFocus }: { e: Energy; focus: string | null
           showCumulative={false}
           selectedKey={selected}
           onSelect={(r) => {
-            if (r.key !== '__rest') setFocus(focus === r.key ? null : r.key);
+            // The grouped row has no single consumer to focus (finding #32): it clears a focus on one of
+            // its consumers, otherwise it scrolls to the consumer table where each one can be picked.
+            if (r.key === '__rest') {
+              if (selected === '__rest') setFocus(null);
+              else document.getElementById(TABLE_ID)?.scrollIntoView({ behavior: 'smooth', block: 'center' });
+              return;
+            }
+            setFocus(focus === r.key ? null : r.key);
           }}
         />
       ) : (

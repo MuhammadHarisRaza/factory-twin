@@ -1,22 +1,41 @@
 import type { ReactNode } from 'react';
-import { CalendarClock, Crosshair, ExternalLink, HeartPulse, Lightbulb, LocateFixed, LogOut, MessageSquareText, Scan, X } from 'lucide-react';
+import {
+  Activity,
+  CalendarClock,
+  Crosshair,
+  ExternalLink,
+  HeartPulse,
+  Lightbulb,
+  LocateFixed,
+  LogOut,
+  MessageSquareText,
+  Scan,
+  Video,
+  X,
+} from 'lucide-react';
 import { useTwin } from '../store';
 import { ZONE_BY_ID } from '../data/layout';
 import { EQUIPMENT, EQUIPMENT_BY_ID } from '../data/equipment';
-import { BUFFERS, DOCKS, GEOFENCES, INSPECTION_STATIONS, OPS_BY_ID, REASON_BY_CODE } from '../model/plant';
-import { useApp, type WorkspaceId } from '../app/store';
+import { BUFFERS, CAMERA_BY_ID, CONVEYOR_BY_ID, DOCKS, INSPECTION_STATIONS, OPS_BY_ID, REASON_BY_CODE, STAGE_BY_ID } from '../model/plant';
+import type { MachineState, StageId } from '../model/types';
+import { WORKSPACES, openStage, useApp, type WorkspaceId } from '../app/store';
+import { findDowntime } from '../sim/engine';
 import { useSimValue } from '../sim/store';
-import { eventDuration, machineMetrics, qualityIn, resolvePeriod, visitDurations } from '../sim/metrics';
+import { conveyorMetrics, eventDuration, fleetMetrics, machineMetrics, qualityIn, resolvePeriod, visitDurations } from '../sim/metrics';
+import { signalValue } from '../sim/signals';
 import { phaseLabel, type TruckRuntime } from '../sim/logistics';
 import { HEALTH_BY_ID, assess } from '../sim/health';
 import { recommendationsFor } from '../intel/insights';
 import { formatClock, formatDuration } from '../sim/time';
-import { MachineStatus, MetricText, SourceTag, StatusBadge } from './kit/Status';
+import { FEED_STATUS, FeedStatusBadge, MACHINE_STATE, MetricText, OperationalStatus, SourceTag, StatusBadge } from './kit/Status';
 import { fmtInt, fmtM2, fmtPct } from './kit/format';
-import { EventsTab, HEALTH_LEVEL, HealthBadge, HealthTab, RecsTab } from './twin/MachineTabs';
+import { EventsTab, HEALTH_LEVEL, HealthBadge, HealthTab, RecsTab, VehicleEvents } from './twin/MachineTabs';
+import { AssetEventList } from './twin/EventRows';
 import { useTwinUi, type InspectorTab } from './twin/uiStore';
-import { vehicleActivity } from './twin/derive';
+import { assetEvents, assetStatus, monitoredStageOf, selectionCamera, vehicleActivity, vehicleGeofence, type AssetStatus } from './twin/derive';
 import { phaseIcon } from './twin/LiveList';
+
+const TITLE = Object.fromEntries(WORKSPACES.map((w) => [w.id, w.title])) as Record<WorkspaceId, string>;
 
 /** Clickable list of related equipment (upstream / downstream). */
 function Connections({ ids, label }: { ids: string[]; label: string }) {
@@ -41,13 +60,70 @@ function Connections({ ids, label }: { ids: string[]; label: string }) {
   );
 }
 
-function OpenIn({ workspace, label }: { workspace: WorkspaceId; label: string }) {
+function OpenIn({ workspace, label }: { workspace: WorkspaceId; label?: string }) {
   const go = useApp((s) => s.go);
   return (
     <button className="btn sm" onClick={() => go(workspace)}>
       <ExternalLink size={13} />
-      {label}
+      {label ?? TITLE[workspace]}
     </button>
+  );
+}
+
+/** Opens the small floating camera view (simulated feed) for a camera covering the selection. */
+function CameraButton({ cameraId }: { cameraId: string | null }) {
+  const open = useTwinUi((s) => s.camera);
+  const setCamera = useTwinUi((s) => s.setCamera);
+  if (!cameraId || !CAMERA_BY_ID[cameraId]) return null;
+  const on = open === cameraId;
+  return (
+    <button
+      className={`btn sm ${on ? 'on' : ''}`}
+      aria-pressed={on}
+      onClick={() => setCamera(on ? null : cameraId)}
+      title={`${CAMERA_BY_ID[cameraId].name} (${cameraId}) · simulated feed rendered from the digital twin unless a stream is configured`}
+    >
+      <Video size={13} />
+      Camera
+    </button>
+  );
+}
+
+/** Data-feed status of a tracked asset: "Simulated", or "Stale since hh:mm" while its feed is frozen. */
+function FeedTag({ status }: { status: AssetStatus | null }) {
+  if (status?.staleSince != null)
+    return (
+      <span className="tw-feed" title="The asset's data feed stopped updating; values shown are the last ones received">
+        <StatusBadge {...FEED_STATUS.stale} label={`Stale since ${formatClock(status.staleSince)}`} />
+      </span>
+    );
+  return (
+    <span className="tw-feed" title="Data feed: simulation engine — no PLC, gateway or sensor is connected">
+      <FeedStatusBadge status="simulated" />
+    </span>
+  );
+}
+
+/** Operational state with its timing: "since 10:42" or the frozen last report while the feed is stale. */
+function StatusLine({ st, extra }: { st: AssetStatus; extra?: ReactNode }) {
+  return (
+    <div className="tw-insp-line">
+      <OperationalStatus state={st.op} />
+      <span className="muted num">
+        {st.staleSince != null ? `no update since ${formatClock(st.staleSince)}` : `since ${formatClock(st.since)}`}
+        {extra}
+      </span>
+    </div>
+  );
+}
+
+function StaleNote({ st, last }: { st: AssetStatus; last: MachineState | undefined }) {
+  if (st.staleSince == null) return null;
+  return (
+    <p className="insp-desc tw-stale">
+      Data feed stale since {formatClock(st.staleSince)}: last reported {last ? MACHINE_STATE[last].label.toLowerCase() : 'state unknown'} at {fmtInt(st.rate)} tiles/h. The
+      current state is unknown until the feed updates again; figures after {formatClock(st.staleSince)} are not confirmed by the feed.
+    </p>
   );
 }
 
@@ -55,30 +131,27 @@ function OpenIn({ workspace, label }: { workspace: WorkspaceId; label: string })
 function MachineLive({ id }: { id: string }) {
   const data = useSimValue(
     (s) => {
+      const st = assetStatus(s, id);
       const m = s.machines[id];
-      const p = resolvePeriod('shift', s.minute);
-      const mm = machineMetrics(s, id, p);
-      return { m, mm, now: s.minute, active: m.activeDowntimeId ? s.downtime.find((d) => d.id === m.activeDowntimeId) : null };
+      const mm = machineMetrics(s, id, resolvePeriod('shift', s.minute));
+      const active = st.staleSince == null && m.activeDowntimeId ? findDowntime(s, m.activeDowntimeId) : undefined;
+      return { st, mm, now: s.minute, active, last: s.feeds[id]?.lastState };
     },
     [id],
   );
   const ideal = OPS_BY_ID[id].idealRatePerHour!;
+  const { st } = data;
   return (
     <>
       <div className="insp-sec">
-        <h3>Status · simulated</h3>
-        <div style={{ display: 'flex', alignItems: 'center', gap: 10, justifyContent: 'space-between' }}>
-          <MachineStatus state={data.m.state} />
-          <span className="muted num" style={{ fontSize: 12 }}>
-            since {formatClock(data.m.since)} · {fmtInt(data.m.ratePerHour)} / {fmtInt(ideal)} tiles/h
-          </span>
-        </div>
+        <h3>Status · simulated signals</h3>
+        <StatusLine st={st} extra={st.staleSince == null ? ` · ${fmtInt(st.rate)} / ${fmtInt(ideal)} tiles/h` : null} />
         {data.active && (
           <p className="insp-desc" style={{ marginTop: 6 }}>
-            {REASON_BY_CODE[data.active.reasonCode].label} · {formatDuration(eventDuration(data.active, data.now))} so far{' '}
-            <SourceTag source={data.active.source} />
+            {REASON_BY_CODE[data.active.reasonCode].label} · {formatDuration(eventDuration(data.active, data.now))} so far <SourceTag source={data.active.source} />
           </p>
         )}
+        <StaleNote st={st} last={data.last} />
       </div>
       <div className="insp-sec">
         <h3>Current shift</h3>
@@ -106,13 +179,106 @@ function MachineLive({ id }: { id: string }) {
               <MetricText m={data.mm.oee.quality} digits={0} />
             </b>
           </div>
-          <div title="Machine OEE = availability × performance × quality (this machine's own losses)">
+          <div title="Machine OEE = availability × performance × quality (this machine's own losses), from unrounded components">
             <span>OEE</span>
             <b>
               <MetricText m={data.mm.oee.oee} digits={0} />
             </b>
           </div>
         </div>
+      </div>
+    </>
+  );
+}
+
+const stageName = (st: StageId | null) => (st ? STAGE_BY_ID[st].name : 'outside the line');
+const names = (ids: StageId[]) => ids.map((x) => STAGE_BY_ID[x].name.toLowerCase()).join(' and ');
+
+/** Conveyor: run state, speed, route and what a stop does; shift availability / utilisation / stops; open events. */
+function ConveyorLive({ id }: { id: string }) {
+  const c = CONVEYOR_BY_ID[id];
+  const setTab = useTwinUi((s) => s.setTab);
+  const data = useSimValue(
+    (s) => {
+      const st = assetStatus(s, id);
+      const p = resolvePeriod('shift', s.minute);
+      const m = s.machines[id];
+      const active = st.staleSince == null && m.activeDowntimeId ? findDowntime(s, m.activeDowntimeId) : undefined;
+      const all = assetEvents(s, id);
+      return {
+        st,
+        p,
+        cm: conveyorMetrics(s, id, p),
+        active,
+        now: s.minute,
+        speed: signalValue(s, `${id}.speed`),
+        last: s.feeds[id]?.lastState,
+        open: all.filter((e) => e.status !== 'resolved'),
+        total: all.length,
+      };
+    },
+    [id],
+  );
+  const { st, cm } = data;
+  const effects = [c.blocksInputOf.length ? `starves ${names(c.blocksInputOf)}` : null, c.blocksOutputOf.length ? `blocks ${names(c.blocksOutputOf)}` : null].filter(Boolean).join('; ');
+  return (
+    <>
+      <div className="insp-sec">
+        <h3>Conveyor status · simulated signals</h3>
+        <StatusLine st={st} extra={` · ${data.speed.text} m/min${data.speed.quality === 'stale' ? ' (last value)' : ''}`} />
+        {data.active && (
+          <p className="insp-desc" style={{ marginTop: 6 }}>
+            {REASON_BY_CODE[data.active.reasonCode].label} · stopped {formatDuration(eventDuration(data.active, data.now))} so far <SourceTag source={data.active.source} />
+          </p>
+        )}
+        <StaleNote st={st} last={data.last} />
+        <dl className="dl" style={{ marginTop: 8 }}>
+          <dt>Carries</dt>
+          <dd>
+            {stageName(c.from)} → {stageName(c.to)}
+          </dd>
+          <dt>Nominal</dt>
+          <dd>
+            {fmtInt(c.capacityPerHour)} tiles/h · {c.speedMpm} m/min · {c.kind}
+          </dd>
+          {effects && (
+            <>
+              <dt>When stopped</dt>
+              <dd>{effects.charAt(0).toUpperCase() + effects.slice(1)}</dd>
+            </>
+          )}
+        </dl>
+      </div>
+      <div className="insp-sec">
+        <h3>Current shift · since {formatClock(data.p.from)}</h3>
+        <div className="insp-kpis">
+          <div title="Running (not stopped) share of the planned time">
+            <span>Availability</span>
+            <b className="num">{fmtPct(cm.availability, 0)}</b>
+          </div>
+          <div title="Tiles moved ÷ nominal transport capacity over the planned time">
+            <span>Utilisation</span>
+            <b className="num">{fmtPct(cm.utilisation, 0)}</b>
+          </div>
+          <div>
+            <span>Stops</span>
+            <b className="num">{cm.stops}</b>
+          </div>
+          <div>
+            <span>Stopped</span>
+            <b className="num">{formatDuration(cm.downMin)}</b>
+          </div>
+        </div>
+        <p className="tw-fine">OEE is not meaningful for a conveyor: availability is its running share of planned time and utilisation the tiles moved against its nominal capacity.</p>
+      </div>
+      <div className="insp-sec">
+        <h3>Open events · {data.open.length}</h3>
+        <AssetEventList events={data.open.slice(0, 3)} now={data.now} empty="No open event on this conveyor." />
+        {data.total > 0 && (
+          <button className="tw-link tw-more" onClick={() => setTab(id, 'events')}>
+            All events of {id} ({data.total}) →
+          </button>
+        )}
       </div>
     </>
   );
@@ -165,7 +331,9 @@ function LogisticsLive({ id }: { id: string }) {
     (s) => {
       const lg = s.logistics;
       const dockRows = DOCKS.map((d) => ({ d, v: lg.docks[d.id].vehicleId ? lg.vehicles[lg.docks[d.id].vehicleId!] : null }));
-      return { dockRows, waiting: lg.queue.length, stock: lg.stockPallets, onSite: lg.active.filter((v) => lg.vehicles[v].class === 'external').length };
+      // Same definition as the KPI chip, Vehicle Monitoring and Command Center: through the gate, not yet out.
+      const fm = fleetMetrics(s, resolvePeriod('shift', s.minute));
+      return { dockRows, waiting: fm.waiting, stock: lg.stockPallets, onSite: fm.onSite };
     },
     [id],
   );
@@ -220,9 +388,17 @@ function VehicleInspector({ id }: { id: string }) {
       if (!v) return null;
       const now = s.minute;
       const leg = [...v.legs].reverse().find((l) => l.start <= now) ?? v.legs[0];
-      const zone = GEOFENCES.find((g) => g.id === leg?.zone);
       const dur = v.class === 'external' ? visitDurations(v as TruckRuntime, now) : null;
-      return { v, leg, zone, dur, now, act: vehicleActivity(v, now), gone: v.despawned != null && v.despawned <= now };
+      return {
+        v,
+        leg,
+        zone: vehicleGeofence(s, id),
+        dur,
+        now,
+        act: vehicleActivity(v, now),
+        gone: v.despawned != null && v.despawned <= now,
+        camera: selectionCamera(s, { vehicleId: id })?.id ?? null,
+      };
     },
     [id],
   );
@@ -236,7 +412,9 @@ function VehicleInspector({ id }: { id: string }) {
           <h2>{v.label}</h2>
           <div className="tw-insp-status">
             <StatusBadge tone={data.gone ? 'neutral' : data.act.tone} icon={data.gone ? LogOut : phaseIcon(data.act.label, data.act.tone)} label={data.gone ? 'Left site' : data.act.label} />
-            <span className="tag sim">Simulated</span>
+            <span className="tw-feed" title="No GPS, telematics or indoor positioning is connected">
+              <FeedStatusBadge status="simulated" />
+            </span>
           </div>
         </div>
         <button className="btn ghost sm icon" onClick={() => selectVehicle(null)} title="Deselect (Esc)">
@@ -259,7 +437,9 @@ function VehicleInspector({ id }: { id: string }) {
             <dt>Activity</dt>
             <dd>{data.gone ? 'Left site' : (leg?.activity ?? '—')}</dd>
             <dt>Zone</dt>
-            <dd>{zone?.name ?? '—'}</dd>
+            <dd>
+              {zone?.name ?? '—'} <span className="muted">· simulated position (zone level)</span>
+            </dd>
             {v.visit && (
               <>
                 <dt>Gate in</dt>
@@ -305,6 +485,7 @@ function VehicleInspector({ id }: { id: string }) {
             </div>
           </div>
         )}
+        <VehicleEvents id={id} />
       </div>
       <div className="insp-f">
         <button className={`btn sm ${follow ? 'on' : ''}`} onClick={() => setFollow(!follow)} title="Keep the camera on this vehicle" aria-pressed={follow}>
@@ -317,7 +498,8 @@ function VehicleInspector({ id }: { id: string }) {
             Inspect {zone.kind === 'dock' ? 'dock' : 'zone'}
           </button>
         )}
-        <OpenIn workspace="fleet" label="Fleet & Logistics" />
+        <CameraButton cameraId={data.camera} />
+        <OpenIn workspace="fleet" />
       </div>
     </aside>
   );
@@ -335,15 +517,19 @@ function EquipmentInspector({ id }: { id: string }) {
   const zone = ZONE_BY_ID[item.zone];
   const ops = OPS_BY_ID[id];
   const isProcess = ops.category === 'process';
+  const isConveyor = !!CONVEYOR_BY_ID[id];
   const isHealth = !!HEALTH_BY_ID[id];
   const isBuffer = BUFFERS.some((b) => b.equipmentId === id);
   const isStation = INSPECTION_STATIONS.some((s) => s.equipmentId === id);
   const isLogistics = LOGISTICS_IDS.includes(id);
+  const stage = monitoredStageOf(id);
   const live = useSimValue(
     (s) => ({
-      state: s.machines[id]?.state ?? null,
+      status: s.machines[id] ? assetStatus(s, id) : null,
       health: HEALTH_BY_ID[id] ? assess(s, id) : null,
       recs: recommendationsFor(s, id, { tariffs }),
+      active: assetEvents(s, id).filter((e) => e.end == null).length,
+      camera: selectionCamera(s, { equipmentId: id })?.id ?? null,
     }),
     [id, tariffs],
   );
@@ -369,7 +555,7 @@ function EquipmentInspector({ id }: { id: string }) {
           },
         ]
       : []),
-    { id: 'events', label: 'Events' },
+    { id: 'events', label: 'Events', badge: live.active ? <span className="tw-count num" title={`${live.active} active`}>{live.active}</span> : undefined },
     { id: 'recs', label: 'Recommendations', badge: openRecs ? <span className="tw-count num">{openRecs}</span> : undefined },
   ];
 
@@ -384,18 +570,16 @@ function EquipmentInspector({ id }: { id: string }) {
             {zone.name}
           </div>
           <h2>{item.name}</h2>
-          {(live.state || live.health) && (
-            <div className="tw-insp-status">
-              {live.state && <MachineStatus state={live.state} />}
-              {live.health && (
-                <button className="tw-link" onClick={() => setTab(id, 'health')} title="Condition (rule-based) · open the Health tab">
-                  <HealthBadge level={live.health.level} />
-                  <span className="muted num"> {live.health.score}/100</span>
-                </button>
-              )}
-              <span className="tag sim">Simulated</span>
-            </div>
-          )}
+          <div className="tw-insp-status">
+            {live.status && <OperationalStatus state={live.status.op} />}
+            {live.health && (
+              <button className="tw-link" onClick={() => setTab(id, 'health')} title="Condition (rule-based) · open the Health tab">
+                <HealthBadge level={live.health.level} />
+                {live.health.level !== 'offline' && <span className="muted num"> {live.health.score}/100</span>}
+              </button>
+            )}
+            <FeedTag status={live.status} />
+          </div>
         </div>
         <button className="btn ghost sm icon" onClick={() => select(null)} title="Deselect (Esc)">
           <X size={16} />
@@ -413,6 +597,7 @@ function EquipmentInspector({ id }: { id: string }) {
         {tab === 'overview' && (
           <>
             {isProcess && <MachineLive id={id} />}
+            {isConveyor && <ConveyorLive id={id} />}
             {isBuffer && <BufferLive id={id} />}
             {isStation && <StationLive id={id} />}
             {isLogistics && <LogisticsLive id={id} />}
@@ -424,6 +609,14 @@ function EquipmentInspector({ id }: { id: string }) {
                 <dd>{item.stage}</dd>
                 <dt>Category</dt>
                 <dd style={{ textTransform: 'capitalize' }}>{ops.category.replace('-', ' ')}</dd>
+                {live.camera && (
+                  <>
+                    <dt>Camera</dt>
+                    <dd>
+                      {CAMERA_BY_ID[live.camera].name} <span className="muted mono">{live.camera}</span>
+                    </dd>
+                  </>
+                )}
               </dl>
               <p className="insp-desc" style={{ marginTop: 8 }}>
                 {item.description}
@@ -446,25 +639,32 @@ function EquipmentInspector({ id }: { id: string }) {
           <Scan size={13} />
           Zone view
         </button>
-        {isProcess && <OpenIn workspace="production" label="Production & OEE" />}
+        <CameraButton cameraId={live.camera} />
+        {stage && (
+          <button className="btn sm" onClick={() => openStage(stage)} title="Stage inputs, outputs, losses, cameras and events in Production Monitoring">
+            <Activity size={13} />
+            Stage monitoring
+          </button>
+        )}
+        {isProcess && <OpenIn workspace="production" />}
         {isHealth && (
           <button className="btn sm" onClick={() => useApp.getState().go('health')}>
             <HeartPulse size={13} />
-            Machine Health
+            {TITLE.health}
           </button>
         )}
-        {isStation && <OpenIn workspace="quality" label="Quality" />}
-        {isLogistics && <OpenIn workspace="fleet" label="Fleet & Logistics" />}
-        {tab === 'events' && isProcess && (
-          <button className="btn sm" onClick={() => useApp.getState().go('production')} title="Downtime analysis in Production & OEE">
+        {isStation && <OpenIn workspace="quality" />}
+        {isLogistics && <OpenIn workspace="fleet" />}
+        {tab === 'events' && (
+          <button className="btn sm" onClick={() => useApp.getState().go('events')} title="Every event, its report and PDF in Events & Reports">
             <CalendarClock size={13} />
-            Downtime analysis
+            {TITLE.events}
           </button>
         )}
         <button
           className="btn sm"
           onClick={() => useApp.getState().openCopilot(`How is ${item.id} performing?`)}
-          title="Ask the operations copilot (rule-based, uses the current demo state)"
+          title="Ask the operations copilot (rule-based on the current demo state — no language model)"
         >
           {tab === 'recs' ? <Lightbulb size={13} /> : <MessageSquareText size={13} />}
           Ask copilot
@@ -479,7 +679,7 @@ function ZoneInspector({ id }: { id: string }) {
   const selectZone = useTwin((s) => s.selectZone);
   const zone = ZONE_BY_ID[id];
   const items = EQUIPMENT.filter((e) => e.zone === id);
-  const states = useSimValue((s) => Object.fromEntries(items.map((e) => [e.id, s.machines[e.id]?.state ?? null] as const)), [id]);
+  const states = useSimValue((s) => Object.fromEntries(items.map((e) => [e.id, s.machines[e.id] ? assetStatus(s, e.id).op : null] as const)), [id]);
   return (
     <aside className="inspector overlay-panel tw-insp" aria-label={zone.name}>
       <div className="insp-h">
@@ -506,7 +706,7 @@ function ZoneInspector({ id }: { id: string }) {
             {items.map((e) => (
               <button key={e.id} onClick={() => select(e.id)} style={{ gridTemplateColumns: 'minmax(0,1fr) auto' }}>
                 <span className="d">{e.name}</span>
-                {states[e.id] ? <MachineStatus state={states[e.id]!} /> : <span className="muted">—</span>}
+                {states[e.id] ? <OperationalStatus state={states[e.id]!} /> : <span className="muted">—</span>}
               </button>
             ))}
           </div>
@@ -522,7 +722,7 @@ export function Inspector() {
   const vehicle = useTwin((s) => s.vehicle);
   const zoneId = useTwin((s) => s.zone);
   if (vehicle) return <VehicleInspector id={vehicle} />;
-  if (selected) return <EquipmentInspector key={selected} id={selected} />;
+  if (selected && EQUIPMENT_BY_ID[selected]) return <EquipmentInspector key={selected} id={selected} />;
   if (zoneId) return <ZoneInspector id={zoneId} />;
   return null;
 }

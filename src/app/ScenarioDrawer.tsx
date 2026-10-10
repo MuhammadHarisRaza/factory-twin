@@ -3,13 +3,22 @@ import { ArrowRight, FlaskConical, X } from 'lucide-react';
 import { SCENARIO_KIND_LABELS } from '../model/plant';
 import { useSim, useSimValue } from '../sim/store';
 import { formatClock } from '../sim/time';
-import { CATALOGUE, scenarioStatus, when } from '../pages/scenarios/catalogue';
+import { CATALOGUE, GROUP_TITLE, isClearable, scenarioStatus, when, type CatalogueGroup } from '../pages/scenarios/catalogue';
+import { DemoCard } from '../pages/scenarios/DemoCard';
+import { DEMOS } from '../pages/scenarios/demos';
 import { ResetDemo } from '../pages/scenarios/ResetDemo';
 import { ScenarioCard } from '../pages/scenarios/ScenarioCard';
-import { ScenarioState } from '../pages/scenarios/ui';
+// Also registers the truck-delay watcher and the after-reset check (module side effect, loaded with the shell).
+import '../pages/scenarios/actions';
 import { useApp } from './store';
 
-/** Quick scenario access from any workspace: running scenarios, the catalogue in compact form, and Reset Demo. */
+const GROUPS: CatalogueGroup[] = ['production', 'quality', 'logistics'];
+
+/**
+ * Quick scenario access from any workspace: what is running now (only scenarios still in effect —
+ * a fault that broke down or was removed is over), the demonstration cards and the catalogue in
+ * compact form, and Reset Demo.
+ */
 export function ScenarioDrawer() {
   const open = useApp((s) => s.scenariosOpen);
   if (!open) return null;
@@ -32,10 +41,10 @@ function DrawerPanel() {
   const d = useSimValue((s) => ({
     now: s.minute,
     running: s.scenarios
-      .map((sc) => ({ sc, st: scenarioStatus(s, sc) }))
-      .filter(({ st }) => st.key === 'active' || st.key === 'resolved'),
+      .map((sc) => ({ sc, st: scenarioStatus(s, sc), clearable: isClearable(s, sc) }))
+      .filter(({ st }) => st.key === 'active'),
   }));
-  const clearable = d.running.filter(({ sc }) => sc.kind !== 'maintenance');
+  const clearable = d.running.filter((r) => r.clearable);
 
   return (
     <>
@@ -77,15 +86,13 @@ function DrawerPanel() {
             <section className="scnd-active" aria-label="Running scenarios">
               <h3>Running now</h3>
               <ul className="scnp-inst">
-                {d.running.map(({ sc, st }) => (
+                {d.running.map(({ sc, clearable: canClear }) => (
                   <li key={sc.id}>
                     <span className="scnp-inst-l" title={`${SCENARIO_KIND_LABELS[sc.kind]} · ${sc.label}`}>
                       {sc.label}
                     </span>
-                    <span className="scnp-inst-m">
-                      {st.key === 'active' ? `since ${when(sc.start, d.now)}` : <ScenarioState st={st} now={d.now} />}
-                    </span>
-                    {sc.kind !== 'maintenance' ? (
+                    <span className="scnp-inst-m">since {when(sc.start, d.now)}</span>
+                    {canClear ? (
                       <button className="btn sm" onClick={() => clear(sc.id)}>
                         Clear
                       </button>
@@ -105,13 +112,17 @@ function DrawerPanel() {
             </section>
           )}
 
-          <h3 className="scnp-group">Core demo scenarios</h3>
-          {CATALOGUE.filter((e) => e.group === 'core').map((e) => (
-            <ScenarioCard key={e.id} entry={e} origin="drawer" compact onNavigate={close} />
+          <h3 className="scnp-group">Demonstrations · four use cases</h3>
+          {DEMOS.map((x) => (
+            <DemoCard key={x.id} id={x.id} compact onNavigate={close} />
           ))}
-          <h3 className="scnp-group">Production rate & logistics</h3>
-          {CATALOGUE.filter((e) => e.group === 'more').map((e) => (
-            <ScenarioCard key={e.id} entry={e} origin="drawer" compact onNavigate={close} />
+          {GROUPS.map((g) => (
+            <section key={g} className="scnd-group" aria-label={GROUP_TITLE[g]}>
+              <h3 className="scnp-group">{GROUP_TITLE[g]}</h3>
+              {CATALOGUE.filter((e) => e.group === g).map((e) => (
+                <ScenarioCard key={e.id} entry={e} origin="drawer" compact onNavigate={close} />
+              ))}
+            </section>
           ))}
 
           <ResetDemo variant="compact" />

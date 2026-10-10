@@ -1,24 +1,26 @@
 /**
- * Command Center — connects the twin to operational decisions: the plant situation at a
- * glance, rule-based insights and the next actions they recommend, what is stopped or
- * degrading, where output is lost, and the copilot docked alongside. Every figure is
- * derived from the one simulation state; nothing here is a language model.
+ * Command Center — connects the twin to operational decisions: the four use cases at a glance
+ * (production at every stage, OEE & loss, defects, vehicles), the open operational events and
+ * the next actions they call for (acknowledged from here on the shared record), what is stopped,
+ * stale or degrading, quality exceptions, rule-based insights, where output is lost, and the
+ * copilot docked alongside. Every figure is derived from the one simulation state; nothing here
+ * is a language model.
  */
 import { useEffect, useState, type ReactNode } from 'react';
 import { Clock, FlaskConical, MessageSquareText, PanelRightClose, PanelRightOpen } from 'lucide-react';
 import { useApp } from '../app/store';
-import { insights, nextActions } from '../intel/insights';
-import { useSim, useSimValue } from '../sim/store';
+import { insights } from '../intel/insights';
+import { useSimValue } from '../sim/store';
 import { formatClock, formatDay, formatDuration, shiftAt } from '../sim/time';
 import { CopilotPanel } from '../ui/copilot/CopilotPanel';
 import { useCopilot } from '../ui/copilot/store';
-import { AlertsTable } from './command/Alerts';
 import { AttentionList } from './command/Attention';
-import { InsightsFeed, NextActions } from './command/Insights';
+import { ActiveEvents, EventActions } from './command/Events';
+import { InsightsFeed } from './command/Insights';
 import { MachineLosses, ReasonLosses } from './command/Losses';
 import { QualityExceptions } from './command/Quality';
 import { ShiftCompare } from './command/ShiftCompare';
-import { Strip } from './command/Strip';
+import { Strip, UseCaseStrip } from './command/Strip';
 import { EventTimeline } from './command/Timeline';
 import './command.css';
 
@@ -46,12 +48,11 @@ const Slot = ({ span, id, children }: { span: 4 | 5 | 6 | 7 | 12; id?: string; c
 
 export function CommandCenterPage() {
   const tariffs = useApp((s) => s.tariffs);
-  const resets = useSim((s) => s.resets);
   const wide = useMediaQuery(DOCK_QUERY);
   const [dockPref, setDockPref] = useState(true);
   const docked = wide && dockPref;
 
-  const intel = useSimValue((s) => ({ feed: insights(s, { tariffs }), actions: nextActions(s, { tariffs }) }), [tariffs]);
+  const feed = useSimValue((s) => insights(s, { tariffs }), [tariffs]);
 
   return (
     <div className={`cc ${docked ? 'docked' : ''}`}>
@@ -61,14 +62,14 @@ export function CommandCenterPage() {
           wide={wide}
           onToggleDock={() => (wide ? setDockPref(!dockPref) : useApp.getState().openCopilot())}
         />
+        <UseCaseStrip />
         <Strip />
         <div className="cc-grid">
-          <Slot span={7}>
-            <InsightsFeed items={intel.feed} />
+          <Slot span={7} id="cc-events">
+            <ActiveEvents />
           </Slot>
           <Slot span={5}>
-            {/* Acknowledgements start fresh after Reset Demo. */}
-            <NextActions key={resets} items={intel.actions} />
+            <EventActions />
           </Slot>
 
           <Slot span={6} id="cc-attention">
@@ -76,6 +77,13 @@ export function CommandCenterPage() {
           </Slot>
           <Slot span={6}>
             <QualityExceptions />
+          </Slot>
+
+          <Slot span={7}>
+            <InsightsFeed items={feed} />
+          </Slot>
+          <Slot span={5}>
+            <EventTimeline />
           </Slot>
 
           <Slot span={4}>
@@ -86,13 +94,6 @@ export function CommandCenterPage() {
           </Slot>
           <Slot span={4}>
             <ShiftCompare />
-          </Slot>
-
-          <Slot span={7} id="cc-alerts">
-            <AlertsTable />
-          </Slot>
-          <Slot span={5}>
-            <EventTimeline />
           </Slot>
         </div>
       </div>

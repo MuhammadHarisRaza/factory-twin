@@ -1,16 +1,17 @@
 /**
  * Pure helpers behind the operational overlays of the 3D twin (status beacons, health,
- * energy and inspection pins, product flow, flow-overlay speeds, the selected vehicle's
- * route). Everything is derived from the one shared simulation state — nothing here keeps
+ * energy, data-stale and inspection pins, conveyor stop / accumulation marks, product flow,
+ * flow-overlay speeds, the selected vehicle's route). Everything is derived from the one
+ * shared simulation state — nothing here keeps
  * its own copy of a machine, quality or energy value — and nothing touches three.js, so
  * the logic is unit-tested without a renderer.
  */
 import type { Vec2, Vec3 } from '../../data/types';
-import { DEFECTS, DEFECT_ORDER, OPS_BY_ID, STAGE_BY_ID } from '../../model/plant';
-import type { MachineState, StageId, Vehicle, VehicleLeg } from '../../model/types';
-import type { SimState } from '../../sim/engine';
+import { CONVEYOR_IDS, DEFECTS, DEFECT_ORDER, INSPECTION_STATIONS, OPS_BY_ID, REASON_BY_CODE, STAGE_BY_ID } from '../../model/plant';
+import type { AlertSeverity, MachineState, OperationalState, StageId, Vehicle, VehicleLeg } from '../../model/types';
+import { findDowntime, type SimState } from '../../sim/engine';
 import { HEALTH_ASSETS, assess } from '../../sim/health';
-import { bottleneck, defectShift, energyIn, qualityIn, type Period } from '../../sim/metrics';
+import { bottleneck, defectShift, energyIn, operationalState, qualityIn, type Period } from '../../sim/metrics';
 
 // ── Polylines ─────────────────────────────────────────────────────────────────
 
@@ -140,17 +141,34 @@ export type BeltDrive = {
   emitPerSec: number;
   /** Minimum distance between consecutive items (m). */
   minGap: number;
+  /**
+   * The receiving end cannot take items (receiver stopped or blocked): items no longer leave the
+   * belt but queue up at its end, `minGap` apart, and accumulate back up the belt.
+   */
+  hold?: boolean;
 };
+
+/** Distance from the belt end at which the first queued item stops while the outlet is held. */
+export const HOLD_END_GAP = 0.35;
 
 export function stepBelt(b: Belt, dt: number, d: BeltDrive) {
   b.speed = approach(b.speed, d.targetSpeed, dt, 0.35);
   if (b.speed < 0.004) b.speed = d.targetSpeed === 0 ? 0 : b.speed;
   const dx = b.speed * dt;
   let w = 0;
-  for (let i = 0; i < b.n; i++) {
-    const p = b.pos[i] + dx;
-    if (p <= d.length) b.pos[w++] = p;
-  }
+  if (d.hold) {
+    // Oldest item first: each one advances up to the item ahead of it (or the held outlet).
+    let limit = d.length - HOLD_END_GAP;
+    for (let i = 0; i < b.n; i++) {
+      const p = Math.max(b.pos[i], Math.min(b.pos[i] + dx, limit));
+      b.pos[w++] = p;
+      limit = p - d.minGap;
+    }
+  } else
+    for (let i = 0; i < b.n; i++) {
+      const p = b.pos[i] + dx;
+      if (p <= d.length) b.pos[w++] = p;
+    }
   b.n = w;
   if (b.speed <= 0.02 || d.emitPerSec <= 0) return;
   b.credit = Math.min(1, b.credit + d.emitPerSec * dt);
@@ -275,15 +293,202 @@ export function qualityStatus(s: SimState): QualityStatus {
 /** `qualityStatus`, computed once per simulated minute however many overlays read it. */
 export const sharedQualityStatus = perVersion(qualityStatus);
 
-export type BottleneckInfo = { stage: StageId; name: string; machines: string[]; shifted: boolean; activeShare: number };
+export type BottleneckInfo = {
+  stage: StageId;
+  name: string;
+  machines: string[];
+  shifted: boolean;
+  /** Not waiting on neighbouring stages (producing or down on its own). */
+  activeShare: number;
+  /** Actually producing at its own pace (active minus its own downtime). */
+  workingShare: number;
+  /** Down on its own. */
+  downShare: number;
+  /** The bottleneck window, e.g. "Last 120 min". */
+  periodLabel: string;
+};
 
 /** The active-period bottleneck (src/sim/metrics.ts `bottleneck`), or null before any production. */
 export function bottleneckInfo(s: SimState): BottleneckInfo | null {
   const b = bottleneck(s);
   const c = b.current;
   if (!c || !(c.activeShare > 0)) return null;
-  return { stage: c.stage, name: c.name, machines: STAGE_BY_ID[c.stage].machines, shifted: b.shifted, activeShare: c.activeShare };
+  return {
+    stage: c.stage,
+    name: c.name,
+    machines: STAGE_BY_ID[c.stage].machines,
+    shifted: b.shifted,
+    activeShare: c.activeShare,
+    workingShare: c.workingShare,
+    downShare: c.downShare,
+    periodLabel: b.period.label,
+  };
 }
+
+/** Tooltip of the 3D bottleneck label: what the stage did over the bottleneck window (finding #3). */
+export function bottleneckTitle(info: BottleneckInfo, targetName: string): string {
+  const pct = (x: number) => `${Math.round(Math.max(0, x) * 100)} %`;
+  const did = [`producing ${pct(info.workingShare)}`];
+  if (info.downShare >= 0.005) did.push(`down ${pct(info.downShare)}`);
+  return `${info.name} limits the line (${info.periodLabel.toLowerCase()}): ${did.join(', ')}, waiting on neighbouring stages ${pct(1 - info.activeShare)}${
+    info.shifted ? ' — the constraint has shifted from the kiln' : ''
+  }. Select ${targetName}.`;
+}
+
+// ── Conveyors, data feeds, quality events ─────────────────────────────────────
+
+/** Machine / conveyor states in which an asset cannot take material at its input. */
+export const HELD: ReadonlySet<MachineState> = new Set<MachineState>(['down', 'planned', 'blocked']);
+
+/** Whether any of the receiving assets cannot take material (used for accumulation on a belt). */
+export const outletHeld = (s: SimState, receivers: readonly string[] | undefined) =>
+  !!receivers && receivers.some((id) => {
+    const st = s.machines[id]?.state;
+    return st != null && HELD.has(st);
+  });
+
+/** How a conveyor's operational state is marked along its run (null = normal, nothing drawn). */
+export type ConveyorMark = 'stopped' | 'blocked' | 'planned';
+export function conveyorMark(op: OperationalState): ConveyorMark | null {
+  if (op === 'stopped' || op === 'fault') return 'stopped';
+  if (op === 'blocked') return 'blocked';
+  if (op === 'planned') return 'planned';
+  return null;
+}
+
+export type ConveyorRun = {
+  id: string;
+  mark: ConveyorMark;
+  op: OperationalState;
+  /** Minute the current stop / accumulation started. */
+  since: number;
+  /** Alarm / reason of the active stop (downtime reason label), null while accumulating. */
+  reason: string | null;
+  /** The stop comes from a demo scenario. */
+  scenario: boolean;
+};
+
+/**
+ * Operational conveyors that need a mark along their run: stopped or faulted (red), blocked —
+ * running but accumulating because the receiving stage cannot take tiles (amber) — or on a planned
+ * stop (grey). A conveyor whose data feed is stale is 'unknown' and gets the stale pin instead.
+ */
+export function conveyorRuns(s: SimState): ConveyorRun[] {
+  const out: ConveyorRun[] = [];
+  for (const id of CONVEYOR_IDS) {
+    const m = s.machines[id];
+    if (!m) continue;
+    const op = operationalState(s, id);
+    const mark = conveyorMark(op);
+    if (!mark) continue;
+    const d = m.activeDowntimeId ? findDowntime(s, m.activeDowntimeId) : undefined;
+    out.push({
+      id,
+      mark,
+      op,
+      since: d?.start ?? m.since,
+      reason: d ? (REASON_BY_CODE[d.reasonCode]?.label ?? d.reasonCode) : null,
+      scenario: d?.source === 'scenario',
+    });
+  }
+  return out;
+}
+
+/** `conveyorRuns`, once per simulated minute. */
+export const sharedConveyorRuns = perVersion(conveyorRuns);
+
+/** Point at half the arc length of a polyline (where a conveyor's tag sits). */
+export function polylineMid(pts: Vec3[]): Vec3 {
+  const pl = polyline(pts);
+  const p = pointAt(pl, pl.length / 2, { x: 0, y: 0, z: 0, yaw: 0 });
+  return [p.x, p.y, p.z];
+}
+
+/** Where a conveyor's tags and pins sit: above the middle of its run. */
+export function conveyorTagAnchor(pts: Vec3[]): Vec3 {
+  const [x, y, z] = polylineMid(pts);
+  return [x, y + 1.3, z];
+}
+
+/**
+ * Closed outline around a polyline (ground-plane offset by `half` on both sides, mitred at the
+ * bends, ends extended by `extend`), at each vertex's height plus `lift`. Used to mark a conveyor
+ * run along its centre-line.
+ */
+export function outlineLoop(pts: Vec3[], half: number, lift = 0, extend = 0.15): Vec3[] {
+  const n = pts.length;
+  if (n < 2) return [];
+  const dir = (i: number) => {
+    const a = pts[i];
+    const b = pts[i + 1];
+    const l = Math.hypot(b[0] - a[0], b[2] - a[2]) || 1;
+    return [(b[0] - a[0]) / l, (b[2] - a[2]) / l] as const;
+  };
+  const left: Vec3[] = [];
+  const right: Vec3[] = [];
+  for (let i = 0; i < n; i++) {
+    const d0 = dir(Math.max(0, i - 1));
+    const d1 = dir(Math.min(n - 2, i));
+    // Left normals of the incoming and outgoing segments; mitre along their bisector.
+    let mx = -d0[1] - d1[1];
+    let mz = d0[0] + d1[0];
+    const ml = Math.hypot(mx, mz) || 1;
+    mx /= ml;
+    mz /= ml;
+    const k = half / Math.max(0.35, mx * -d1[1] + mz * d1[0]);
+    let [x, y, z] = pts[i];
+    if (i === 0) {
+      x -= d1[0] * extend;
+      z -= d1[1] * extend;
+    } else if (i === n - 1) {
+      x += d0[0] * extend;
+      z += d0[1] * extend;
+    }
+    left.push([x + mx * k, y + lift, z + mz * k]);
+    right.push([x - mx * k, y + lift, z - mz * k]);
+  }
+  return [...left, ...right.reverse(), left[0]];
+}
+
+export type StaleFeed = { id: string; since: number; lastState: MachineState | null };
+
+/** Assets whose (simulated) data feed is stale: their operational state is 'unknown'. */
+export function staleFeeds(s: SimState): StaleFeed[] {
+  const out: StaleFeed[] = [];
+  for (const [id, f] of Object.entries(s.feeds)) if (f.status === 'stale') out.push({ id, since: f.since, lastState: f.lastState ?? null });
+  return out;
+}
+
+/** `staleFeeds`, once per simulated minute. */
+export const sharedStaleFeeds = perVersion(staleFeeds);
+
+export type StationEvents = { count: number; level: 'amber' | 'red' | null; events: { id: string; title: string; severity: AlertSeverity }[] };
+
+const STATION_OF_EQUIPMENT = Object.fromEntries(INSPECTION_STATIONS.map((st) => [st.equipmentId, st.id]));
+
+/**
+ * Active quality events (condition still present, not resolved) per inspection station, plus the
+ * line total under 'line'. A critical event marks the station red, any other amber.
+ */
+export function qualityEventsByStation(s: SimState): Record<string, StationEvents> {
+  const out: Record<string, StationEvents> = {};
+  const get = (k: string) => (out[k] ??= { count: 0, level: null, events: [] });
+  for (const e of s.events) {
+    if (e.category !== 'quality' || e.end != null || e.status === 'resolved') continue;
+    const station = e.asset.stationId ?? (e.asset.equipmentId ? STATION_OF_EQUIPMENT[e.asset.equipmentId] : undefined);
+    for (const k of station ? [station, 'line'] : ['line']) {
+      const g = get(k);
+      g.count++;
+      g.events.push({ id: e.id, title: e.title, severity: e.severity });
+      if (e.severity === 'critical') g.level = 'red';
+      else if (g.level == null) g.level = 'amber';
+    }
+  }
+  return out;
+}
+
+/** `qualityEventsByStation`, once per simulated minute. */
+export const sharedQualityEvents = perVersion(qualityEventsByStation);
 
 // ── Selected vehicle: remaining planned route ─────────────────────────────────
 

@@ -3,6 +3,7 @@ import { RotateCcw } from 'lucide-react';
 import { BASE_REJECT_RATE, BUFFERS, CHANGEOVER_EVERY_MIN, LINE, M2_PER_TILE, OPS_BY_ID, STAGES, STAGE_BY_ID, TARGET } from '../../model/plant';
 import type { BufferDef, ProcessStage, ScenarioActivation } from '../../model/types';
 import { SPEEDS, useSim, useSimValue } from '../../sim/store';
+import { resetDemo } from '../scenarios/actions';
 import { DEFAULT_START, MIN_PER_DAY, formatDateTime, formatDuration } from '../../sim/time';
 import { DataTable, type Column } from '../../ui/kit/DataTable';
 import { fmt1, fmtInt, fmtPct } from '../../ui/kit/format';
@@ -19,7 +20,7 @@ export function SimulationTab() {
   const seed = useSim((s) => s.seed);
   const speed = useSim((s) => s.speed);
   const running = useSim((s) => s.running);
-  const reset = useSim((s) => s.reset);
+  const resetting = useSim((s) => s.resetting);
   const [confirming, setConfirming] = useState(false);
 
   const { minute, buffers, scenarios } = useSimValue((s) => ({
@@ -109,18 +110,21 @@ export function SimulationTab() {
             <dd>{STAGE_BY_ID[LINE.designConstraint].name} (design)</dd>
           </dl>
           <div className="a-reset">
-            {!confirming ? (
+            {resetting ? (
+              <p role="status">Rebuilding the seeded plant…</p>
+            ) : !confirming ? (
               <button className="btn" onClick={() => setConfirming(true)}>
                 <RotateCcw size={13} /> Reset to baseline
               </button>
             ) : (
               <>
-                <p>Rebuild the plant from seed {seed}? All scenarios and their effects are discarded.</p>
+                <p>Rebuild the plant from seed {seed}? All scenarios, their effects and event actions are discarded, and the twin returns to the overview — the same as Reset Demo.</p>
                 <div className="a-reset-row">
                   <button
                     className="btn danger"
                     onClick={() => {
-                      reset();
+                      // Same as Reset Demo: simulation, twin selection / camera and scenario parameters (finding #28).
+                      resetDemo();
                       setConfirming(false);
                     }}
                   >

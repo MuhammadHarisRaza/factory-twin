@@ -15,6 +15,7 @@ import { Conveyors } from './Conveyors';
 import { FlowOverlay } from './FlowOverlay';
 import { SimVehicles, selectedVehiclePose } from './SimVehicles';
 import { OperationalStatus } from './status';
+import { EventFocus } from './events/EventFocus';
 import { Utilities } from './zones/Utilities';
 import { RawMaterials } from './zones/RawMaterials';
 import { Preparation } from './zones/Preparation';
@@ -25,8 +26,11 @@ import { Kiln } from './zones/Kiln';
 import { Packaging, Sorting } from './zones/SortingPackaging';
 import { Warehouse } from './zones/Warehouse';
 import { Maintenance } from './zones/Maintenance';
+import { CctvRenderer } from './cctv/CctvRenderer';
 
 const SITE_CENTER = new Vector3((SITE.x[0] + SITE.x[1]) / 2, 0, (SITE.z[0] + SITE.z[1]) / 2);
+/** Orbit damping, applied by one controls update per frame: 0.15 keeps the feel of the former 0.08 applied twice (finding #40). */
+const DAMPING = 0.15;
 
 type Flight = {
   fromPos: Vector3;
@@ -136,6 +140,9 @@ function CameraRig() {
     return () => controls.removeEventListener('start', cancel);
   }, [controls]);
 
+  // Runs before drei's OrbitControls (priority -1), whose single update() per frame then applies the
+  // flight / follow / clamped target with damping — calling update() here as well doubled the
+  // damping (finding #40). A negative priority keeps R3F's automatic rendering.
   useFrame((state, dt) => {
     if (!controls) return;
     const f = flight.current;
@@ -166,12 +173,11 @@ function CameraRig() {
     target.z = MathUtils.clamp(target.z, SITE.z[0] - 20, SITE.z[1] + 20);
     target.y = MathUtils.clamp(target.y, 0, 30);
     if (state.camera.position.y < 1.6) state.camera.position.y = 1.6;
-    controls.update();
     minimapCamera.x = state.camera.position.x;
     minimapCamera.z = state.camera.position.z;
     minimapCamera.tx = target.x;
     minimapCamera.tz = target.z;
-  });
+  }, -2);
 
   return null;
 }
@@ -401,13 +407,14 @@ export default function Scene({ active = true }: { active?: boolean }) {
         <SimVehicles />
         <FlowOverlay />
         <OperationalStatus />
+        <EventFocus />
         <ZoneLabels />
       </Suspense>
       <OrbitControls
         makeDefault
         target={start.target}
         enableDamping
-        dampingFactor={0.08}
+        dampingFactor={DAMPING}
         maxPolarAngle={1.47}
         minDistance={6}
         maxDistance={480}
@@ -417,6 +424,7 @@ export default function Scene({ active = true }: { active?: boolean }) {
       <CameraRig />
       <ReadySignal />
       <DevHandles />
+      <CctvRenderer />
       {highQuality && <Effects />}
     </Canvas>
   );

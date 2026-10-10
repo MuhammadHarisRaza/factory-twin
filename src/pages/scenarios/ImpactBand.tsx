@@ -1,12 +1,10 @@
-import { useEffect } from 'react';
 import { Equal, FlaskConical, Loader2, TrendingDown, TrendingUp } from 'lucide-react';
 import { useApp } from '../../app/store';
 import { impactVsBaseline } from '../../sim/metrics';
 import { useSim, useSimValue } from '../../sim/store';
 import { fmt1, fmtInt, fmtPct } from '../../ui/kit/format';
 import { StatusBadge } from '../../ui/kit/Status';
-import { impactWindow, judge, scenarioStatus, signed, when, type Direction, type WindowMode } from './catalogue';
-
+import { faultOutcomes, impactWindow, judge, scenarioStatus, signed, when, type Direction, type WindowMode } from './catalogue';
 
 const VERDICT: Record<Direction, { label: string; tone: 'good' | 'warning' | 'neutral' }> = {
   better: { label: 'Better than baseline', tone: 'good' },
@@ -20,30 +18,31 @@ function Verdict({ delta, dir }: { delta: number | null; dir: Direction | null }
   return <StatusBadge tone={VERDICT[dir].tone} icon={icon} label={VERDICT[dir].label} />;
 }
 
+const plural = (n: number, one: string, many = `${one}s`) => `${n} ${n === 1 ? one : many}`;
+
 /**
  * Answer-first band: what the active scenarios have changed compared with the baseline —
- * the same deterministic seed simulated without scenarios.
+ * the same deterministic seed simulated without scenarios. The baseline is built in background
+ * slices after start-up and after every reset (src/sim/store.ts); the band waits for it rather than
+ * forcing a synchronous build, so the UI never freezes.
  */
 export function ImpactBand({ mode }: { mode: WindowMode }) {
   const baseline = useSim((s) => s.baseline);
+  const resetting = useSim((s) => s.resetting);
   const tariffs = useApp((s) => s.tariffs);
-
-  // The baseline is built in the background after start-up / reset; ask for it now.
-  useEffect(() => {
-    if (baseline) return;
-    const t = setTimeout(() => useSim.getState().ensureBaseline(), 60);
-    return () => clearTimeout(t);
-  }, [baseline]);
 
   const d = useSimValue(
     (s) => {
       const w = impactWindow(s, mode);
       const keys = s.scenarios.map((sc) => scenarioStatus(s, sc).key);
+      // A fault that ended in a breakdown is not a resolved fault (finding #16).
+      const faults = faultOutcomes(s);
       return {
         now: s.minute,
         w,
         active: keys.filter((k) => k === 'active').length,
-        resolved: keys.filter((k) => k === 'resolved').length,
+        removed: faults.removed,
+        brokeDown: faults.brokeDown,
         total: s.scenarios.length,
         impact: baseline ? impactVsBaseline(s, baseline, w.period, tariffs) : null,
       };
@@ -52,13 +51,22 @@ export function ImpactBand({ mode }: { mode: WindowMode }) {
   );
   const { impact: im, w } = d;
 
-  const headline = !im ? (
+  const headline = resetting ? (
+    <span className="scnp-preparing">
+      <Loader2 size={15} className="spin" aria-hidden />
+      Resetting the demo…
+    </span>
+  ) : !im ? (
     <span className="scnp-preparing">
       <Loader2 size={15} className="spin" aria-hidden />
       Preparing baseline…
     </span>
-  ) : d.active || d.resolved ? (
-    [d.active ? `${d.active} scenario${d.active === 1 ? '' : 's'} active` : 'No scenario active', d.resolved ? `${d.resolved} fault${d.resolved === 1 ? '' : 's'} resolved` : '']
+  ) : d.active || d.removed || d.brokeDown ? (
+    [
+      d.active ? `${plural(d.active, 'scenario')} active` : 'No scenario active',
+      d.removed ? `${plural(d.removed, 'fault')} removed by maintenance` : '',
+      d.brokeDown ? `${plural(d.brokeDown, 'fault')} broke down` : '',
+    ]
       .filter(Boolean)
       .join(' · ')
   ) : d.total ? (

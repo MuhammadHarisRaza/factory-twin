@@ -112,9 +112,7 @@ export function Minimap() {
                 selectZone(zone.id);
               }}
             >
-              <title>
-                {zone.id} — {zone.name}
-              </title>
+              <title>{`${zone.id} — ${zone.name}`}</title>
             </rect>
           )),
         )}

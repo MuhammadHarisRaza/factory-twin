@@ -1,30 +1,43 @@
 /**
- * Operations copilot conversation: question bubbles, answer blocks (paragraphs, the facts
- * used, links to inspect them, follow-up questions), suggested questions and the input.
- * Answers come from the rule-based copilot (src/intel/copilot.ts) — no language model.
+ * Copilot conversation: question bubbles and answer blocks split into what the data shows
+ * (Observed), what is inferred from it (Inferred, with a confidence), what is estimated (Estimate,
+ * with its assumptions) and how it was computed (How) — plus the facts used, links to inspect them
+ * and follow-up questions. One conversation store backs the Factory Copilot page, the Command Center
+ * dock and the global drawer. Answers come from the rule-based copilot (src/intel/copilot.ts) —
+ * no language model.
  */
 import { useEffect, useLayoutEffect, useRef, useState, type ReactNode, type Ref } from 'react';
-import { ChevronDown, ChevronRight, Eraser, MessageSquareText, SendHorizontal, X } from 'lucide-react';
-import { SUGGESTED_QUESTIONS, type CopilotAnswer } from '../../intel/copilot';
+import { ChevronDown, ChevronRight, Crosshair, Eraser, MessageSquareText, SendHorizontal, X } from 'lucide-react';
+import { useApp } from '../../app/store';
+import { EVENT_QUESTIONS, QUESTION_GROUPS, type CopilotAnswer, type CopilotSection } from '../../intel/copilot';
+import { eventById } from '../../sim/events';
+import { useSimValue } from '../../sim/store';
 import { formatClock, formatDay } from '../../sim/time';
+import { SeverityBadge } from '../kit/Status';
 import { LinkButton } from './links';
-import { useCopilot, type CopilotTurn } from './store';
+import { SECTION_LABEL, groupSections, lineBlocks, type SectionKind } from './sections';
+import { setCopilotContext, useCopilot, type CopilotTurn } from './store';
 import './copilot.css';
 
-export const COPILOT_LABEL = 'Rule-based on the current demo state — no language model connected';
+export const COPILOT_LABEL = 'Rule-based on the current demo state — no language model';
+
+type Variant = 'dock' | 'drawer' | 'page';
 
 export function CopilotPanel({
   variant,
   onClose,
   onNavigate,
   autoFocus = false,
+  suggestions = true,
 }: {
-  variant: 'dock' | 'drawer';
+  variant: Variant;
   /** Shows a close button (drawer). */
   onClose?: () => void;
   /** Called after a link took the user to another view. */
   onNavigate?: () => void;
   autoFocus?: boolean;
+  /** Show suggested questions inside the panel (the page shows them beside it when there is room). */
+  suggestions?: boolean;
 }) {
   const turns = useCopilot((s) => s.turns);
   const ask = useCopilot((s) => s.ask);
@@ -49,9 +62,9 @@ export function CopilotPanel({
     if (autoFocus) inputRef.current?.focus({ preventScroll: true });
   }, [autoFocus]);
 
-  // Focus requests routed to the docked panel (header Copilot button on this page).
+  // Focus requests routed to an embedded panel (header Copilot button while it is on screen).
   useEffect(() => {
-    if (variant !== 'dock' || focusTick === seenTick.current) return;
+    if (variant === 'drawer' || focusTick === seenTick.current) return;
     seenTick.current = focusTick;
     inputRef.current?.focus({ preventScroll: true });
   }, [focusTick, variant]);
@@ -68,7 +81,7 @@ export function CopilotPanel({
       <header className="cp-h">
         <MessageSquareText size={16} className="cp-h-icon" aria-hidden />
         <div className="cp-titles">
-          <h2>Copilot</h2>
+          <h2>{variant === 'page' ? 'Conversation' : 'Copilot'}</h2>
           <p>{COPILOT_LABEL}</p>
         </div>
         <div className="spacer" />
@@ -79,7 +92,7 @@ export function CopilotPanel({
           </button>
         )}
         {onClose && (
-          <button type="button" className="btn ghost icon" onClick={onClose} title="Close (Esc)">
+          <button type="button" className="btn ghost icon" onClick={onClose} title="Close (Esc)" aria-label="Close the copilot">
             <X size={16} />
           </button>
         )}
@@ -87,26 +100,23 @@ export function CopilotPanel({
 
       <div className="cp-log" ref={logRef} aria-live="polite">
         {turns.length === 0 ? (
-          <Intro onAsk={submit} />
+          <Intro onAsk={submit} grouped={suggestions} variant={variant} />
         ) : (
-          turns.map((t, i) => <Turn key={t.id} turn={t} onAsk={submit} onNavigate={onNavigate} ref={i === turns.length - 1 ? lastRef : undefined} />)
+          turns.map((t, i) => <Turn key={t.id} turn={t} onAsk={submit} onNavigate={onNavigate} variant={variant} ref={i === turns.length - 1 ? lastRef : undefined} />)
         )}
       </div>
 
       <footer className="cp-f">
-        {turns.length > 0 && (
+        <ContextBar onAsk={submit} />
+        {suggestions && turns.length > 0 && (
           <>
             <button type="button" className="cp-sugg-toggle" aria-expanded={suggestOpen} onClick={() => setSuggestOpen(!suggestOpen)}>
               {suggestOpen ? <ChevronDown size={13} aria-hidden /> : <ChevronRight size={13} aria-hidden />}
               Suggested questions
             </button>
             {suggestOpen && (
-              <div className="cp-chips">
-                {SUGGESTED_QUESTIONS.map((q) => (
-                  <Chip key={q} onClick={() => submit(q)}>
-                    {q}
-                  </Chip>
-                ))}
+              <div className="cp-sugg">
+                <QuestionGroups onAsk={submit} />
               </div>
             )}
           </>
@@ -123,7 +133,7 @@ export function CopilotPanel({
             className="input"
             value={draft}
             onChange={(e) => setDraft(e.target.value)}
-            placeholder="Ask about output, downtime, quality, energy…"
+            placeholder="Ask about output, OEE, losses, defects, trucks or an event id…"
             aria-label="Question for the copilot"
             autoComplete="off"
           />
@@ -137,24 +147,30 @@ export function CopilotPanel({
   );
 }
 
-function Chip({ children, onClick }: { children: ReactNode; onClick: () => void }) {
+/** The event the conversation is about, with its questions; questions typed now are asked in this context. */
+function ContextBar({ onAsk }: { onAsk: (q: string) => void }) {
+  const id = useApp((s) => s.copilotEventId);
+  const ev = useSimValue((s) => {
+    const e = id ? eventById(s, id) : undefined;
+    return e ? { id: e.id, title: e.title, severity: e.severity, active: e.end == null } : null;
+  }, [id]);
+  if (!ev) return null;
   return (
-    <button type="button" className="cp-chip" onClick={onClick}>
-      {children}
-    </button>
-  );
-}
-
-function Intro({ onAsk }: { onAsk: (q: string) => void }) {
-  return (
-    <div className="cp-intro">
-      <p>
-        Ask about the simulated plant — output against target, the bottleneck, downtime, the kiln, defects, machine health, energy, logistics or a specific
-        machine. Each answer is assembled from the same figures as the dashboards, with the facts it used and links to inspect them.
-      </p>
-      <div className="cp-intro-h">Suggested questions</div>
-      <div className="cp-chips cp-chips-list">
-        {SUGGESTED_QUESTIONS.map((q) => (
+    <div className="cp-ctx" role="group" aria-label={`Event context ${ev.id}`}>
+      <div className="cp-ctx-h">
+        <Crosshair size={13} className="cp-ctx-icon" aria-hidden />
+        <span className="cp-ctx-l">Asking about</span>
+        <b className="num">{ev.id}</b>
+        <span className="cp-ctx-t" title={ev.title}>
+          {ev.title}
+        </span>
+        <SeverityBadge severity={ev.severity} />
+        <button type="button" className="btn ghost sm icon" onClick={() => setCopilotContext(null)} title="Clear the event context — ask plant-wide" aria-label="Clear the event context">
+          <X size={13} />
+        </button>
+      </div>
+      <div className="cp-chips">
+        {EVENT_QUESTIONS.map((q) => (
           <Chip key={q} onClick={() => onAsk(q)}>
             {q}
           </Chip>
@@ -164,8 +180,73 @@ function Intro({ onAsk }: { onAsk: (q: string) => void }) {
   );
 }
 
-function Turn({ turn, onAsk, onNavigate, ref }: { turn: CopilotTurn; onAsk: (q: string) => void; onNavigate?: () => void; ref?: Ref<HTMLDivElement> }) {
+function Chip({ children, onClick, title }: { children: ReactNode; onClick: () => void; title?: string }) {
+  return (
+    <button type="button" className="cp-chip" onClick={onClick} title={title}>
+      {children}
+    </button>
+  );
+}
+
+/** Suggested questions grouped by the use case they demonstrate. */
+export function QuestionGroups({ onAsk, layout = 'list' }: { onAsk: (q: string) => void; layout?: 'list' | 'grid' }) {
+  return (
+    <div className={`cp-groups cp-groups-${layout}`}>
+      {QUESTION_GROUPS.map((g) => (
+        <div key={g.id} className="cp-group">
+          <div className="cp-group-h">{g.label}</div>
+          <div className="cp-chips cp-chips-list">
+            {g.questions.map((q) => (
+              <Chip key={q} onClick={() => onAsk(q)}>
+                {q}
+              </Chip>
+            ))}
+          </div>
+        </div>
+      ))}
+    </div>
+  );
+}
+
+function Intro({ onAsk, grouped, variant }: { onAsk: (q: string) => void; grouped: boolean; variant: Variant }) {
+  return (
+    <div className="cp-intro">
+      <p>
+        Ask about the simulated plant — output against target, conveyor stops, downtime losses, OEE and theoretical capacity, the cost of losses, defects,
+        truck turnaround, what to investigate first, or one event by its id. Each answer separates what the data shows from what is inferred and what is
+        estimated, with the facts it used and links to inspect them.
+      </p>
+      {grouped ? (
+        <>
+          <div className="cp-intro-h">Suggested questions</div>
+          <QuestionGroups onAsk={onAsk} layout={variant === 'page' ? 'grid' : 'list'} />
+        </>
+      ) : (
+        <p className="cp-intro-hint">Pick a suggested question, investigate an active event, or type your own question below.</p>
+      )}
+    </div>
+  );
+}
+
+function Turn({
+  turn,
+  onAsk,
+  onNavigate,
+  variant,
+  ref,
+}: {
+  turn: CopilotTurn;
+  onAsk: (q: string) => void;
+  onNavigate?: () => void;
+  variant: Variant;
+  ref?: Ref<HTMLDivElement>;
+}) {
   const a = turn.answer;
+  // "about EV-…" only when the answer really is about the event (plant-wide questions stay plant-wide in a context).
+  const about = a.intent.startsWith('event-') || (turn.contextEventId && a.eventId === turn.contextEventId) ? a.eventId : null;
+  const current = useApp((s) => s.copilotEventId);
+  // A plant-wide answer that points to one event offers to make it the context (unless it already is).
+  const pointsTo = !a.intent.startsWith('event-') && a.eventId && a.eventId !== turn.contextEventId && a.eventId !== current ? a.eventId : null;
   return (
     <div className="cp-turn" ref={ref}>
       <div className="cp-q">{turn.question}</div>
@@ -173,14 +254,21 @@ function Turn({ turn, onAsk, onNavigate, ref }: { turn: CopilotTurn; onAsk: (q: 
         <div className="cp-meta" title={`Computed from the demo state at ${formatDay(turn.minute)} ${formatClock(turn.minute)} plant time`}>
           Answer at {formatClock(turn.minute)} plant time
           {a.periodLabel && a.periodLabel !== '—' && <> · {a.periodLabel}</>}
+          {about && <span className="tag cp-about">about {about}</span>}
         </div>
-        <AnswerText lines={a.text} />
-        {a.facts.length > 0 && <Facts facts={a.facts} />}
-        {a.links.length > 0 && (
+        {a.sections?.length ? <Sections sections={a.sections} /> : <Paragraphs lines={a.text} />}
+        {a.facts.length > 0 && <Facts facts={a.facts} open={variant === 'page'} />}
+        {(a.links.length > 0 || pointsTo) && (
           <div className="cp-links">
             {a.links.map((l, i) => (
               <LinkButton key={`${l.kind}:${l.id}:${i}`} link={l} onFollow={onNavigate} />
             ))}
+            {pointsTo && (
+              <button type="button" className="btn sm" onClick={() => setCopilotContext(pointsTo)} title={`Ask the next questions about ${pointsTo}`}>
+                <Crosshair size={12} aria-hidden />
+                Investigate {pointsTo}
+              </button>
+            )}
           </div>
         )}
         {a.followUps.length > 0 && (
@@ -198,39 +286,69 @@ function Turn({ turn, onAsk, onNavigate, ref }: { turn: CopilotTurn; onAsk: (q: 
   );
 }
 
-/** Paragraphs; consecutive "1. …" lines become an ordered list. */
-function AnswerText({ lines }: { lines: CopilotAnswer['text'] }) {
-  const blocks: ({ kind: 'p'; text: string } | { kind: 'ol'; items: string[] })[] = [];
-  for (const line of lines) {
-    const m = /^\d+\.\s+(.*)$/.exec(line);
-    const prev = blocks.at(-1);
-    if (m) {
-      if (prev?.kind === 'ol') prev.items.push(m[1]);
-      else blocks.push({ kind: 'ol', items: [m[1]] });
-    } else blocks.push({ kind: 'p', text: line });
-  }
+function Sections({ sections }: { sections: CopilotSection[] }) {
   return (
-    <div className="cp-text">
-      {blocks.map((b, i) =>
-        b.kind === 'p' ? (
-          <p key={i}>{b.text}</p>
-        ) : (
+    <div className="cp-secs">
+      {groupSections(sections).map((g, i) => (
+        <div key={`${g.kind}:${i}`} className={`cp-sec cp-sec-${g.kind}`}>
+          <div className="cp-sec-h" title={SECTION_LABEL[g.kind].hint}>
+            {SECTION_LABEL[g.kind].label}
+            {SECTION_LABEL[g.kind].note && <small>{SECTION_LABEL[g.kind].note}</small>}
+          </div>
+          <div className="cp-sec-b">
+            <Lines lines={g.lines} kind={g.kind} />
+          </div>
+        </div>
+      ))}
+    </div>
+  );
+}
+
+/** Lines of one section; consecutive "1. …" lines become an ordered list, confidences become tags. */
+function Lines({ lines, kind }: { lines: string[]; kind: SectionKind }) {
+  return (
+    <>
+      {lineBlocks(lines, kind).map((b, i) =>
+        b.kind === 'ol' ? (
           <ol key={i}>
             {b.items.map((x, j) => (
               <li key={j}>{x}</li>
             ))}
           </ol>
+        ) : b.confidence ? (
+          <p key={i}>
+            <span
+              className={`cp-conf cp-conf-${b.confidence.toLowerCase()}`}
+              title={b.confidence === 'Confirmed' ? 'Directly observed or a scenario input' : 'Inferred from correlated evidence — a hypothesis to check'}
+            >
+              {b.confidence}
+            </span>
+            {b.text}
+          </p>
+        ) : (
+          <p key={i} className={b.assumptions ? 'cp-assume' : undefined}>
+            {b.text}
+          </p>
         ),
       )}
+    </>
+  );
+}
+
+/** Plain paragraphs (answers without sections). */
+function Paragraphs({ lines }: { lines: string[] }) {
+  return (
+    <div className="cp-text">
+      <Lines lines={lines} kind="observed" />
     </div>
   );
 }
 
 /** Label → value rows; long values (sentences) drop below their label. */
-function Facts({ facts }: { facts: CopilotAnswer['facts'] }) {
+function Facts({ facts, open }: { facts: CopilotAnswer['facts']; open: boolean }) {
   return (
-    <div className="cp-facts">
-      <div className="cp-facts-h">Facts used</div>
+    <details className="cp-facts" open={open}>
+      <summary>Facts used ({facts.length})</summary>
       <dl>
         {facts.map((f, i) => (
           <div key={`${f.label}:${i}`} className={`cp-fact ${f.value.length > 28 ? 'long' : ''}`}>
@@ -239,6 +357,7 @@ function Facts({ facts }: { facts: CopilotAnswer['facts'] }) {
           </div>
         ))}
       </dl>
-    </div>
+    </details>
   );
 }
+

@@ -348,6 +348,21 @@ export type EventFilter = {
 
 export const isFlow = (c: DowntimeCategory) => c === 'Starved' || c === 'Blocked';
 
+/**
+ * The filter with starved / blocked events switched on or off. Switching them off also drops a
+ * starved / blocked category or reason, so no hidden filter is left behind (one rule for the
+ * Pareto scope control and the event-table checkbox).
+ */
+export function withIncludeFlow(f: EventFilter, includeFlow: boolean): EventFilter {
+  if (includeFlow) return { ...f, includeFlow };
+  return {
+    ...f,
+    includeFlow,
+    category: f.category !== 'all' && isFlow(f.category) ? 'all' : f.category,
+    reason: f.reason === 'STARVED' || f.reason === 'BLOCKED' ? null : f.reason,
+  };
+}
+
 /** Downtime events in the period matching the filter: active first, then newest first. */
 export function filterEvents(s: SimState, p: Period, f: EventFilter): DowntimeEvent[] {
   return downtimeIn(s, p)

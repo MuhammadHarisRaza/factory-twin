@@ -4,9 +4,10 @@ import { useTwin } from '../store';
 import { VIEWS, VIEW_ORDER, ZONES } from '../data/layout';
 import { EQUIPMENT } from '../data/equipment';
 import { useSimValue } from '../sim/store';
-import type { MachineState } from '../model/types';
-import { MACHINE_STATE } from './kit/Status';
+import type { OperationalState } from '../model/types';
+import { OPERATIONAL_STATE } from './kit/Status';
 import { QUICK_VIEWS } from './twin/quickViews';
+import { assetStatus } from './twin/derive';
 
 /** Keyboard shortcut shown next to the n-th view: 1–9, then 0. */
 export const viewShortcut = (index: number) => (index + 1) % 10;
@@ -15,8 +16,8 @@ export const viewShortcut = (index: number) => (index + 1) % 10;
 const AUTO_FOLD_BELOW = 1500;
 let autoFolded = false;
 
-function StateIcon({ state }: { state: MachineState }) {
-  const s = MACHINE_STATE[state];
+function StateIcon({ state }: { state: OperationalState }) {
+  const s = OPERATIONAL_STATE[state];
   const Icon = s.icon;
   return (
     <span className={`status ${s.tone}`} title={s.label} aria-label={s.label}>
@@ -34,7 +35,8 @@ export function ZonePanel() {
   const selectZone = useTwin((s) => s.selectZone);
   const select = useTwin((s) => s.select);
   const preset = useTwin((s) => s.preset);
-  const states = useSimValue((s) => Object.fromEntries(Object.values(s.machines).map((m) => [m.id, m.state])) as Record<string, MachineState>);
+  // Operational state as the product shows it (planned stops are not faults; a stale feed reads unknown).
+  const states = useSimValue((s) => Object.fromEntries(Object.keys(s.machines).map((id) => [id, assetStatus(s, id).op])) as Record<string, OperationalState>);
 
   useLayoutEffect(() => {
     if (autoFolded) return;
@@ -78,7 +80,7 @@ export function ZonePanel() {
         {ZONES.map((zone) => {
           const isOpen = activeZone === zone.id;
           const items = EQUIPMENT.filter((e) => e.zone === zone.id);
-          const down = items.filter((e) => states[e.id] === 'down').length;
+          const down = items.filter((e) => states[e.id] === 'stopped' || states[e.id] === 'fault').length;
           return (
             <div key={zone.id} className={`zone-row ${isOpen ? 'on' : ''}`}>
               {/* Clicking the open zone again closes it, unless a machine in it is selected. */}
@@ -91,7 +93,7 @@ export function ZonePanel() {
                   <small>{zone.stage}</small>
                 </span>
                 {down > 0 && (
-                  <span className="zone-alert" title={`${down} machine${down > 1 ? 's' : ''} down`} aria-label={`${down} down`}>
+                  <span className="zone-alert" title={`${down} asset${down > 1 ? 's' : ''} stopped or in fault`} aria-label={`${down} stopped`}>
                     <OctagonX size={13} />
                   </span>
                 )}

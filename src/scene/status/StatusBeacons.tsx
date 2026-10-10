@@ -1,6 +1,7 @@
 /**
  * Stack-light beacon above every process machine, coloured by the product-wide operational
- * scheme (green running · amber reduced/starved/blocked · red down · grey planned stop).
+ * scheme from `operationalState` (green running · amber below rate / starved / blocked · red
+ * stopped or fault · grey planned stop, or unknown while the asset's data feed is stale).
  * Two instanced meshes for all machines; colours, the slow red pulse and the distance
  * scaling (so beacons stay legible in overview shots) are written in the render loop.
  */
@@ -8,9 +9,11 @@ import { useLayoutEffect, useMemo, useRef } from 'react';
 import { useFrame } from '@react-three/fiber';
 import { Color, InstancedMesh, MathUtils, MeshBasicMaterial, Object3D } from 'three';
 import { PROCESS_MACHINES } from '../../model/plant';
+import type { SimState } from '../../sim/engine';
+import { operationalState } from '../../sim/metrics';
 import { useSim } from '../../sim/store';
 import { useTwin } from '../../store';
-import { OP_COLOR_HEX, machineColor, type OpColor } from '../../ui/kit/Status';
+import { OPERATIONAL_STATE, OP_COLOR_HEX, toneToColor, type OpColor } from '../../ui/kit/Status';
 import { MAT, UNIT_CYLINDER_LOW } from '../materials';
 import { topCenter, useBoundsCount } from './shared';
 
@@ -40,6 +43,8 @@ export function StatusBeacons() {
   const lamps = useRef<InstancedMesh>(null);
   const dummy = useMemo(() => new Object3D(), []);
   const color = useMemo(() => new Color(), []);
+  // Lamp colours change at most once per simulated minute: derive them once per state version.
+  const ops = useRef<{ sim: SimState | null; version: number; colors: OpColor[] }>({ sim: null, version: -1, colors: [] });
 
   useLayoutEffect(() => {
     // instanceColor is created on first use; set every lamp once so the buffer exists.
@@ -54,8 +59,14 @@ export function StatusBeacons() {
     const l = lamps.current;
     if (!d || !l || !visible) return;
     const sim = useSim.getState().sim;
+    const cache = ops.current;
+    if (cache.sim !== sim || cache.version !== sim.version || cache.colors.length !== anchors.length) {
+      cache.sim = sim;
+      cache.version = sim.version;
+      cache.colors = anchors.map(({ id }) => (sim.machines[id] ? toneToColor(OPERATIONAL_STATE[operationalState(sim, id)].tone) : 'grey'));
+    }
     const pulse = 0.62 + 0.38 * (0.5 + 0.5 * Math.sin(clock.elapsedTime * 2.4));
-    anchors.forEach(({ id, at }, i) => {
+    anchors.forEach(({ at }, i) => {
       const p = at!;
       // Constant-ish screen size: full scale up close, up to 4.5× in overview shots.
       const k = MathUtils.clamp(camera.position.distanceTo(p) / 55, 1, 4.5);
@@ -74,7 +85,7 @@ export function StatusBeacons() {
       dummy.updateMatrix();
       l.setMatrixAt(i, dummy.matrix);
 
-      const op = machineColor(sim.machines[id]?.state);
+      const op = cache.colors[i];
       color.copy(LAMP_COLOR[op]);
       if (op === 'red') color.multiplyScalar(pulse);
       l.setColorAt(i, color);

@@ -5,6 +5,7 @@ import type { Vec2, Vec3 } from '../../data/types';
 import { BlobShadow, ControlCabinet, Cyl, Instances, Railing, ROT_Z90, type Instance } from '../primitives';
 import { MAT } from '../materials';
 import { Selectable } from '../Selectable';
+import { machineAnimationRate } from '../status/shared';
 
 /** X positions of the three hydraulic presses. */
 export const PRESS_X = [-18, -11, -4];
@@ -241,12 +242,25 @@ const CROWN_RAIL: Vec2[] = [
   [-1.9, 0.25],
 ];
 
-/** Hydraulic tile press with a cycling ram and a sliding powder-feed carriage. */
-function Press({ x, phase }: { x: number; phase: number }) {
+/**
+ * Hydraulic tile press with a cycling ram and a sliding powder-feed carriage. The stroke follows the
+ * press's simulated state and rate (finding #37): it stands still while the press is down, starved,
+ * blocked, on a planned stop or the simulation is paused.
+ */
+function Press({ id, x, phase }: { id: string; x: number; phase: number }) {
   const ram = useRef<Group>(null);
   const feeder = useRef<Group>(null);
-  useFrame(({ clock }) => {
-    const t = clock.elapsedTime * 0.9 + phase;
+  const t0 = useRef(phase);
+  useFrame((_, frameDt) => {
+    const dt = Math.min(frameDt, 0.1);
+    const { rate, paused } = machineAnimationRate(id);
+    if (rate > 0) t0.current += dt * 0.9 * rate;
+    else if (!paused) {
+      // A stopping press completes its stroke and rests with the ram up and the carriage back.
+      const rest = Math.ceil(t0.current / Math.PI) * Math.PI;
+      t0.current = Math.min(rest, t0.current + dt * 0.9);
+    }
+    const t = t0.current;
     const stroke = Math.sin(t);
     if (ram.current) ram.current.position.y = RAM_Y - Math.max(0, stroke) * RAM_TRAVEL;
     if (feeder.current) feeder.current.position.z = -1.6 + Math.max(0, -stroke) * 1.2;
@@ -281,7 +295,7 @@ export function Presses() {
     <group>
       {PRESS_X.map((x, i) => (
         <Selectable key={x} id={`E-PRS${i + 1}`}>
-          <Press x={x} phase={i * 2.1} />
+          <Press id={`E-PRS${i + 1}`} x={x} phase={i * 2.1} />
         </Selectable>
       ))}
     </group>
@@ -402,8 +416,11 @@ const ROOF_RAIL: Vec2[] = [
 function ElevatorCage({ i }: { i: number }) {
   const ref = useRef<Group>(null);
   const e = ELEVATORS[i];
-  useFrame(({ clock }) => {
-    if (ref.current) ref.current.position.y = 0.4 - 0.4 * Math.cos(clock.elapsedTime * 0.35 + e.phase);
+  const t0 = useRef(e.phase);
+  useFrame((_, frameDt) => {
+    // The cages move with the dryer (F-DRY): still while it is stopped, starved or blocked, or paused.
+    t0.current += Math.min(frameDt, 0.1) * 0.35 * machineAnimationRate('F-DRY').rate;
+    if (ref.current) ref.current.position.y = 0.4 - 0.4 * Math.cos(t0.current);
   });
   return (
     <group ref={ref} position={[e.x, 0, DZ]}>

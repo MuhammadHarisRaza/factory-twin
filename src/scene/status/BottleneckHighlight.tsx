@@ -11,7 +11,7 @@ import { STAGE_BY_ID } from '../../model/plant';
 import { useSimValue } from '../../sim/store';
 import { equipmentBounds, useTwin } from '../../store';
 import { OP_COLOR_HEX } from '../../ui/kit/Status';
-import { bottleneckInfo } from './model';
+import { bottleneckInfo, bottleneckTitle } from './model';
 import { unionBounds, useBoundsCount, useRelevanceFade } from './shared';
 
 const PAD = 1.0;
@@ -50,9 +50,7 @@ export function BottleneckHighlight() {
 
   if (!visible || !info || !geometry) return null;
   const target = info.machines[0];
-  const title = `${info.name}: working ${Math.round(info.activeShare * 100)} % of the last 2 h without waiting on neighbouring stages${
-    info.shifted ? ' — the constraint has shifted from the kiln' : ''
-  }. Select ${EQUIPMENT_BY_ID[target]?.name ?? target}.`;
+  const title = bottleneckTitle(info, EQUIPMENT_BY_ID[target]?.name ?? target);
   return (
     <group>
       {geometry.outlines.map((pts, i) => (

@@ -5,8 +5,14 @@ import { Box3, Vector3, type Group } from 'three';
 import { equipmentBounds, useTwin, type LayerId } from '../store';
 import { EQUIPMENT_BY_ID } from '../data/equipment';
 import { ZONE_BY_ID } from '../data/layout';
+import { CONVEYOR_BY_ID } from '../model/plant';
+import type { OperationalState } from '../model/types';
+import { operationalState } from '../sim/metrics';
 import { useSimValue } from '../sim/store';
-import { MACHINE_STATE, OP_COLOR_HEX, toneToColor } from '../ui/kit/Status';
+import { OPERATIONAL_STATE, OP_COLOR_HEX, toneToColor } from '../ui/kit/Status';
+
+/** Operational states that get a status pin above the asset when it is not tagged (conveyors use their own run tags). */
+const PINNED: ReadonlySet<OperationalState> = new Set<OperationalState>(['stopped', 'fault', 'planned', 'reduced']);
 
 /** Corner-bracket segments (3 short edges per box corner) around a box. */
 function bracketPoints(box: Box3) {
@@ -84,12 +90,16 @@ export function Selectable({
   const zoneActive = useTwin((s) => s.zone === item.zone);
   const labelsOn = useTwin((s) => s.layers.labels);
   const statusOn = useTwin((s) => s.layers.status);
-  // Live machine state from the shared simulation (process machines only).
-  const state = useSimValue((s) => s.machines[id]?.state ?? null, [id]);
-  const st = state ? MACHINE_STATE[state] : null;
+  // Operational state from the shared simulation (process machines and conveyors only): a planned stop
+  // is not a fault, and an asset whose data feed is stale is 'unknown' rather than assumed running.
+  const state = useSimValue((s) => (s.machines[id] ? operationalState(s, id) : null), [id]);
+  const st = state ? OPERATIONAL_STATE[state] : null;
   // Product-wide four-colour scheme (green · amber · red · grey).
   const op = st ? toneToColor(st.tone) : null;
-  const pinned = statusOn && state != null && (state === 'down' || state === 'planned' || state === 'reduced');
+  // Conveyors are marked along their run by the status layer (status/ConveyorStatus.tsx).
+  const conveyor = CONVEYOR_BY_ID[id] != null;
+  const pinned = statusOn && !conveyor && state != null && PINNED.has(state);
+  const stopped = statusOn && !conveyor && (state === 'stopped' || state === 'fault');
 
   useLayoutEffect(() => {
     if (!ref.current) return;
@@ -124,6 +134,20 @@ export function Selectable({
 
   const center = box?.getCenter(new Vector3());
   const size = box?.getSize(new Vector3());
+  // Stable points so drei keeps the outline's geometry and material across renders (finding #36).
+  const downPts = useMemo(
+    () =>
+      box
+        ? ([
+            [box.min.x - 0.6, 0.1, box.min.z - 0.6],
+            [box.max.x + 0.6, 0.1, box.min.z - 0.6],
+            [box.max.x + 0.6, 0.1, box.max.z + 0.6],
+            [box.min.x - 0.6, 0.1, box.max.z + 0.6],
+            [box.min.x - 0.6, 0.1, box.min.z - 0.6],
+          ] as [number, number, number][])
+        : null,
+    [box],
+  );
   // Zone tags only for assets near the camera, so a zone view never becomes a wall of labels.
   const tagRef = useRef<HTMLDivElement>(null);
   useFrame(({ camera }) => {
@@ -179,15 +203,9 @@ export function Selectable({
               </button>
             </Html>
           )}
-          {statusOn && state === 'down' && (
+          {stopped && downPts && (
             <Line
-              points={[
-                [box.min.x - 0.6, 0.1, box.min.z - 0.6],
-                [box.max.x + 0.6, 0.1, box.min.z - 0.6],
-                [box.max.x + 0.6, 0.1, box.max.z + 0.6],
-                [box.min.x - 0.6, 0.1, box.max.z + 0.6],
-                [box.min.x - 0.6, 0.1, box.min.z - 0.6],
-              ]}
+              points={downPts}
               color={OP_COLOR_HEX.red}
               lineWidth={2}
               transparent

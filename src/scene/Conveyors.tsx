@@ -211,6 +211,7 @@ const CONVEYORS: ConveyorDef[] = [
     ],
     w: 1.6,
     kind: 'belt',
+    select: 'CV-GLZ',
   },
   {
     pts: [
@@ -221,6 +222,7 @@ const CONVEYORS: ConveyorDef[] = [
     ],
     w: 1.6,
     kind: 'roller',
+    select: 'CV-KIN',
   },
   {
     pts: [
@@ -229,6 +231,7 @@ const CONVEYORS: ConveyorDef[] = [
     ],
     w: 1.6,
     kind: 'roller',
+    select: 'CV-SORT',
   },
   ...[-24.5, -28, -31.5].map(
     (x): ConveyorDef => ({
@@ -263,6 +266,7 @@ const CONVEYORS: ConveyorDef[] = [
     ],
     w: 1.2,
     kind: 'belt',
+    select: 'CV-PACK',
   },
   {
     pts: [
@@ -272,13 +276,22 @@ const CONVEYORS: ConveyorDef[] = [
     ],
     w: 1.4,
     kind: 'roller',
+    select: 'CV-PAL',
   },
 ];
 
 /** Conveyors without an equipment id, merged into one instanced set. */
 const PLAIN_CONVEYORS = CONVEYORS.filter((c) => !c.select);
-/** Conveyors that are individually selectable. */
+/** Conveyors that are individually selectable (the operational conveyors of src/model/plant.ts CONVEYORS). */
 const SELECTABLE_CONVEYORS = CONVEYORS.filter((c) => c.select);
+
+/**
+ * Centre-line (at belt height) and width of each operational conveyor, by equipment id — the
+ * status layer marks stops and accumulation along these runs and anchors their tags on them.
+ */
+export const CONVEYOR_GEOMETRY: Readonly<Record<string, { pts: Vec3[]; w: number }>> = Object.fromEntries(
+  SELECTABLE_CONVEYORS.map((c) => [c.select!, { pts: c.pts, w: c.w }]),
+);
 
 /** Every belt and roller conveyor in the plant (toggled by the conveyors layer). */
 export function Conveyors() {

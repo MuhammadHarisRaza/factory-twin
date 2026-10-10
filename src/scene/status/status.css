@@ -71,3 +71,21 @@
   flex: none;
   color: var(--accent-strong);
 }
+
+/* Red (critical) variant of the operational chip, e.g. a critical quality event at a station. */
+.ops-chip.ops-red {
+  border-color: #e0525299;
+}
+.ops-chip.ops-red svg {
+  color: var(--critical);
+}
+
+/* Data-stale pin: grey, with the "since" time as secondary value. */
+.status-pin.ops-stale svg {
+  color: var(--neutral);
+}
+
+/* Conveyor run tags (stopped · accumulating · planned), above the middle of the conveyor's run. */
+.ops-run .status-pin {
+  transition: opacity var(--t-base) var(--ease);
+}

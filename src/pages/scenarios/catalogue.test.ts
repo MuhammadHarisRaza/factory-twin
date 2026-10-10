@@ -5,8 +5,10 @@ import { HEALTH_BY_ID } from '../../sim/health';
 import {
   CATALOGUE,
   ENTRY_BY_ID,
+  faultOutcomes,
   impactWindow,
   initialValues,
+  isClearable,
   judge,
   maintenanceDef,
   outcomeOf,
@@ -14,6 +16,7 @@ import {
   paramSummary,
   resolveValues,
   sameTarget,
+  scenarioEvents,
   scenarioStatus,
   signed,
 } from './catalogue';
@@ -38,7 +41,7 @@ describe('scenario catalogue', () => {
 
   it('keeps factors inside the engine ranges', () => {
     const s = createSim(7, START);
-    const ranges: Record<string, [number, number]> = { A: [0.3, 0.7], C: [2, 6], D: [1.1, 1.4], F: [0.4, 0.8] };
+    const ranges: Record<string, [number, number]> = { bottleneck: [0.3, 0.7], quality: [2, 6], energy: [1.1, 1.4], rate: [0.4, 0.8] };
     for (const [id, [lo, hi]] of Object.entries(ranges)) {
       const p = ENTRY_BY_ID[id].params.find((x) => x.key === 'factor')!;
       for (const o of paramOptions(p, s)) {
@@ -50,27 +53,27 @@ describe('scenario catalogue', () => {
 
   it('falls back to a valid option when a dynamic option disappears', () => {
     const s = createSim(7, START);
-    const v = resolveValues(ENTRY_BY_ID.I, { dock: 'DOCK-99', count: 75 }, s);
+    const v = resolveValues(ENTRY_BY_ID.dock, { dock: 'DOCK-99', count: 75 }, s);
     expect(v.dock).toBe('auto');
   });
 
   it('tracks status through the lifecycle', () => {
     const s = createSim(7, START);
-    const stop = activateScenario(s, ENTRY_BY_ID.B.build({ machine: 'H-KILN', duration: 15 }, s.minute));
+    const stop = activateScenario(s, ENTRY_BY_ID.breakdown.build({ machine: 'H-KILN', duration: 15 }, s.minute));
     expect(scenarioStatus(s, stop).key).toBe('active');
     expect(paramSummary(stop)).toContain('H-KILN');
     advance(s, s.minute + 20);
     expect(scenarioStatus(s, stop).key).toBe('ended');
     expect(outcomeOf(s, stop)).toBe('Stopped 15 min');
 
-    const truck = activateScenario(s, ENTRY_BY_ID.G.build({}, s.minute));
+    const truck = activateScenario(s, ENTRY_BY_ID.truck.build({}, s.minute));
     expect(scenarioStatus(s, truck).key).toBe('applied');
     advance(s, s.minute + 2);
     expect(outcomeOf(s, truck)).toMatch(/^1 truck/);
 
-    const bn = activateScenario(s, ENTRY_BY_ID.A.build({ stage: 'GLAZE', factor: 0.45 }, s.minute));
-    expect(sameTarget(bn, ENTRY_BY_ID.A.build({ stage: 'GLAZE', factor: 0.3 }, s.minute))).toBe(true);
-    expect(sameTarget(bn, ENTRY_BY_ID.A.build({ stage: 'KILN', factor: 0.3 }, s.minute))).toBe(false);
+    const bn = activateScenario(s, ENTRY_BY_ID.bottleneck.build({ stage: 'GLAZE', factor: 0.45 }, s.minute));
+    expect(sameTarget(bn, ENTRY_BY_ID.bottleneck.build({ stage: 'GLAZE', factor: 0.3 }, s.minute))).toBe(true);
+    expect(sameTarget(bn, ENTRY_BY_ID.bottleneck.build({ stage: 'KILN', factor: 0.3 }, s.minute))).toBe(false);
     advance(s, s.minute + 3);
     clearScenario(s, bn.id);
     expect(scenarioStatus(s, bn).key).toBe('ended');
@@ -78,8 +81,8 @@ describe('scenario catalogue', () => {
 
   it('reports a developing fault removed by condition-based maintenance', () => {
     const s = createSim(7, START);
-    const fault = activateScenario(s, ENTRY_BY_ID.E.build({ asset: 'E-PRS2', progression: 'typical' }, s.minute));
-    expect(ENTRY_BY_ID.E.unavailable!({ asset: 'E-PRS2' }, s)).not.toBeNull();
+    const fault = activateScenario(s, ENTRY_BY_ID.fault.build({ asset: 'E-PRS2', progression: 'typical' }, s.minute));
+    expect(ENTRY_BY_ID.fault.unavailable!({ asset: 'E-PRS2' }, s)).not.toBeNull();
     advance(s, s.minute + 20);
     const cbm = activateScenario(s, maintenanceDef('E-PRS2', 45));
     expect(scenarioStatus(s, cbm).key).toBe('active');
@@ -92,20 +95,43 @@ describe('scenario catalogue', () => {
     expect(s.downtime.some((d) => d.scenarioId === fault.id && d.reasonCode === HEALTH_BY_ID['E-PRS2'].failureReason)).toBe(false);
   });
 
-  it('reports a developing fault that was left to fail', () => {
+  it('reports a developing fault that was left to fail, and no longer offers to clear it', () => {
     const s = createSim(7, START);
-    const fault = activateScenario(s, ENTRY_BY_ID.E.build({ asset: 'E-PRS2', progression: 'fast' }, s.minute));
+    const fault = activateScenario(s, ENTRY_BY_ID.fault.build({ asset: 'E-PRS2', progression: 'fast' }, s.minute));
+    expect(isClearable(s, fault)).toBe(true);
     advance(s, s.minute + 90);
     const st = scenarioStatus(s, fault);
     expect(st.key).toBe('resolved');
     expect(st.note).toMatch(/breakdown/);
+    // Finding #24: over, so nothing to clear; finding #16: a breakdown is not a removed fault.
+    expect(isClearable(s, fault)).toBe(false);
+    expect(faultOutcomes(s)).toEqual({ removed: 0, brokeDown: 1 });
+  });
+
+  it('links conveyor stoppages, data-feed loss and restricted-zone entries to their events', () => {
+    const s = createSim(7, START);
+    const belt = activateScenario(s, { kind: 'conveyor-stop', equipmentId: 'CV-PACK', end: s.minute + 20, label: 'Packing belt stop' });
+    const feed = activateScenario(s, ENTRY_BY_ID.feed.build({ machine: 'E-PRS1', duration: 30 }, s.minute));
+    const zone = activateScenario(s, ENTRY_BY_ID.zone.build({}, s.minute));
+    expect(paramSummary(belt)).toContain('CV-PACK');
+    expect(feed.end).toBe(s.minute + 30);
+    advance(s, s.minute + 25);
+    expect(outcomeOf(s, belt)).toBe('Stopped 20 min');
+    expect(scenarioEvents(s, belt).some((e) => e.type === 'conveyor-stop')).toBe(true);
+    expect(outcomeOf(s, feed)).toMatch(/^Data stale/);
+    expect(scenarioEvents(s, feed).some((e) => e.type === 'counter-inactive')).toBe(true);
+    advance(s, s.minute + 60);
+    const entered = scenarioEvents(s, zone);
+    expect(outcomeOf(s, zone)).toMatch(/^Entered/);
+    expect(entered.length).toBeGreaterThan(0);
+    expect(entered.every((e) => e.type === 'restricted-entry' && e.asset.vehicleId === 'FL-05')).toBe(true);
   });
 
   it('anchors the impact window on the hour of the first active scenario and measures the delta', () => {
     const s = createSim(7, START);
     const base = createSim(7, START);
     expect(impactWindow(s, 'scenario').fallback).toBe(true);
-    const stop = activateScenario(s, ENTRY_BY_ID.B.build({ machine: 'H-KILN', duration: 0 }, s.minute));
+    const stop = activateScenario(s, ENTRY_BY_ID.breakdown.build({ machine: 'H-KILN', duration: 0 }, s.minute));
     advance(s, s.minute + 40);
     advance(base, s.minute);
     const w = impactWindow(s, 'scenario');

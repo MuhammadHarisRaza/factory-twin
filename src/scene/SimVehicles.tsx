@@ -3,11 +3,11 @@
  * the vehicle's timed legs at the continuous simulation clock, so the 3D scene, the
  * Fleet site map and every logistics metric show the same movement.
  */
-import { useLayoutEffect, useRef } from 'react';
+import { useLayoutEffect, useRef, useState } from 'react';
 import { useFrame, type ThreeEvent } from '@react-three/fiber';
 import { Html } from '@react-three/drei';
 import type { Group, Material } from 'three';
-import type { Vehicle } from '../model/types';
+import type { Vehicle, VehicleLeg } from '../model/types';
 import { phaseLabel, poseAt } from '../sim/logistics';
 import { simClock, useSim, useSimValue } from '../sim/store';
 import { useTwin } from '../store';
@@ -20,9 +20,14 @@ function VehicleObject({ v }: { v: Vehicle }) {
   const ref = useRef<Group>(null);
   const selected = useTwin((s) => s.vehicle === v.id);
   const layerOn = useTwin((s) => s.layers[v.class === 'external' ? 'external' : 'internal']);
-  // Load state changes with the current leg; re-evaluated every simulated minute.
-  const pose = useSimValue(() => poseAt(v, simClock.t), [v]);
-  const loaded = pose?.leg?.loaded ?? false;
+  // Load state and activity follow the current leg. The leg is tracked in the render loop and the
+  // component re-renders only when it changes (finding #39), not once per simulated minute.
+  const legRef = useRef<VehicleLeg | null>(null);
+  const [leg, setLeg] = useState<VehicleLeg | null>(() => {
+    legRef.current = poseAt(v, simClock.t)?.leg ?? null;
+    return legRef.current;
+  });
+  const loaded = leg?.loaded ?? false;
 
   useLayoutEffect(() => {
     // Moving objects would otherwise invalidate the static shadow map every frame.
@@ -35,6 +40,11 @@ function VehicleObject({ v }: { v: Vehicle }) {
     const g = ref.current;
     if (!g) return;
     const p = poseAt(useSim.getState().sim.logistics.vehicles[v.id] ?? v, simClock.t);
+    const l = p?.leg ?? null;
+    if (l !== legRef.current) {
+      legRef.current = l;
+      setLeg(l);
+    }
     if (!p) {
       g.visible = false;
       return;
@@ -54,7 +64,7 @@ function VehicleObject({ v }: { v: Vehicle }) {
     useTwin.getState().selectVehicle(v.id);
   };
   const cab = CAB[Math.floor(hash01(v.id) * CAB.length)];
-  const label = v.class === 'external' && v.phase ? phaseLabel[v.phase] : pose?.leg?.activity;
+  const label = v.class === 'external' && v.phase ? phaseLabel[v.phase] : leg?.activity;
 
   return (
     <group

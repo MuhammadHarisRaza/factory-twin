@@ -13,15 +13,14 @@ import {
 } from 'lucide-react';
 import { useApp } from '../../app/store';
 import { useTwin } from '../../store';
-import { REASON_BY_CODE } from '../../model/plant';
 import { HEALTH_BY_ID, formatH, sensorHistory, type HealthAssessment, type HealthLevel } from '../../sim/health';
 import type { Insight, InsightSeverity } from '../../intel/insights';
 import { useSimValue } from '../../sim/store';
-import { eventDuration } from '../../sim/metrics';
-import { dayStart, formatClock, formatDateTime, formatDuration } from '../../sim/time';
 import { Sparkline } from '../kit/charts';
-import { SEVERITY, SourceTag, StatusBadge, type Tone } from '../kit/Status';
+import { SEVERITY, StatusBadge, type Tone } from '../kit/Status';
 import { fmt1, fmtInt } from '../kit/format';
+import { assetEvents, vehicleEvents } from './derive';
+import { AssetEventList } from './EventRows';
 
 // ── Health ────────────────────────────────────────────────────────────────────
 
@@ -50,10 +49,16 @@ export function HealthTab({ id, a }: { id: string; a: HealthAssessment }) {
       <div className="insp-sec">
         <h3>Condition · {asset.component}</h3>
         <div className="tw-health-top">
-          <div className="tw-score" title="Health score 0–100 from the rule-based assessment">
-            <b className="num">{a.score}</b>
-            <span>/100</span>
-          </div>
+          {a.level === 'offline' ? (
+            <div className="tw-score" title="Not running, so not assessed (no recent running samples)">
+              <b className="num">—</b>
+            </div>
+          ) : (
+            <div className="tw-score" title="Health score 0–100 from the rule-based assessment">
+              <b className="num">{a.score}</b>
+              <span>/100</span>
+            </div>
+          )}
           <HealthBadge level={a.level} />
           {a.vibrationRatio != null && a.level !== 'offline' && (
             <span className="muted num">vibration {a.vibrationRatio.toFixed(2)}× expected</span>
@@ -135,72 +140,27 @@ export function HealthTab({ id, a }: { id: string; a: HealthAssessment }) {
 
 // ── Events ────────────────────────────────────────────────────────────────────
 
-type EventRow = { key: string; t: number; tone: Tone; icon: LucideIcon; title: string; sub: string; source: 'simulation' | 'scenario' };
-
-/** Stoppages and alerts for one asset over the last 24 h. */
+/** Operational events (src/sim/events.ts) of one asset: open ones, then the last 24 h. */
 export function EventsTab({ id }: { id: string }) {
-  const data = useSimValue(
-    (s) => {
-      const now = s.minute;
-      const from = now - 1440;
-      const rows: EventRow[] = [];
-      const starts = new Set<number>();
-      let flowMin = 0;
-      for (const d of s.downtime) {
-        if (d.equipmentId !== id || (d.end ?? now) < from) continue;
-        if (d.category === 'Starved' || d.category === 'Blocked') {
-          flowMin += Math.min(d.end ?? now, now) - Math.max(d.start, from);
-          continue;
-        }
-        starts.add(d.start);
-        const planned = REASON_BY_CODE[d.reasonCode].planned;
-        rows.push({
-          key: d.id,
-          t: d.start,
-          tone: planned ? 'neutral' : 'critical',
-          icon: planned ? CirclePause : OctagonX,
-          title: REASON_BY_CODE[d.reasonCode].label,
-          sub: `${planned ? 'Planned stop' : d.category} · ${d.end == null ? `active ${formatDuration(eventDuration(d, now))}` : formatDuration(eventDuration(d, now))}`,
-          source: d.source,
-        });
-      }
-      for (const a of s.alerts) {
-        if (a.equipmentId !== id || a.time < from) continue;
-        if (a.title.endsWith(' stopped') && starts.has(a.time)) continue;
-        const sev = SEVERITY[a.severity];
-        rows.push({ key: a.id, t: a.time, tone: sev.tone, icon: sev.icon, title: a.title, sub: `${sev.label} alert · ${a.detail}`, source: a.source });
-      }
-      rows.sort((x, y) => y.t - x.t);
-      return { rows: rows.slice(0, 40), flowMin, today: dayStart(now) };
-    },
-    [id],
-  );
+  const data = useSimValue((s) => ({ events: assetEvents(s, id), now: s.minute }), [id]);
   return (
     <div className="insp-sec">
-      <h3>Stoppages & alerts · last 24 h</h3>
-      {data.rows.length ? (
-        <div className="tw-ev">
-          {data.rows.map((r) => {
-            const Icon = r.icon;
-            return (
-              <div key={r.key} className="tw-ev-r">
-                <span className="t num">{r.t >= data.today ? formatClock(r.t) : formatDateTime(r.t)}</span>
-                <span className={`status ${r.tone}`}>
-                  <Icon size={13} strokeWidth={2.2} aria-hidden />
-                </span>
-                <span className="m">
-                  <b>{r.title}</b>
-                  <small>{r.sub}</small>
-                </span>
-                <SourceTag source={r.source} />
-              </div>
-            );
-          })}
-        </div>
-      ) : (
-        <p className="insp-desc">No stoppages or alerts for this asset in the last 24 h.</p>
-      )}
-      {data.flowMin > 0 && <p className="tw-fine">Plus {formatDuration(data.flowMin)} starved or blocked by neighbouring stages (flow losses, not stoppages).</p>}
+      <h3>Operational events · open and last 24 h</h3>
+      <AssetEventList events={data.events} now={data.now} empty="No events for this asset in the last 24 h: its detection rules stayed within thresholds." />
+      <p className="tw-fine">
+        One record per event — its report, evidence, impact and lifecycle open in Events & Reports. Detection rules run on simulated signals.
+      </p>
+    </div>
+  );
+}
+
+/** Operational events of one vehicle (waiting, dock stay, turnaround, restricted-zone entry). */
+export function VehicleEvents({ id }: { id: string }) {
+  const data = useSimValue((s) => ({ events: vehicleEvents(s, id), now: s.minute }), [id]);
+  return (
+    <div className="insp-sec">
+      <h3>Events · open and last 24 h</h3>
+      <AssetEventList events={data.events} now={data.now} empty="No events for this vehicle." />
     </div>
   );
 }

@@ -1,30 +1,27 @@
 import { FastForward, Pause, Play } from 'lucide-react';
-import { useApp } from '../../app/store';
-import { useTwin } from '../../store';
+import { openEvent, useApp } from '../../app/store';
 import { SPEEDS, useSim, useSimValue } from '../../sim/store';
 import { formatClock } from '../../sim/time';
 import { SourceTag } from '../kit/Status';
-import { shiftTimeline, type TimelineMarker } from './derive';
+import { TIMELINE_LANES, shiftTimeline, type TimelineLane, type TimelineMarker } from './derive';
 import { useTip } from './Tip';
 
-const TONE_LABEL: Record<TimelineMarker['tone'], string> = {
-  critical: 'Critical',
-  serious: 'Serious',
-  warning: 'Warning',
-  neutral: 'Info',
-  accent: 'Scenario',
+const LANE_LABEL: Record<TimelineLane, string> = {
+  ...(Object.fromEntries(TIMELINE_LANES.map((l) => [l.id, l.label])) as Record<Exclude<TimelineLane, 'scenario'>, string>),
+  scenario: 'Scenario inputs',
 };
+const LANE_ORDER: TimelineLane[] = [...TIMELINE_LANES.map((l) => l.id), 'scenario'];
 
-function locate(m: TimelineMarker) {
-  const tw = useTwin.getState();
-  if (m.equipmentId) tw.select(m.equipmentId);
-  else if (m.vehicleId) tw.selectVehicle(m.vehicleId, true);
-  else if (m.kind === 'scenario') useApp.getState().setScenariosOpen(true);
+function activate(m: TimelineMarker) {
+  if (m.eventId) openEvent(m.eventId);
+  else if (m.lane === 'scenario') useApp.getState().setScenariosOpen(true);
 }
 
 /**
- * Current-shift time strip: stops, alerts and scenarios on an 8-hour axis with a now
- * marker, plus the demo clock controls (play / pause, speed, skip ahead 15 min).
+ * Current-shift time strip: the operational events of the shift (one lane each for production
+ * & equipment, quality, vehicles and data quality; colour = severity) and the scenario inputs,
+ * on an 8-hour axis with a now marker, plus the demo clock controls (play / pause, speed,
+ * skip ahead 15 min). A marker opens its event record in Events & Reports.
  */
 export function Timeline() {
   const running = useSim((s) => s.running);
@@ -34,29 +31,27 @@ export function Timeline() {
   const span = tl.to - tl.from;
   const pct = (t: number) => (Math.max(0, Math.min(span, t - tl.from)) / span) * 100;
   const hours = Array.from({ length: span / 60 + 1 }, (_, i) => tl.from + i * 60);
-  const clickable = (m: TimelineMarker) => !!(m.equipmentId || m.vehicleId || m.kind === 'scenario');
 
   const marker = (m: TimelineMarker) => {
     const left = pct(m.t);
-    const width = m.end != null ? Math.max(0, pct(m.end) - left) : 0;
+    const width = Math.max(0, pct(m.end) - left);
     return (
       <button
-        key={m.kind + m.id}
-        className={`tw-mk ${m.kind} ${m.tone} ${m.open ? 'open' : ''}`}
-        style={{ left: `${left}%`, ...(m.kind !== 'alert' ? { width: `max(4px, ${width}%)` } : null) }}
+        key={m.lane + m.id}
+        className={`tw-mk ${m.tone} ${m.open ? 'open' : ''}`}
+        style={{ left: `${left}%`, width: `max(4px, ${width}%)` }}
         onClick={() => {
           tip.hide();
-          locate(m);
+          activate(m);
         }}
-        aria-label={`${formatClock(m.t)} ${m.title}`}
-        aria-disabled={!clickable(m)}
-        {...tip.bind(m.kind + m.id, 'top')}
+        aria-label={`${formatClock(m.t)} ${m.title}${m.eventId ? ` (${m.eventId})` : ''}`}
+        {...tip.bind(m.lane + m.id, 'top')}
       />
     );
   };
 
   return (
-    <div className="tw-tl overlay-panel" role="group" aria-label={`Timeline · ${tl.shift.label} (simulated)`}>
+    <div className="tw-tl overlay-panel" role="group" aria-label={`Timeline of operational events · ${tl.shift.label} (simulated)`}>
       <div className="tw-tl-ctl">
         <button className="btn ghost sm icon" onClick={() => (running ? useSim.getState().pause() : useSim.getState().play())} title={running ? 'Pause the simulation' : 'Run the simulation'} aria-label={running ? 'Pause' : 'Play'}>
           {running ? <Pause size={14} /> : <Play size={14} />}
@@ -78,14 +73,16 @@ export function Timeline() {
         </span>
       </div>
       <div className="tw-tl-main">
-        <div className="tw-tl-track">
+        <div className="tw-tl-track" title={`Rows: ${LANE_ORDER.map((l) => LANE_LABEL[l].toLowerCase()).join(' · ')}`}>
           <div className="tw-tl-past" style={{ width: `${pct(tl.now)}%` }} />
           {hours.slice(1, -1).map((h) => (
             <span key={h} className="tw-tl-tick" style={{ left: `${pct(h)}%` }} />
           ))}
-          <div className="tw-tl-lane l1">{tl.markers.filter((m) => m.kind === 'downtime').map(marker)}</div>
-          <div className="tw-tl-lane l2">{tl.markers.filter((m) => m.kind === 'alert').map(marker)}</div>
-          <div className="tw-tl-lane l3">{tl.markers.filter((m) => m.kind === 'scenario').map(marker)}</div>
+          {LANE_ORDER.map((lane) => (
+            <div key={lane} className={`tw-tl-lane ${lane}`} role="group" aria-label={LANE_LABEL[lane]}>
+              {tl.markers.filter((m) => m.lane === lane).map(marker)}
+            </div>
+          ))}
           <span className="tw-tl-now" style={{ left: `${pct(tl.now)}%` }} aria-hidden />
         </div>
         <div className="tw-tl-axis" aria-hidden>
@@ -97,7 +94,7 @@ export function Timeline() {
         </div>
       </div>
       {tip.render((key) => {
-        const m = tl.markers.find((x) => x.kind + x.id === key);
+        const m = tl.markers.find((x) => x.lane + x.id === key);
         if (!m) return null;
         return (
           <>
@@ -106,8 +103,15 @@ export function Timeline() {
             </b>
             <div className="tw-tip-row">{m.detail}</div>
             <div className="tw-tip-foot">
-              {m.kind === 'alert' ? `${TONE_LABEL[m.tone]} alert` : m.kind === 'downtime' ? 'Stoppage' : 'Scenario input'} <SourceTag source={m.source} />
-              {clickable(m) ? (m.equipmentId ? ` · click to locate ${m.equipmentId}` : m.vehicleId ? ' · click to follow the vehicle' : ' · click to open scenarios') : ''}
+              {m.eventId ? (
+                <>
+                  <span className="mono">{m.eventId}</span> · {LANE_LABEL[m.lane]}
+                </>
+              ) : (
+                'Scenario input'
+              )}{' '}
+              <SourceTag source={m.source} />
+              {m.eventId ? ' · click to open the event report' : ' · click to open scenarios'}
             </div>
           </>
         );

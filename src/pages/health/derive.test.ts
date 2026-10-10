@@ -6,6 +6,7 @@ import {
   alertLevel,
   assetRows,
   byConcern,
+  conditionEvents,
   expectedTemperature,
   expectedVibration,
   faultGate,
@@ -78,6 +79,26 @@ describe('machine health derivations', () => {
     const all = alarmHistory(s, 'E-PRS2', 'all');
     expect(all.some((r) => r.kind === 'stop' && r.ev.reasonCode === 'PLN_MAINT')).toBe(true);
     expect(all.every((r) => r.kind !== 'stop' || (r.ev.category !== 'Starved' && r.ev.category !== 'Blocked'))).toBe(true);
+  });
+
+  it('blocks a second fault while one started elsewhere is developing, and lists its condition events', () => {
+    const s = createSim();
+    // Started outside Machine Health (e.g. the Scenario Simulator): no requestedAt on this page.
+    const sc = activateScenario(s, { kind: 'degradation', equipmentId: 'E-PRS2', end: null, label: 'Developing fault · E-PRS2' });
+    advance(s, s.minute + 2);
+    const row = assetRows(s).find((r) => r.id === 'E-PRS2')!;
+    expect(row.faultActive).toBe(true);
+    const g = faultGate(row, null, s.minute);
+    expect(g.enabled).toBe(false);
+    expect(g.reason).toMatch(/already developing/);
+    expect(assetRows(s).find((r) => r.id === 'E-PRS1')!.faultActive).toBe(false);
+
+    advance(s, s.minute + 40);
+    const evs = conditionEvents(s, 'E-PRS2');
+    expect(evs.length).toBeGreaterThan(0);
+    expect(evs.every((e) => e.type === 'condition-abnormal' && e.asset.equipmentId === 'E-PRS2')).toBe(true);
+    expect(evs.some((e) => e.refs.scenarioId === sc.id)).toBe(true);
+    for (let i = 1; i < evs.length; i++) if (evs[i - 1].status !== 'resolved' && evs[i].status !== 'resolved') expect(evs[i - 1].start).toBeGreaterThanOrEqual(evs[i].start);
   });
 
   it('picks round axis bounds', () => {

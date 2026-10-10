@@ -1,7 +1,11 @@
 /**
- * Global copilot drawer (opened from the header or from links via useApp.openCopilot).
- * It shares one conversation with the panel docked in the Command Center; while that
- * dock is on screen, opening the copilot focuses the dock instead of covering the page.
+ * Global copilot drawer, opened from the header on every workspace or from links via
+ * useApp.openCopilot(prompt?, {eventId?}). It shares one conversation with the Factory Copilot
+ * page and the panel docked in the Command Center; while one of those is on screen, opening the
+ * copilot asks there and focuses it instead of covering the page.
+ *
+ * openCopilot(prompt, {eventId}) asks the prompt exactly once, in that event's context; the
+ * context then stays shown above the question field until it is cleared.
  */
 import { useEffect } from 'react';
 import { CopilotPanel } from '../ui/copilot/CopilotPanel';
@@ -11,18 +15,17 @@ import { useApp } from './store';
 export function CopilotDrawer() {
   const open = useApp((s) => s.copilotOpen);
   const prompt = useApp((s) => s.copilotPrompt);
-  const workspace = useApp((s) => s.workspace);
   const close = useApp((s) => s.closeCopilot);
   const docks = useCopilot((s) => s.docks);
-  const toDock = docks > 0 && workspace === 'command';
+  const toDock = docks > 0;
 
   useEffect(() => {
     if (!open) return;
-    // Read the live value so a prompt is asked exactly once (StrictMode re-runs effects).
-    const q = useApp.getState().copilotPrompt;
+    // Read the live values so a prompt is asked exactly once (StrictMode re-runs effects).
+    const { copilotPrompt: q, copilotEventId } = useApp.getState();
     if (q) {
       useApp.setState({ copilotPrompt: null });
-      useCopilot.getState().ask(q);
+      useCopilot.getState().ask(q, { eventId: copilotEventId });
     }
     if (toDock) {
       useCopilot.getState().focusDock();

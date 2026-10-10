@@ -1,0 +1,97 @@
+/* Shared event list (src/ui/events/EventList.tsx) */
+
+.evl-wrap {
+  min-width: 0;
+}
+.evl {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+}
+.evl > li {
+  border-bottom: 1px solid var(--line);
+  min-width: 0;
+}
+.evl > li:last-child {
+  border-bottom: 0;
+}
+.evl-row {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  width: 100%;
+  padding: 8px 10px 8px 12px;
+  border: 0;
+  background: none;
+  text-align: left;
+  color: var(--text-1);
+  border-radius: 0;
+  min-width: 0;
+  transition: background var(--t-fast);
+}
+.evl-row:hover {
+  background: var(--bg-2);
+}
+.evl-row.sel {
+  background: var(--accent-soft);
+  box-shadow: inset 2px 0 0 var(--accent);
+}
+.evl-l1 {
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+  min-width: 0;
+  font-size: var(--fs-13);
+}
+.evl-id {
+  flex: none;
+  font-size: var(--fs-12);
+  color: var(--text-2);
+}
+.evl-title {
+  flex: 1;
+  min-width: 0;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  font-weight: var(--fw-medium);
+}
+.evl-time {
+  flex: none;
+  font-size: var(--fs-12);
+  color: var(--text-2);
+}
+.evl-l2 {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 4px 12px;
+  min-width: 0;
+  font-size: var(--fs-12);
+}
+.evl-l2 .status {
+  font-size: var(--fs-11);
+}
+.evl-meta {
+  color: var(--text-3);
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  max-width: 100%;
+}
+.evl-dur {
+  color: var(--text-3);
+  margin-left: auto;
+}
+.evl-empty {
+  padding: 14px 4px;
+  color: var(--text-3);
+  font-size: var(--fs-12);
+}
+.evl-more {
+  margin: 8px 12px 4px;
+  font-size: var(--fs-12);
+}

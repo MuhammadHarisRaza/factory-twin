@@ -6,6 +6,7 @@ import { energyIn, resolvePeriod } from '../../sim/metrics';
 import {
   anomalyLabel,
   devLevel,
+  energyEventFor,
   findAnomalies,
   fmtMoney,
   fmtSigned,
@@ -104,5 +105,22 @@ describe('energy page derivations', () => {
     expect(parseCurrency(' pkr ')).toBe('PKR');
     expect(parseCurrency('US')).toBeNull();
     expect(anomalyLabel('H-KILN', 1.2)).toBe('Kiln combustion-air drift +20 %');
+  });
+
+  it('links an anomaly to its energy-deviation event once the event rule has raised it', () => {
+    const s = createSim(42, START);
+    const sc = activateScenario(s, { kind: 'energy-anomaly', equipmentId: 'H-KILN', factor: 1.3, end: null, label: anomalyLabel('H-KILN', 1.3) });
+    advance(s, s.minute + 20);
+    const early = findAnomalies(s, resolvePeriod('shift', s.minute), DEFAULT_TARIFFS, energyInsights(s)).find((r) => r.id === 'H-KILN');
+    expect(early).toBeTruthy();
+    advance(s, s.minute + 100);
+    const p = resolvePeriod('shift', s.minute);
+    const row = findAnomalies(s, p, DEFAULT_TARIFFS, energyInsights(s)).find((r) => r.id === 'H-KILN')!;
+    expect(row.event).not.toBeNull();
+    expect(row.event!.type).toBe('energy-deviation');
+    expect(row.event!.asset.equipmentId).toBe('H-KILN');
+    expect(row.event!.refs.scenarioId).toBe(sc.id);
+    expect(energyEventFor(s, 'H-KILN', p)?.id).toBe(row.event!.id);
+    expect(energyEventFor(s, 'A-COMP', p)).toBeNull();
   });
 });

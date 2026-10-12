@@ -1,222 +1,264 @@
 /**
- * Selected vehicle. Trucks: stage, zone (simulated, zone level), visit timestamps, loading state,
- * durations, the visit timeline as a stepper and the truck's events. Internal vehicles: zone,
- * movement, task, pickups / drop-offs, dwell, safety (restricted-zone entries) and movement history.
+ * Vehicle detail of Fleet & Movement (route #/fleet/<vehicle id>): the column beside the site layout,
+ * or the content of the overlay drawer on the table tabs (VehicleDrawer). Holds the detail-level
+ * fields the tables leave out (arrival / gate-in / gate-out times and dock time in the visit
+ * timeline and dwell; task, idle time and restricted-zone entries of an internal vehicle).
+ * Shows the vehicle's identifier and class, its location WITH the kind of location made explicit ("Simulated position
+ * (now)" on site, "Last known (historical) · <time>" once it has left — a stale record never reads
+ * as current), movement state, current trip or dock assignment, a correctly scoped dwell (trucks:
+ * on site since gate-in, waiting, at the dock; internal vehicles: time at the current stop — zone
+ * residency only as "working in <zone> since …"), its events, labelled reference footage for the
+ * activity type (never proof of where the vehicle is) and "Follow in 3D".
  */
-import { ArrowDownToLine, ArrowUpFromLine, Crosshair, ShieldAlert } from 'lucide-react';
+import { useEffect, useMemo } from 'react';
+import { ArrowDownToLine, ArrowUpFromLine, Box, Crosshair, ShieldAlert } from 'lucide-react';
 import { openEquipment, openVehicle } from '../../app/store';
+import type { OpEvent } from '../../model/types';
 import { eventsFor } from '../../sim/events';
 import type { TruckRuntime } from '../../sim/logistics';
 import { useSimValue } from '../../sim/store';
 import { dayStart } from '../../sim/time';
 import { EventList } from '../../ui/events/EventList';
 import { DataTable } from '../../ui/kit/DataTable';
-import { Empty, Panel } from '../../ui/kit/Panel';
+import { Disclosure, EmptyState, Facts, SidePanel, Unavailable } from '../../ui/kit/Page';
 import { SourceTag, StatusBadge } from '../../ui/kit/Status';
 import { fmtInt } from '../../ui/kit/format';
-import { MovementBadge, PositionTag, TYPE_LABEL, dur, type Clock } from './common';
-import { DOCK_NAME, GEOFENCE_BY_ID, currentZone, geofenceName, internalRows, liveDurations, recentLegs, truckSource, visitTimeline } from './derive';
-import { SAFETY_ZONES, STAGE_BY_KEY, handlingEvents, legAt, loadState, movementState, truckPlace } from './pipeline';
+import { ContextVideo } from '../../video/ContextVideo';
+import { IntegrityBadge, LocationKindTag, MovementBadge, TYPE_LABEL, classLabel, dur, makeClock } from './common';
+import { DOCK_NAME, GEOFENCE_BY_ID, geofenceName, recentLegs, truckSource, visitTimeline } from './derive';
+import {
+  internalDwell,
+  movementLabel,
+  servingTruck,
+  truckDwell,
+  truckTrip,
+  vehicleLocation,
+  vehicleMovement,
+  videoTopicFor,
+  zoneContext,
+} from './movement';
+import { handlingEvents, legAt, movementState } from './pipeline';
 
-const newestFirst = <T extends { start: number }>(xs: T[]) => [...xs].sort((a, b) => b.start - a.start);
+const newestFirst = (xs: OpEvent[]) => [...xs].sort((a, b) => b.start - a.start);
 
-function useVehicleInfo(id: string | null) {
+const FOOTAGE_NOTE =
+  "Public footage of this kind of operation, picked by the vehicle's class and activity — not this vehicle, not this plant and not evidence of its location.";
+
+function useVehicleInfo(id: string) {
   return useSimValue(
     (s) => {
-      if (!id) return null;
       const v = s.logistics.vehicles[id];
       if (!v) return null;
       const now = s.minute;
-      const active = s.logistics.active.includes(id);
-      const onSite = active && v.spawned <= now;
-      const zone = onSite ? currentZone(v, now) : null;
-      const events = newestFirst(eventsFor(s, { vehicleId: id }));
-      if (v.class === 'external') {
-        const t = v as TruckRuntime;
-        const done = s.logistics.dockEvents.find((e) => e.vehicleId === id && e.kind === 'loading-complete')?.time ?? null;
-        return {
-          kind: 'external' as const,
-          v: t,
-          now,
-          active,
-          onSite,
-          zone,
-          events,
-          place: active ? truckPlace(t, now, done) : null,
-          load: loadState(t, now, done),
-          loading: done != null && t.visit!.dockStart != null && done <= now ? done - t.visit!.dockStart : null,
-          d: liveDurations(t, now),
-          timeline: visitTimeline(s, t),
-          gate: s.logistics.gateEvents.filter((g) => g.vehicleId === id),
-        };
-      }
-      const from = dayStart(now);
-      const leg = legAt(v, now);
-      const historyFrom = v.legs[0]?.start ?? now;
-      return {
-        kind: 'internal' as const,
+      const clock = makeClock(now);
+      const location = vehicleLocation(s, v, clock);
+      const movement = vehicleMovement(s, v);
+      const base = {
         v,
         now,
-        active,
-        onSite,
-        zone,
-        events,
-        row: internalRows(s).find((r) => r.id === id) ?? null,
-        movement: movementState(leg, now),
+        clock,
+        location,
+        movement,
+        events: newestFirst(eventsFor(s, { vehicleId: id })),
+        topic: videoTopicFor(s, v),
+        zoneEquipment: location.kind === 'simulated' && location.zone ? (GEOFENCE_BY_ID[location.zone]?.equipmentId ?? null) : null,
+      };
+      if (v.class === 'external') {
+        const t = v as TruckRuntime;
+        return { ...base, kind: 'external' as const, t, trip: truckTrip(s, t, clock), dwell: truckDwell(s, t), timeline: visitTimeline(s, t), rules: s.rules };
+      }
+      const leg = legAt(v, now);
+      const from = dayStart(now);
+      const historyFrom = v.legs[0]?.start ?? now;
+      return {
+        ...base,
+        kind: 'internal' as const,
+        dwell: internalDwell(s, v),
+        state: movementState(leg, now),
         loaded: !!leg?.loaded,
-        legs: recentLegs(v, now, 12),
-        /** Start of the handling window: last 60 min, or the oldest retained movement if later. */
+        serving: servingTruck(s, id),
         handlingFrom: Math.max(now - 60, historyFrom),
         handling: handlingEvents(v, now, now - 60).reverse(),
         restricted: s.logistics.restrictedEvents.filter((r) => r.vehicleId === id && r.time >= from && r.time <= now).reverse(),
+        insideRestricted: s.logistics.restrictedOpen[id]?.geofenceId ?? null,
+        legs: recentLegs(v, now, 12),
       };
     },
     [id],
   );
 }
 
-export function VehicleDetail({ id, onClose, clock }: { id: string | null; onClose: () => void; clock: Clock }) {
+type Info = NonNullable<ReturnType<typeof useVehicleInfo>>;
+
+export function VehicleDetail({
+  id,
+  onClose,
+  onSelect,
+  variant = 'side',
+}: {
+  id: string;
+  onClose: () => void;
+  onSelect: (id: string) => void;
+  /** 'side': a column beside the site layout · 'drawer': inside the overlay drawer of the table tabs (VehicleDrawer). */
+  variant?: 'side' | 'drawer';
+}) {
   const info = useVehicleInfo(id);
+  const panelClass = variant === 'side' ? 'fl-vd fl-side' : 'fl-vd';
+  const topic = info?.topic ?? null;
+  const videoContext = useMemo(() => ({ topic }), [topic]);
+
+  // Below 1180 px the side column stacks under the work area: bring it into view when a vehicle is picked.
+  // (The drawer is always in view.)
+  useEffect(() => {
+    if (variant !== 'side' || typeof window === 'undefined' || !window.matchMedia?.('(max-width: 1180px)').matches) return;
+    const el = document.querySelector<HTMLElement>('.fl-side');
+    if (!el) return;
+    const r = el.getBoundingClientRect();
+    if (r.top > window.innerHeight - 120 || r.bottom < 0) el.scrollIntoView({ behavior: 'smooth', block: 'start' });
+  }, [id, variant]);
 
   if (!info)
     return (
-      <Panel title="Selected vehicle">
-        <Empty title="No vehicle selected">Click a truck in the pipeline, a vehicle on the map or a row in the vehicle tables.</Empty>
-      </Panel>
+      <SidePanel title={id} subtitle="Vehicle detail" onClose={onClose} className={panelClass}>
+        <EmptyState title="Vehicle not in this simulation run">
+          No vehicle <span className="mono">{id}</span> exists in the current simulation (vehicle ids restart after Reset Demo). Select a vehicle on the site layout.
+        </EmptyState>
+      </SidePanel>
     );
 
-  const v = info.v;
-  const zoneEquip = info.zone ? GEOFENCE_BY_ID[info.zone]?.equipmentId : undefined;
-  const truck = info.kind === 'external' ? info.v : null;
-  const dockTarget = truck && truck.visit!.dockId && info.onSite && truck.visit!.direction === 'outbound' ? truck.visit!.dockId : null;
-  const inspect = dockTarget ? { eq: 'K-DOCK', label: `Inspect ${DOCK_NAME[dockTarget]}` } : zoneEquip ? { eq: zoneEquip, label: 'Inspect zone' } : null;
+  const { v, location } = info;
+  const onSite = location.kind === 'simulated';
+  const dockId = info.kind === 'external' ? info.trip.dockId : null;
+  const inspect = onSite && dockId ? { eq: 'K-DOCK', label: `Show ${DOCK_NAME[dockId]} in 3D` } : info.zoneEquipment ? { eq: info.zoneEquipment, label: 'Show zone in 3D' } : null;
+  const Dir = info.kind === 'external' ? (v.visit?.direction === 'inbound' ? ArrowDownToLine : ArrowUpFromLine) : null;
 
   return (
-    <Panel
-      title="Selected vehicle"
-      actions={
-        <button className="btn sm ghost" onClick={onClose}>
-          Clear
-        </button>
+    <SidePanel
+      title={v.id}
+      className={panelClass}
+      subtitle={
+        <>
+          <span className="fl-cls">
+            {Dir && <Dir size={12} aria-hidden />}
+            {TYPE_LABEL[v.type]} · {classLabel(v)}
+          </span>
+          <span>{v.operator}</span>
+          <SourceTag source={info.kind === 'external' ? truckSource(v) : 'simulation'} />
+        </>
+      }
+      onClose={onClose}
+      footer={
+        <>
+          <button
+            type="button"
+            className="btn primary sm"
+            disabled={!onSite}
+            title={onSite ? 'Open the Factory Twin following this vehicle (simulated route)' : 'The vehicle is not on site — there is no current position to follow'}
+            onClick={() => openVehicle(v.id)}
+          >
+            <Crosshair size={14} aria-hidden />
+            Follow in 3D
+          </button>
+          {inspect && (
+            <button type="button" className="btn sm" onClick={() => openEquipment(inspect.eq)} title="Open the Factory Twin on this area">
+              <Box size={14} aria-hidden />
+              {inspect.label}
+            </button>
+          )}
+        </>
       }
     >
-      <div className="fleet-detail-h">
-        <div style={{ flex: 1, minWidth: 0 }}>
-          <h3 className="mono">{v.id}</h3>
-          <p>{truck ? `${TYPE_LABEL[v.type]} · ${v.operator}` : `${v.label} · ${v.operator}`}</p>
+      <div className={`fl-loc ${location.kind}`}>
+        <LocationKindTag kind={location.kind} label={location.label} />
+        <div className="fl-loc-place">{location.place}</div>
+        {location.detail && <div className="fl-loc-detail">{location.detail}</div>}
+        <div className="fl-loc-note">
+          {location.kind === 'simulated'
+            ? 'Zone-level position from the simulated route — not a GPS fix; no tracking system is connected.'
+            : location.kind === 'historical'
+              ? 'Recorded when the vehicle left. It is no longer on site, so there is no current position.'
+              : location.kind === 'not-arrived'
+                ? 'The arrival is scheduled by a scenario; the vehicle has no position until it reaches the gate approach.'
+                : 'The simulation has not recorded a movement for this vehicle yet.'}
         </div>
-        {truck ? <SourceTag source={truckSource(v)} /> : <SourceTag source="simulation" />}
       </div>
 
-      {info.kind === 'external' ? <TruckBody info={info} clock={clock} /> : <InternalBody info={info} clock={clock} />}
+      {info.kind === 'external' ? <TruckBody info={info} /> : <InternalBody info={info} onSelect={onSelect} />}
 
-      <div className="fleet-detail-sec">
-        <h4>Events for this vehicle</h4>
-        <EventList events={info.events} hideAsset limit={6} empty="No events recorded for this vehicle" />
+      <div className="fl-sp-sec">
+        <h4>Events for this vehicle · {info.events.length}</h4>
+        <EventList events={info.events} hideAsset limit={5} empty="No events recorded for this vehicle" />
       </div>
 
-      <div className="fleet-actions">
-        <button className="btn primary" disabled={!info.onSite} title={info.onSite ? 'Open the Factory Twin following this vehicle' : 'The vehicle is not on site'} onClick={() => openVehicle(v.id)}>
-          <Crosshair size={14} aria-hidden />
-          Follow in Factory Twin
-        </button>
-        <button
-          className="btn"
-          disabled={!inspect}
-          title={inspect ? undefined : info.onSite ? 'Current zone has no linked equipment' : 'The vehicle is not on site'}
-          onClick={() => inspect && openEquipment(inspect.eq)}
-        >
-          {inspect?.label ?? 'Inspect dock / zone'}
-        </button>
+      {/* No topic in the heading or the note: the player keeps the clip being watched when the vehicle's
+          activity (and so the live topic) changes, and its caption names the clip actually shown. The note
+          is hidden by CSS (.cv-none + .fl-video-note) when the player shows its "no reference video" state. */}
+      <div className="fl-sp-sec">
+        <h4>Reference footage</h4>
+        <ContextVideo context={videoContext} compact title="Reference footage" subject={v.id} />
+        <p className="fl-video-note">{FOOTAGE_NOTE}</p>
       </div>
-    </Panel>
+    </SidePanel>
   );
 }
 
-type Info = NonNullable<ReturnType<typeof useVehicleInfo>>;
-
-function TruckBody({ info, clock }: { info: Extract<Info, { kind: 'external' }>; clock: Clock }) {
-  const t = info.v;
+function TruckBody({ info }: { info: Extract<Info, { kind: 'external' }> }) {
+  const { t, trip, dwell, clock, now, rules } = info;
   const vis = t.visit!;
   const out = vis.direction === 'outbound';
-  const stage = info.place ? STAGE_BY_KEY[info.place.stage] : null;
-  const at = (m: number | null | undefined) => (m != null && m <= info.now ? clock(m) : '—');
-  const gin = info.gate.find((g) => g.direction === 'in');
-  const gout = info.gate.find((g) => g.direction === 'out');
   const reachedIdx = info.timeline.reduce((a, st, i) => (st.time != null ? i : a), -1);
+  const incomplete = dwell.integrity.kind === 'incomplete';
   return (
     <>
-      <div className="fv-stagebar">
-        {out ? <ArrowUpFromLine size={13} aria-hidden /> : <ArrowDownToLine size={13} aria-hidden />}
-        {stage ? (
-          <span>
-            Stage {stage.step} · <b>{stage.label}</b> — {info.place!.status}
-            {info.place!.queuePos != null && ` (#${info.place!.queuePos})`}
-          </span>
-        ) : (
-          <span>
-            <b>Left site</b> at {at(vis.gateOut)}
-          </span>
-        )}
-      </div>
-      <dl className="dl" style={{ marginTop: 10 }}>
-        <dt>Zone</dt>
-        <dd>
-          {info.onSite ? geofenceName(info.zone) : info.active ? 'Not yet at the gate' : 'Left site'} <PositionTag />
-        </dd>
-        <dt>Arrival</dt>
-        <dd>{at(vis.arrival)}</dd>
-        <dt>Gate in</dt>
-        <dd>
-          {at(vis.gateIn)}
-          {gin && <span className="dim"> · {gin.id}</span>}
-        </dd>
-        <dt>{out ? 'Dock' : 'Unloading'}</dt>
-        <dd>{out ? (vis.dockId ? `${DOCK_NAME[vis.dockId]} · assigned ${at(vis.dockAssigned)}` : 'Not assigned yet') : 'Raw-material shed bay'}</dd>
-        <dt>{out ? 'Loading' : 'Load'}</dt>
-        <dd>
-          {info.load.label}
-          {t.holdExtra > 0 && <span className="dim"> · hold +{t.holdExtra} min (scenario)</span>}
-        </dd>
-        <dt>Departure</dt>
-        <dd>
-          {vis.gateOut != null && vis.gateOut <= info.now ? `Gate out ${clock(vis.gateOut)}` : 'Not departed'}
-          {gout && <span className="dim"> · {gout.id}</span>}
-        </dd>
-      </dl>
+      <Facts
+        rows={[
+          { label: 'Movement', value: movementLabel(info.movement, clock) },
+          { label: 'Visit', value: trip.phase },
+          { label: out ? 'Dock' : 'Unloading', value: trip.dock },
+          { label: 'Load', value: trip.load },
+          { label: 'Visit record', value: <IntegrityBadge integrity={dwell.integrity} /> },
+        ]}
+      />
+      {dwell.integrity.note && <p className="fl-record-note">{dwell.integrity.note}</p>}
 
-      <div className="fleet-detail-sec">
-        <h4>Durations</h4>
-        <div className="fleet-durs three">
-          <div>
-            <span>Waiting</span>
-            <b>{dur(info.d.waiting)}</b>
+      <div className="fl-sp-sec">
+        <h4>Dwell</h4>
+        <div className="mini-kpis">
+          <div className="mini-kpi">
+            <span>{dwell.turnaround != null ? 'Turnaround' : 'On site'}</span>
+            <b>
+              {incomplete ? (
+                <Unavailable reason="The visit record has no gate-out far beyond the turnaround limit — the elapsed time is not a reliable dwell.">Not reliable</Unavailable>
+              ) : dwell.turnaround != null ? (
+                dur(dwell.turnaround)
+              ) : dwell.onSite != null ? (
+                dur(dwell.onSite)
+              ) : (
+                <Unavailable reason="Before gate-in: the visit has not started on site">—</Unavailable>
+              )}
+            </b>
+            <em>
+              {dwell.gateIn == null
+                ? 'not through the gate yet'
+                : dwell.turnaround != null
+                  ? `${clock(dwell.gateIn)} → ${clock(dwell.gateIn + dwell.turnaround)}`
+                  : `since gate-in ${clock(dwell.gateIn)}`}
+            </em>
           </div>
-          <div>
-            <span>Gate → dock</span>
-            <b>{dur(info.d.gateToDock)}</b>
+          <div className="mini-kpi">
+            <span>Waiting for a dock</span>
+            <b>{out ? dur(dwell.waiting) : <Unavailable reason="Inbound tippers go straight to the shed bay; they do not queue for a dock">n/a</Unavailable>}</b>
+            <em>limit {rules.truckWaitMax} min</em>
           </div>
-          <div>
-            <span>{out ? 'Dock time' : 'Unloading'}</span>
-            <b>{dur(info.d.dockTime)}</b>
-          </div>
-          <div>
-            <span>Loading</span>
-            <b>{out ? dur(info.loading) : <span className="dim">n/a</span>}</b>
-          </div>
-          <div>
-            <span>Turnaround</span>
-            <b>{info.d.turnaround != null ? dur(info.d.turnaround) : vis.gateIn <= info.now ? <span className="dim">{dur(info.now - vis.gateIn)} so far</span> : '—'}</b>
-          </div>
-          <div>
-            <span>Load</span>
-            <b>{out ? `${fmtInt(vis.load)} pallets` : `${fmtInt(vis.load)} t`}</b>
+          <div className="mini-kpi">
+            <span>{out ? 'At the dock' : 'At the bay'}</span>
+            <b>{dur(dwell.atDock)}</b>
+            <em>{out ? `limit ${rules.dockStayMax} min` : 'unloading'}</em>
           </div>
         </div>
       </div>
 
-      <div className="fleet-detail-sec">
-        <h4>Visit timeline</h4>
+      <Disclosure title="Visit timeline" defaultOpen meta={vis.gateOut != null && vis.gateOut <= now ? 'completed' : `${reachedIdx + 1} of ${info.timeline.length} steps`}>
         <ol className="fleet-tl">
           {info.timeline.map((st, i) => (
             <li key={st.key} className={st.time == null ? (i === reachedIdx + 1 ? 'pending next' : 'pending') : i === reachedIdx && vis.gateOut == null ? 'cur' : ''}>
@@ -229,57 +271,70 @@ function TruckBody({ info, clock }: { info: Extract<Info, { kind: 'external' }>;
             </li>
           ))}
         </ol>
-      </div>
+      </Disclosure>
     </>
   );
 }
 
-function InternalBody({ info, clock }: { info: Extract<Info, { kind: 'internal' }>; clock: Clock }) {
-  const r = info.row;
+function InternalBody({ info, onSelect }: { info: Extract<Info, { kind: 'internal' }>; onSelect: (id: string) => void }) {
+  const { dwell, clock } = info;
+  const context = zoneContext(dwell, clock);
   return (
     <>
-      <div className="fv-stagebar">
-        <PositionTag long />
-      </div>
-      <dl className="dl" style={{ marginTop: 10 }}>
-        <dt>Zone</dt>
-        <dd>{geofenceName(info.zone)}</dd>
-        <dt>Movement</dt>
-        <dd>
-          <MovementBadge state={info.movement} />
-          <span className="dim"> · {info.loaded ? 'carrying a load' : 'empty'}</span>
-        </dd>
-        <dt>Task</dt>
-        <dd>{info.v.task ?? '—'}</dd>
-        <dt>Activity</dt>
-        <dd>{r?.activity ?? '—'}</dd>
-      </dl>
-      <div className="fleet-detail-sec">
-        <h4>Dwell & idle</h4>
-        <div className="fleet-durs three">
-          <div>
-            <span>Dwell in zone</span>
-            <b>{dur(r?.dwell)}</b>
+      <Facts
+        rows={[
+          { label: 'Movement', value: movementLabel(info.movement, clock) },
+          { label: 'State', value: info.movement.state === 'off-site' ? '—' : <MovementBadge state={info.state} /> },
+          { label: 'Task', value: info.v.task ?? '—' },
+          {
+            label: 'Assignment',
+            value: info.serving ? (
+              <span>
+                Loading{' '}
+                <button type="button" className="row-link mono" onClick={() => onSelect(info.serving!.truckId)}>
+                  {info.serving.truckId}
+                </button>
+                {info.serving.dock ? ` at ${info.serving.dock}` : ''}
+              </span>
+            ) : (
+              (info.movement.activity ?? '—')
+            ),
+          },
+          { label: 'Load', value: info.loaded ? 'Carrying a load' : 'Empty' },
+        ]}
+      />
+
+      <div className="fl-sp-sec">
+        <h4>Dwell</h4>
+        <div className="mini-kpis">
+          <div className="mini-kpi">
+            <span>At current stop</span>
+            <b>{dwell.moving ? '0 min' : dur(dwell.atStop)}</b>
+            <em>{dwell.moving ? 'moving now' : dwell.stopSince != null ? `since ${clock(dwell.stopSince)}` : '—'}</em>
           </div>
-          <div>
+          <div className="mini-kpi">
             <span>Idle, last hour</span>
-            <b>{r?.idleLastHour == null ? <span className="dim">—</span> : dur(r.idleLastHour)}</b>
+            <b>{dwell.idleLastHour == null ? <Unavailable reason="Less than one hour of movement history is retained for this vehicle">—</Unavailable> : dur(dwell.idleLastHour)}</b>
+            <em>stationary, idle / waiting</em>
           </div>
-          <div>
-            <span title={`Pickups + drop-offs since ${clock(info.handlingFrom)}`}>Handling, last hour</span>
+          <div className="mini-kpi">
+            <span>Pickups & drop-offs</span>
             <b>{fmtInt(info.handling.length)}</b>
+            <em>since {clock(info.handlingFrom)}</em>
           </div>
         </div>
+        {context && <p className="fl-zone-ctx">{context} — zone residency, shown as context; it is not a dwell.</p>}
+        {info.insideRestricted && (
+          <p className="fl-zone-ctx">
+            <StatusBadge tone="warning" icon={ShieldAlert} label={`In restricted zone now: ${geofenceName(info.insideRestricted)}`} />
+          </p>
+        )}
       </div>
 
-      <div className="fleet-detail-sec">
-        <h4>
-          Pickups & drop-offs · since {clock(info.handlingFrom)}
-          {info.handlingFrom > info.now - 60 && <span className="fv-h4-note"> (oldest retained movement)</span>}
-        </h4>
+      <Disclosure title="Pickups & drop-offs" meta={`since ${clock(info.handlingFrom)}${info.handlingFrom > info.now - 60 ? ' (oldest retained movement)' : ''}`}>
         {info.handling.length ? (
           <ul className="fv-list">
-            {info.handling.slice(0, 6).map((h) => (
+            {info.handling.slice(0, 8).map((h) => (
               <li key={h.id}>
                 <span className="t">{clock(h.time)}</span>
                 <span className={`fv-kind ${h.kind}`}>{h.kind === 'pickup' ? 'Pickup' : 'Drop-off'}</span>
@@ -293,16 +348,12 @@ function InternalBody({ info, clock }: { info: Extract<Info, { kind: 'internal' 
         ) : (
           <p className="fv-muted">No pickup or drop-off since {clock(info.handlingFrom)}.</p>
         )}
-      </div>
+      </Disclosure>
 
-      <div className="fleet-detail-sec">
-        <h4>Safety · configured restricted zones</h4>
-        <p className="fv-muted">
-          {SAFETY_ZONES.map((g) => g.name).join(' · ')} — no-entry rules checked against the simulated route every simulated minute.
-        </p>
+      <Disclosure title="Restricted-zone entries today" meta={String(info.restricted.length)}>
         {info.restricted.length ? (
           <ul className="fv-list">
-            {info.restricted.slice(0, 4).map((x) => (
+            {info.restricted.slice(0, 6).map((x) => (
               <li key={x.id}>
                 <span className="t">{clock(x.time)}</span>
                 <StatusBadge tone="warning" icon={ShieldAlert} label="Entry" />
@@ -314,12 +365,11 @@ function InternalBody({ info, clock }: { info: Extract<Info, { kind: 'internal' 
             ))}
           </ul>
         ) : (
-          <p className="fv-muted">No restricted-zone entry today.</p>
+          <p className="fv-muted">No restricted-zone entry today (checked against the simulated route every simulated minute).</p>
         )}
-      </div>
+      </Disclosure>
 
-      <div className="fleet-detail-sec">
-        <h4>Movement history</h4>
+      <Disclosure title="Movement history" meta={`last ${info.legs.length} movements`}>
         <DataTable
           columns={[
             { key: 'a', header: 'Activity', render: (l) => l.activity },
@@ -329,10 +379,11 @@ function InternalBody({ info, clock }: { info: Extract<Info, { kind: 'internal' 
           ]}
           rows={info.legs}
           rowKey={(l) => `${l.start}-${l.activity}`}
-          maxHeight={210}
+          maxHeight={220}
           empty="No movements recorded yet"
         />
-      </div>
+      </Disclosure>
     </>
   );
 }
+

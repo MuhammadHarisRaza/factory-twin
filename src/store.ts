@@ -4,6 +4,14 @@ import type { Box3 } from 'three';
 import { HALL, VIEWS, ZONE_BY_ID } from './data/layout';
 import { EQUIPMENT_BY_ID } from './data/equipment';
 import type { PresetId, Vec3 } from './data/types';
+import { MONITORED_STAGE_BY_ID } from './model/plant';
+import type { MonitoredStageId } from './model/types';
+
+/**
+ * Which status markers the 3D model shows: every alert, only serious and critical ones, or none
+ * (the equipment colours stay; only the floating alert markers are filtered).
+ */
+export type AlertFilter = 'all' | 'serious' | 'off';
 
 export type LayerId =
   | 'roof'
@@ -113,7 +121,17 @@ type TwinState = {
   vehicle: string | null;
   /** Camera keeps the selected vehicle in frame. */
   follow: boolean;
+  /**
+   * Production stage highlighted in the model (its equipment and conveyors), shared by the
+   * Overview flow strip, Production and the Factory Twin. Independent of the single selection.
+   */
+  stage: MonitoredStageId | null;
+  /** Alert markers shown in the model. */
+  alertFilter: AlertFilter;
   toggle: (layer: LayerId) => void;
+  /** Highlights a stage's equipment and frames it (null clears the highlight; the camera stays). */
+  selectStage: (id: MonitoredStageId | null, opts?: { frame?: boolean }) => void;
+  setAlertFilter: (f: AlertFilter) => void;
   selectVehicle: (id: string | null, follow?: boolean) => void;
   setFollow: (follow: boolean) => void;
   select: (id: string | null) => void;
@@ -138,13 +156,16 @@ export const useTwin = create<TwinState>((set, get) => ({
     conveyors: true,
     flow: false,
     labels: true,
-    minimap: true,
+    // The site plan covers part of the model on laptop screens: shown by default only on large ones (layer toggle).
+    minimap: typeof window === 'undefined' || ((window.innerWidth ?? 1920) >= 1600 && (window.innerHeight ?? 1080) >= 900),
     status: true,
     internal: true,
     external: true,
   },
   vehicle: null,
   follow: false,
+  stage: null,
+  alertFilter: 'all',
   selected: null,
   hovered: null,
   zone: null,
@@ -155,6 +176,28 @@ export const useTwin = create<TwinState>((set, get) => ({
   ready: false,
 
   toggle: (layer) => set((s) => ({ layers: { ...s.layers, [layer]: !s.layers[layer] } })),
+  selectStage: (id, opts) => {
+    set({ stage: id });
+    if (!id || opts?.frame === false) return;
+    const st = MONITORED_STAGE_BY_ID[id];
+    // Frame every asset of the stage that has a measured bounding box (the model registers them on load).
+    let box: BoundsLike | null = null;
+    for (const eq of [...st.equipment, ...st.conveyors]) {
+      const b = equipmentBounds.get(eq);
+      if (!b || b.isEmpty()) continue;
+      box = box
+        ? {
+            min: { x: Math.min(box.min.x, b.min.x), y: Math.min(box.min.y, b.min.y), z: Math.min(box.min.z, b.min.z) },
+            max: { x: Math.max(box.max.x, b.max.x), y: Math.max(box.max.y, b.max.y), z: Math.max(box.max.z, b.max.z) },
+          }
+        : { min: { ...b.min }, max: { ...b.max } };
+    }
+    if (box) {
+      const { pos, target } = focusPose(box, minimapCamera);
+      set((s) => ({ camera: { pos, target, nonce: s.camera.nonce + 1 }, zone: st.zone }));
+    } else set({ zone: st.zone });
+  },
+  setAlertFilter: (alertFilter) => set({ alertFilter }),
   selectVehicle: (id, follow = false) => set({ vehicle: id, follow: id ? follow : false, selected: id ? null : get().selected }),
   setFollow: (follow) => set({ follow }),
   select: (id) => {
@@ -166,7 +209,8 @@ export const useTwin = create<TwinState>((set, get) => ({
   },
   hover: (id) => set({ hovered: id }),
   selectZone: (id) => {
-    set({ zone: id, selected: null });
+    // Choosing a zone releases the equipment selection and any followed vehicle (the camera would pull back to it).
+    set({ zone: id, selected: null, vehicle: null, follow: false });
     // Clearing the zone returns to the overview so the user is never left stranded.
     get().preset(id ? ZONE_BY_ID[id].preset : 'full');
   },
@@ -179,7 +223,7 @@ export const useTwin = create<TwinState>((set, get) => ({
     set((s) => ({ camera: { pos, target, nonce: s.camera.nonce + 1 } }));
   },
   reset: () => {
-    set({ selected: null, zone: null, vehicle: null, follow: false });
+    set({ selected: null, zone: null, vehicle: null, follow: false, stage: null });
     get().preset('full');
   },
   fit: () => set((s) => ({ fitNonce: s.fitNonce + 1 })),

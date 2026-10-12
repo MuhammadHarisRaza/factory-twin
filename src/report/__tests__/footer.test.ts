@@ -11,7 +11,7 @@ import { buildEventReport } from '../../intel/report';
 import type { Evidence } from '../../model/types';
 import { activateScenario, advance, createSim, type SimState } from '../../sim/engine';
 import { attachEvidenceImage, evidenceOf } from '../../sim/events';
-import { buildEventPdf, buildStageShiftPdf, type PdfLib } from '../build';
+import { buildEventPdf, buildOpsPdf, buildStageShiftPdf, type PdfLib } from '../build';
 import { contentWidth } from '../layout';
 import {
   BAND_NOTE,
@@ -25,6 +25,9 @@ import {
   missingReason,
 } from '../model';
 import type { AutoTableFn } from '../render';
+import { OPS_DISCLAIMER, OPS_DISCLAIMER_LIVE_CAMERA, reportEvidence } from '../ops/common';
+import { buildOpsReport } from '../ops';
+import { opsPdfModel } from '../ops/pdf';
 import { stageShiftModel } from '../stageShift';
 import { pdfText } from '../text';
 
@@ -53,7 +56,7 @@ beforeAll(() => {
   attachEvidenceImage(s, live.id, { key: live.id, width: 1, height: 1, frameTime: s.minute }, LIVE(live.cameraId!));
   const twin = evidenceOf(s, stops[1]).find((x) => x.kind === 'camera-snapshot')!;
   attachEvidenceImage(s, twin.id, { key: twin.id, width: 1, height: 1, frameTime: s.minute });
-});
+}, 120_000);
 
 const snapOf = (eventId: string) => evidenceOf(s, s.events.find((e) => e.id === eventId)!).find((x) => x.kind === 'camera-snapshot')!;
 
@@ -123,5 +126,54 @@ describe('PDF footer reflects the provenance of the camera evidence', () => {
     expect(lines.length).toBeLessThanOrEqual(3);
     for (const l of lines) expect(raw).toContain(pdfLiteral(l));
     expect(raw).toContain(pdfText(BAND_NOTE));
+  });
+});
+
+describe('operational report PDFs follow the provenance of the evidence they include (#2, #5)', () => {
+  it('a shift report with a configured-camera frame: camera-frame footer, header note and provenance line', () => {
+    const r = buildOpsReport(s, 'shift', { period: 'shift' });
+    const items = reportEvidence(r.sections);
+    const live = items.find((x) => x.eventId === liveId);
+    expect(live, 'the live frame is among the report evidence').toBeDefined();
+    expect(live!.provenance.origin).toBe('live-camera');
+    expect(live!.caption).toContain('Camera frame · Frame from the configured camera stream');
+    expect(r.disclaimer).toBe(OPS_DISCLAIMER_LIVE_CAMERA);
+    expect(r.disclaimer).not.toMatch(/; camera views are digital-twin renders/);
+    const m = opsPdfModel(r, { images: { [live!.evidenceId]: { dataUrl: PNG, width: 1, height: 1, format: 'PNG' } } });
+    expect(m.disclaimer).toBe(pdfText(OPS_DISCLAIMER_LIVE_CAMERA));
+    expect(m.bandNote).toBe(pdfText(BAND_NOTE_LIVE_CAMERA));
+    const prov = JSON.stringify(m.sections[m.sections.length - 1].blocks);
+    expect(prov).not.toMatch(/MES, camera, vision/);
+    expect(prov).toMatch(/stream configured in this browser/);
+    // A frame no longer held is explained as a camera frame, not a render.
+    const noImg = opsPdfModel(r);
+    const figs = noImg.sections.flatMap((x) => x.blocks).flatMap((b) => (b.kind === 'figures' ? b.items : []));
+    const liveFig = figs.find((f) => f.caption.includes('Camera frame · Frame from the configured camera stream'));
+    expect(liveFig?.missing).toMatch(/camera frame is no longer held/);
+  });
+
+  it('prints the camera-frame footer in full on every page and never the twin-only band note', () => {
+    const r = buildOpsReport(s, 'shift', { period: 'shift' });
+    const live = reportEvidence(r.sections).find((x) => x.eventId === liveId)!;
+    const out = buildOpsPdf(lib, r, { compress: false, imageUrls: { [live.evidenceId]: PNG } });
+    const raw = out.doc.output();
+    const pages = out.doc.getNumberOfPages();
+    const lines = footerLines(out.doc, out.model.disclaimer);
+    expect(lines.length).toBeLessThanOrEqual(3);
+    for (const l of lines) expect(raw.split(pdfLiteral(l)).length - 1).toBeGreaterThanOrEqual(pages);
+    expect(raw).not.toContain('no live plant data');
+    expect(raw.split(pdfLiteral(pdfText(BAND_NOTE_LIVE_CAMERA))).length - 1).toBe(pages);
+  });
+
+  it('keeps the twin wording when the report includes twin renders only', () => {
+    // The packing stage: its belt stop carries the twin render, the kiln infeed stop (live frame) is not in scope.
+    const r = buildOpsReport(s, 'shift', { period: 'shift', scope: 'PACK' });
+    const items = reportEvidence(r.sections);
+    expect(items.some((x) => x.eventId === liveId)).toBe(false);
+    expect(items.some((x) => x.eventId === twinId)).toBe(true);
+    expect(r.disclaimer).toBe(OPS_DISCLAIMER);
+    const m = opsPdfModel(r);
+    expect(m.bandNote).toBe(pdfText(BAND_NOTE));
+    expect(footerLines(new jsPDF(), OPS_DISCLAIMER).length).toBeLessThanOrEqual(3);
   });
 });

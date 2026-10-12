@@ -405,23 +405,6 @@ export function toFrame(g: TileGeometry, x: number, y: number): Pt {
   return [TILE_X + g.dx + TILE_PX / 2 + px * Math.cos(a) - py * Math.sin(a), TILE_Y + g.dy + TILE_PX / 2 + px * Math.sin(a) + py * Math.cos(a)];
 }
 
-/** Zoom that centres the defect box in the frame. */
-export function zoomOnBox(g: TileGeometry): { k: number; tx: number; ty: number } | null {
-  if (!g.box) return null;
-  const [cx, cy] = toFrame(g, g.box.x + g.box.w / 2, g.box.y + g.box.h / 2);
-  const bw = Math.max(40, g.box.w * TILE_SCALE);
-  const bh = Math.max(40, g.box.h * TILE_SCALE);
-  const k = clamp(0.62 * Math.min(FRAME_W / bw, FRAME_H / bh), 1.25, 3.4);
-  return { k, tx: FRAME_W / 2 - k * cx, ty: FRAME_H / 2 - k * cy };
-}
-
-/** A round scale-bar length (mm) that fits the frame at zoom k, and its length in frame units. */
-export function scaleBar(k: number) {
-  const perMm = UNITS_PER_MM * TILE_SCALE * k;
-  const mm = [200, 100, 50, 20, 10, 5].find((v) => v * perMm <= 230) ?? 5;
-  return { mm, len: mm * perMm };
-}
-
 // ── Stills (record detail and raster export) ──────────────────────────────────
 
 export type StillView = {

@@ -6,6 +6,7 @@ import { activateScenario, advance, createSim } from '../../sim/engine';
 import { eventById } from '../../sim/events';
 import type { TruckRuntime } from '../../sim/logistics';
 import { healthAssessments } from '../../intel/insights';
+import { constraintClaim } from '../../intel/summary';
 import {
   LINE_CONVEYORS_BETWEEN,
   LINE_CONVEYORS_WITHIN,
@@ -30,12 +31,16 @@ import {
 describe('twin derivations', () => {
   const s = createSim(11, 3 * 1440 + 9 * 60);
 
-  it('covers every process machine once in the line strip, with one bottleneck', () => {
+  it('covers every process machine once in the line strip, with one constraint marker', () => {
     const ls = lineStatus(s);
     expect(ls.stages.map((x) => x.def.key)).toEqual(['RAW', 'PREP', 'SPRAY', 'PRESS', 'DRY', 'GLAZE', 'DECOR', 'KILN', 'SORT', 'PACK', 'WH']);
     const ids = ls.stages.flatMap((x) => x.machines.map((m) => m.id)).sort();
     expect(ids).toEqual([...PROCESS_MACHINES].sort());
-    expect(ls.stages.filter((x) => x.bottleneck)).toHaveLength(1);
+    // One chip carries the constraint marker: the process stage the constraint claim names.
+    const marked = ls.stages.filter((x) => x.constraint);
+    expect(marked).toHaveLength(1);
+    expect(marked[0].def.stages).toContain(ls.constraint.processStage);
+    expect(marked[0].constraint!.active).toBe(constraintClaim(s).constraining);
     for (const st of ls.stages) {
       const assets = [...st.machines, ...st.conveyors];
       if (!assets.length) {
@@ -58,8 +63,6 @@ describe('twin derivations', () => {
     }
     const shown = new Set([...ls.connectors.flatMap((c) => c.conveyors.map((x) => x.id)), ...Object.values(LINE_CONVEYORS_WITHIN).flat()]);
     expect([...shown].sort()).toEqual([...CONVEYOR_IDS].sort());
-    expect(ls.bottleneckWorking).toBeGreaterThanOrEqual(0);
-    expect(ls.bottleneckWorking).toBeLessThanOrEqual(1);
   });
 
   it('shows a stopped conveyor as stopped (not as a fault) on its connector', () => {

@@ -1,90 +1,62 @@
 /**
- * Factory Copilot page — pure derivations for the "Situation now" context panel and the
- * "Investigate an event" picker. Everything is read from the one simulation state with the same
- * metric functions the workspaces and the copilot use, so the panel and the answers agree.
+ * Copilot workspace — pure derivations for the page header and the incident picker. Everything is
+ * read from the one simulation state with the same KPI functions the Overview uses (current shift),
+ * so the page, the KPI cards and the copilot's answers agree.
  */
-import { CONVEYOR_BY_ID } from '../../model/plant';
-import { EQUIPMENT_BY_ID } from '../../data/equipment';
-import type { AlertSeverity, EventCategory, OperationalState, OpEvent, StageId } from '../../model/types';
+import type { OpEvent } from '../../model/types';
+import { activeIssuesKpi, attentionEvents, goodOutputKpi, periodScope, targetAttainmentKpi } from '../../intel/kpis';
 import type { SimState } from '../../sim/engine';
-import { TRACKED_ASSETS } from '../../sim/engine';
-import { EVENT_CATEGORY_LABEL, activeEvents } from '../../sim/events';
-import { bottleneck, fleetMetrics, lineMetrics, operationalState, resolvePeriod, targetStatus, type TargetStatus } from '../../sim/metrics';
-import type { Metric } from '../../sim/oee';
-import { shiftAt } from '../../sim/time';
+import { lineMetrics, resolvePeriod } from '../../sim/metrics';
 
-export const SEVERITY_RANK: Record<AlertSeverity, number> = { info: 0, warning: 1, serious: 2, critical: 3 };
+/** Incidents to investigate: the issues requiring attention, ranked exactly as on the Overview. */
+export const pickerEvents = (s: SimState): OpEvent[] => attentionEvents(s);
 
-/** Event categories in display order. */
-export const CATEGORY_ORDER: EventCategory[] = ['production', 'quality', 'logistics', 'equipment', 'energy', 'data'];
-
-/** States that mean an asset is not producing for a reason of its own (or its data cannot be trusted). */
-const STOPPED_STATES: OperationalState[] = ['fault', 'stopped', 'unknown', 'disconnected'];
-
-export type CategoryRow = { category: EventCategory; label: string; active: number; worst: AlertSeverity | null };
-
-export type Situation = {
-  minute: number;
-  shiftLabel: string;
-  shiftElapsed: number;
-  outputM2: number;
-  targetM2: number;
-  attainment: number | null;
-  status: TargetStatus;
-  oee: Metric;
-  bottleneck: { stage: StageId; name: string; shifted: boolean; cause: 'constraint' | 'starving' | 'blocking'; windowLabel: string };
-  /** Machines and conveyors stopped, in fault or with stale data, longest first. */
-  stopped: { id: string; name: string; state: OperationalState; since: number }[];
-  trucksOnSite: number;
-  trucksWaiting: number;
-  categories: CategoryRow[];
+export type CopilotSummary = {
+  periodLabel: string;
+  /** The KPI cards' time scope: "Shift A · 06:00–10:30 (to date)". */
+  scope: string;
+  /** "1,869 m²" or null when no output can be counted yet. */
+  good: string | null;
+  /** "85.8 %" or null when no planned time has elapsed. */
+  attainment: string | null;
+  attainmentStatus: string | null;
+  issues: number;
+  worst: OpEvent['severity'] | null;
+  /** One data-driven sentence for the page header. */
+  sentence: string;
 };
 
-/** Active events (condition still present), most urgent first: severity, kiln hold-up, most recent start. */
-export function rankActive(events: OpEvent[]): OpEvent[] {
-  return [...events].sort(
-    (a, b) => SEVERITY_RANK[b.severity] - SEVERITY_RANK[a.severity] || b.acc.constraintMin - a.acc.constraintMin || b.start - a.start || (a.id < b.id ? -1 : 1),
-  );
-}
-
-/** Active events of one category (or all), ranked for the picker. */
-export function pickerEvents(s: SimState, category: EventCategory | null): OpEvent[] {
-  return rankActive(activeEvents(s).filter((e) => !category || e.category === category));
-}
-
-/** Active-event count and highest severity per category (every category listed, zero included). */
-export function categoryRows(events: OpEvent[]): CategoryRow[] {
-  return CATEGORY_ORDER.map((category) => {
-    const xs = events.filter((e) => e.category === category);
-    const worst = xs.reduce<AlertSeverity | null>((w, e) => (w == null || SEVERITY_RANK[e.severity] > SEVERITY_RANK[w] ? e.severity : w), null);
-    return { category, label: EVENT_CATEGORY_LABEL[category], active: xs.length, worst };
-  });
-}
-
-const nameOf = (id: string) => EQUIPMENT_BY_ID[id]?.name ?? CONVEYOR_BY_ID[id]?.name ?? id;
-
-export function situationNow(s: SimState): Situation {
+/** The one-sentence situation shown under the page title (the Overview's KPIs for the current shift). */
+export function copilotSummary(s: SimState): CopilotSummary {
   const p = resolvePeriod('shift', s.minute);
   const lm = lineMetrics(s, p);
-  const bn = bottleneck(s);
-  const fm = fleetMetrics(s, p);
-  const sh = shiftAt(s.minute);
-  const stopped = TRACKED_ASSETS.map((id) => ({ id, name: nameOf(id), state: operationalState(s, id), since: s.machines[id]?.since ?? s.minute }))
-    .filter((x) => STOPPED_STATES.includes(x.state))
-    .sort((a, b) => a.since - b.since);
+  const good = goodOutputKpi(s, p, lm);
+  const att = targetAttainmentKpi(s, p, lm);
+  const issues = activeIssuesKpi(s);
+  const list = attentionEvents(s);
+  const worst = list[0]?.severity ?? null;
+  const scope = periodScope(s, p);
+  const goodText = good.unavailable ? null : `${good.display} ${good.unit}`;
+  const attText = att.unavailable ? null : `${att.display} ${att.unit}`;
+  // The plan in the Good output card's words ("Plan to date 1,782 m² · shift 3,168 m²"): a pro-rata plan is never the shift's.
+  const plan = good.target ? `${good.target.charAt(0).toLowerCase()}${good.target.slice(1)}` : null;
+  // A figure on a stale sorting feed is the card's running value, marked not confirmed — never stated as fact.
+  const stale = good.provenance === 'stale' || att.provenance === 'stale' ? (att.status?.label ?? good.status?.label ?? 'Not confirmed · data stale').replace(/^Not confirmed · /, '') : null;
+  const output =
+    !goodText || !attText || !plan
+      ? 'no planned production time has elapsed yet'
+      : stale
+        ? `output vs plan not confirmed — ${stale} (simulated running total ${goodText} against ${plan})`
+        : `good output ${goodText} against ${plan} — ${attText} of plan (${(att.status?.label ?? '').toLowerCase()})`;
+  const open = list.length ? `${list.length} issue${list.length === 1 ? '' : 's'} require${list.length === 1 ? 's' : ''} attention (highest: ${worst})` : 'no issue requires attention';
   return {
-    minute: s.minute,
-    shiftLabel: sh.label,
-    shiftElapsed: s.minute - sh.start,
-    outputM2: lm.outputM2,
-    targetM2: lm.targetM2,
-    attainment: lm.attainment,
-    status: targetStatus(lm.attainment),
-    oee: lm.oee.oee,
-    bottleneck: { stage: bn.current.stage, name: bn.current.name, shifted: bn.shifted, cause: bn.cause, windowLabel: bn.period.label },
-    stopped,
-    trucksOnSite: fm.onSite,
-    trucksWaiting: fm.waiting,
-    categories: categoryRows(activeEvents(s)),
+    periodLabel: p.label,
+    scope,
+    good: goodText,
+    attainment: attText,
+    attainmentStatus: att.status?.label ?? null,
+    issues: issues.value ?? 0,
+    worst,
+    sentence: `${scope}: ${output}; ${open}. Ask why, or pick an incident to investigate — answers are assembled from the same KPIs and event records as the workspaces.`,
   };
 }

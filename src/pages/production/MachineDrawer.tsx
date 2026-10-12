@@ -5,15 +5,17 @@ import { CONVEYOR_BY_ID, M2_PER_TILE, OPS_BY_ID, STAGE_BY_ID } from '../../model
 import type { DowntimeEvent } from '../../model/types';
 import { conveyorMetrics, downtimeIn, machineMetrics, operationalState, resolvePeriod, type PeriodKey } from '../../sim/metrics';
 import { useSimValue } from '../../sim/store';
-import { formatClock, formatDateTime, formatDuration } from '../../sim/time';
+import { formatDateTime, formatDuration } from '../../sim/time';
 import { EventList } from '../../ui/events/EventList';
 import { ColumnChart, TipRow } from '../../ui/kit/charts';
 import { DataTable, type Column } from '../../ui/kit/DataTable';
 import { fmtInt, fmtPct } from '../../ui/kit/format';
 import { MetricText, OperationalStatus, SourceTag } from '../../ui/kit/Status';
+import { ContextVideo } from '../../video/ContextVideo';
 import { assetName, m2 } from './common';
 import { granularityFor, machineLoss, machineTrend, reasonLabel } from './derive';
 import { assetEvents, consequenceEvents } from './equipment';
+import { sinceLabel } from './stage/derive';
 import { contributionParts, equipmentContribution, lossLedger } from './loss';
 
 type EvRow = { ev: DowntimeEvent };
@@ -25,7 +27,6 @@ type EvRow = { ev: DowntimeEvent };
  */
 export function EquipmentDrawer({ id, periodKey, onClose }: { id: string; periodKey: PeriodKey; onClose: () => void }) {
   const finance = useApp((s) => s.finance);
-  const tariffs = useApp((s) => s.tariffs);
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => e.key === 'Escape' && onClose();
     window.addEventListener('keydown', onKey);
@@ -37,7 +38,7 @@ export function EquipmentDrawer({ id, periodKey, onClose }: { id: string; period
     (s) => {
       const p = resolvePeriod(periodKey, s.minute);
       const g = granularityFor(p);
-      const L = lossLedger(s, p, finance, tariffs);
+      const L = lossLedger(s, p, finance);
       const contribution = equipmentContribution(s, p, L).find((c) => c.equipmentId === id) ?? null;
       const own = assetEvents(s, id, p);
       const downtime: EvRow[] = downtimeIn(s, p)
@@ -60,7 +61,7 @@ export function EquipmentDrawer({ id, periodKey, onClose }: { id: string; period
         loss: conveyor ? null : machineLoss(s, id, p),
       };
     },
-    [id, periodKey, finance, tariffs],
+    [id, periodKey, finance],
   );
   const where = conveyor
     ? `${conveyor.from ? STAGE_BY_ID[conveyor.from].name : 'Supply'} → ${conveyor.to ? STAGE_BY_ID[conveyor.to].name : 'Dispatch'} · conveyor`
@@ -90,7 +91,7 @@ export function EquipmentDrawer({ id, periodKey, onClose }: { id: string; period
             </small>
           </div>
           <div className="spacer" />
-          <button className="btn ghost icon" onClick={onClose} title="Close (Esc)">
+          <button type="button" className="btn ghost icon" onClick={onClose} title="Close (Esc)" aria-label="Close the drill-down">
             <X size={16} />
           </button>
         </div>
@@ -99,16 +100,16 @@ export function EquipmentDrawer({ id, periodKey, onClose }: { id: string; period
             <OperationalStatus state={d.op} />
             {d.rt && (
               <span className="muted">
-                since {formatClock(d.rt.since)} · {formatDuration(d.now - d.rt.since)}
+                since {sinceLabel(d.rt.since, d.now)} · {formatDuration(d.now - d.rt.since)}
               </span>
             )}
             <div className="spacer" />
             {latest && (
-              <button className="btn sm" onClick={() => openEvent(latest.id)} title={`Open the report of ${latest.id}`}>
+              <button type="button" className="btn sm" onClick={() => openEvent(latest.id)} title={`Open the report of ${latest.id}`}>
                 <FileText size={13} aria-hidden /> Latest event report
               </button>
             )}
-            <button className="btn sm" onClick={() => openEquipment(id)} title="Select and frame this asset in the 3D Factory Twin">
+            <button type="button" className="btn sm" onClick={() => openEquipment(id)} title="Select and frame this asset in the 3D Factory Twin">
               <MapPin size={13} aria-hidden /> View in 3D
             </button>
           </div>
@@ -234,6 +235,13 @@ export function EquipmentDrawer({ id, periodKey, onClose }: { id: string; period
               />
             </section>
           )}
+
+          <section>
+            <h3 className="prod-h3">
+              Reference video <span className="muted">· illustrates the equipment type — not this plant, not a live feed</span>
+            </h3>
+            <ContextVideo context={{ equipmentId: id }} compact />
+          </section>
 
           <section>
             <h3 className="prod-h3">

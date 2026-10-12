@@ -22,6 +22,7 @@ import { formatClock } from '../../sim/time';
 import { equipmentBounds } from '../../store';
 import { SEVERITY } from '../../ui/kit/Status';
 import { CONVEYOR_GEOMETRY } from '../Conveyors';
+import { useSceneTabIndex } from '../embedded';
 import { pinAnchor } from '../status/AssetPins';
 import { outlineLoop } from '../status/model';
 import { useBoundsCount } from '../status/shared';
@@ -69,6 +70,7 @@ function FocusLoop({ loop, start, y = RING_Y, dim = 1 }: { loop: Loop; start: St
 }
 
 function EventPin({ ev, plan, lift }: { ev: OpEvent; plan: FocusPlan; lift: 0 | 1 | 2 }) {
+  const tabIndex = useSceneTabIndex();
   const sev = SEVERITY[ev.severity];
   const Icon = sev.icon;
   const state =
@@ -84,12 +86,12 @@ function EventPin({ ev, plan, lift }: { ev: OpEvent; plan: FocusPlan; lift: 0 | 
     .join('\n');
   return (
     <div className={`ev-pin sev-${sev.tone} lift-${lift}`}>
-      <button className="ev-pin-open" onClick={() => openEvent(ev.id)} title={title}>
+      <button className="ev-pin-open" onClick={() => openEvent(ev.id)} title={title} tabIndex={tabIndex}>
         <Icon size={12} strokeWidth={2.4} aria-hidden />
         <span className="num">{ev.id}</span>
         <span className="ev-pin-type">· {EVENT_TYPE_LABEL[ev.type]}</span>
       </button>
-      <button className="ev-pin-close" onClick={clearEventFocus} aria-label={`Dismiss the marker for ${ev.id}`} title="Dismiss marker">
+      <button className="ev-pin-close" onClick={clearEventFocus} aria-label={`Dismiss the marker for ${ev.id}`} title="Dismiss marker" tabIndex={tabIndex}>
         <X size={11} strokeWidth={2.4} aria-hidden />
       </button>
     </div>

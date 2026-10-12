@@ -1,6 +1,29 @@
 import { beforeAll, describe, expect, it } from 'vitest';
 import { activateScenario, advance, createSim, type SimState } from '../../sim/engine';
-import { ALL_EVENTS_FILTERS, DEFAULT_FILTERS, PAGE_SIZE, facetCounts, filterEvents, inWindow, isDefault, matchesQuery, pageBounds, pageOf, searchText, windowRange, type EventFilters } from './filters';
+import { MONITORED_STAGE_BY_ID } from '../../model/plant';
+import { REPORT_PERIODS, REPORT_TYPES, buildOpsReport, type OpsReportType } from '../../report/ops';
+import { isSignificant } from '../../report/ops/select';
+import { eventInMonitoredStage } from '../../sim/events';
+import { resolvePeriod } from '../../sim/metrics';
+import {
+  ALL_EVENTS_FILTERS,
+  CATEGORY_ORDER,
+  DEFAULT_FILTERS,
+  PAGE_SIZE,
+  WINDOW_OPTIONS,
+  facetCounts,
+  filterEvents,
+  inWindow,
+  isDefault,
+  matchesQuery,
+  pageBounds,
+  pageOf,
+  reportFilters,
+  searchText,
+  windowOptions,
+  windowRange,
+  type EventFilters,
+} from './filters';
 
 let s: SimState;
 const ctx = () => ({ now: s.minute, vehicleLabel: (id: string) => s.logistics.vehicles[id]?.label });
@@ -13,7 +36,7 @@ beforeAll(() => {
   activateScenario(s, { kind: 'conveyor-stop', equipmentId: 'CV-KIN', end: t0 + 20, label: 'Kiln infeed stop' });
   activateScenario(s, { kind: 'machine-stop', equipmentId: 'E-PRS1', end: null, label: 'Press stop' });
   advance(s, t0 + 30);
-});
+}, 120_000);
 
 describe('event filters', () => {
   it('lists newest first and respects the time window', () => {
@@ -76,6 +99,30 @@ describe('event filters', () => {
     expect(fc.condition.active + fc.condition.cleared).toBe(fc.condition.all);
   });
 
+  it('filters by production stage (the Production rule) and by source, and offers no energy category', () => {
+    const c = ctx();
+    const kiln = filterEvents(s.events, f({ window: 'all', stage: 'KILN' }), c);
+    expect(kiln.length).toBeGreaterThan(0);
+    expect(kiln.every((e) => eventInMonitoredStage(MONITORED_STAGE_BY_ID.KILN, e))).toBe(true);
+    expect(kiln.some((e) => e.asset.equipmentId === 'CV-KIN')).toBe(true);
+    const press = filterEvents(s.events, f({ window: 'all', stage: 'PRESS' }), c);
+    expect(press.some((e) => e.asset.equipmentId === 'E-PRS1')).toBe(true);
+    const scen = filterEvents(s.events, f({ window: 'all', source: 'scenario' }), c);
+    expect(scen.length).toBeGreaterThan(0);
+    expect(scen.every((e) => e.source === 'scenario')).toBe(true);
+    expect(filterEvents(s.events, f({ window: 'all', source: 'simulation' }), c).every((e) => e.source === 'simulation')).toBe(true);
+    const fc = facetCounts(s.events, f({ window: 'all', stage: 'KILN' }), c);
+    // Stage counts ignore the stage filter; source counts honour it.
+    expect(fc.stage.KILN).toBe(kiln.length);
+    expect(fc.stage.all).toBe(s.events.length);
+    expect(fc.source.simulation + fc.source.scenario).toBe(fc.source.all);
+    expect(fc.source.all).toBe(kiln.length);
+    expect(CATEGORY_ORDER).not.toContain('energy');
+    // Rule ids are searchable (the rules tab lists a rule's events this way).
+    const conv = s.events.find((e) => e.trigger.ruleId === 'R-CONV')!;
+    expect(filterEvents(s.events, f({ window: 'all', query: 'R-CONV' }), c).map((e) => e.id)).toContain(conv.id);
+  });
+
   it('paginates', () => {
     expect(pageBounds(0, 0)).toEqual({ page: 0, pages: 1, from: 0, to: 0 });
     expect(pageBounds(95, 1, 40)).toEqual({ page: 1, pages: 3, from: 40, to: 80 });
@@ -107,3 +154,57 @@ describe('event filters', () => {
   });
 });
 
+describe("a report's events in the Events tab (#0, #23)", () => {
+  it('the report filters list exactly the events of every report type, period and scope', () => {
+    const c = ctx();
+    for (const def of REPORT_TYPES) {
+      if (def.id === 'incident') continue;
+      // The whole line and two stage scopes (stage membership is the same rule for every stage).
+      const scopes = def.scopes.length ? [def.scopes[0], ...def.scopes.slice(1).filter((x) => x === 'KILN' || x === 'GLAZE')] : (['line'] as const);
+      for (const period of REPORT_PERIODS)
+        for (const scope of scopes) {
+          const r = buildOpsReport(s, def.id as OpsReportType, { period, scope });
+          const listed = filterEvents(s.events, reportFilters(r.eventQuery), c).map((e) => e.id);
+          expect(new Set(listed), `${def.id} · ${period} · ${scope}`).toEqual(new Set(r.events.map((e) => e.id)));
+          expect(listed.length).toBe(r.events.length);
+        }
+    }
+  });
+
+  it('sets the window, the significance rule, the categories and the stage, and clears the rest', () => {
+    const shift = reportFilters({ period: '7d', categories: ['production', 'equipment', 'data'], stage: null });
+    expect(shift).toMatchObject({ window: '7d', significantOnly: true, category: 'all', categories: ['production', 'equipment', 'data'], stage: 'all', status: 'all', query: '', sessionOnly: false });
+    expect(reportFilters({ period: 'prev-shift', categories: ['quality'], stage: 'GLAZE' })).toMatchObject({ window: 'prev-shift', category: 'quality', categories: null, stage: 'GLAZE' });
+    expect(reportFilters({ period: 'shift', categories: null, stage: 'KILN' })).toMatchObject({ category: 'all', categories: null, stage: 'KILN' });
+    expect(isDefault(shift)).toBe(false);
+  });
+
+  it('"root events, warning and above" keeps only root events of warning severity or more', () => {
+    const c = ctx();
+    const sig = filterEvents(s.events, f({ window: 'all', significantOnly: true }), c);
+    expect(sig.length).toBeGreaterThan(0);
+    expect(sig.every((e) => !e.consequenceOf && e.severity !== 'info')).toBe(true);
+    expect(sig.length).toBe(s.events.filter((e) => isSignificant(e)).length);
+    // A category group keeps its categories only; the category facet counts inside the group.
+    const grp = f({ window: 'all', categories: ['production', 'equipment'] });
+    expect(filterEvents(s.events, grp, c).every((e) => e.category === 'production' || e.category === 'equipment')).toBe(true);
+    expect(facetCounts(s.events, grp, c).category.quality).toBe(0);
+  });
+
+  it('windows named like the header periods are those periods; the previous shift ends at its end', () => {
+    const now = s.minute;
+    for (const k of ['shift', 'today', '24h', '7d'] as const) {
+      const w = windowRange(k, now);
+      expect(w.from, k).toBe(resolvePeriod(k, now).from);
+      expect(w.to).toBe(now);
+    }
+    const prev = resolvePeriod('prev-shift', now);
+    expect(windowRange('prev-shift', now)).toMatchObject({ from: prev.from, to: prev.to });
+    // An event that started exactly when the previous shift ended belongs to the current one.
+    expect(inWindow({ start: prev.to, end: prev.to + 5 } as never, windowRange('prev-shift', now), now)).toBe(false);
+    expect(inWindow({ start: prev.to - 1, end: prev.to + 5 } as never, windowRange('prev-shift', now), now)).toBe(true);
+    // The extra windows are offered while selected.
+    expect(windowOptions('24h')).toBe(WINDOW_OPTIONS);
+    expect(windowOptions('prev-shift').map((o) => o.value)).toEqual(['4h', 'shift', 'prev-shift', '24h', '7d', 'all']);
+  });
+});

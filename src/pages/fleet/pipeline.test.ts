@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import { activateScenario, advance, createSim } from '../../sim/engine';
 import type { TruckRuntime } from '../../sim/logistics';
-import { fleetMetrics, resolvePeriod } from '../../sim/metrics';
+import { fleetMetrics, internalActivity, resolvePeriod } from '../../sim/metrics';
 import {
   CONGESTION_TRUCKS,
   PIPELINE_STAGES,
@@ -23,7 +23,7 @@ import {
   zoneRows,
 } from './pipeline';
 
-describe('vehicle monitoring pipeline', () => {
+describe('fleet & movement pipeline', () => {
   const s = createSim(11, 2 * 1440 + 360);
 
   it('puts every active truck in exactly one stage; on-site count matches fleetMetrics', () => {
@@ -85,12 +85,20 @@ describe('vehicle monitoring pipeline', () => {
     for (const r of rows) {
       expect(r.place == null).toBe(!r.active);
       if (r.loading != null) expect(r.loading).toBeGreaterThanOrEqual(0);
+      // Departed rows are completed visits; on-site rows are active (or before gate-in) — none look incomplete.
+      expect(r.integrity.kind, r.id).toBe(r.active ? (r.v.visit!.gateIn <= s.minute ? 'active' : 'approaching') : 'completed');
     }
     const internal = internalTableRows(s);
     expect(internal).toHaveLength(6);
     for (const r of internal) {
       expect(['moving', 'working', 'idle']).toContain(r.movement);
       expect(r.handled60).toBeGreaterThanOrEqual(0);
+      // The table's dwell is the time at the current stop, not zone residency.
+      const a = internalActivity(r.v, s.minute);
+      expect(r.stationaryMin).toBe(a.stationaryMin);
+      expect(r.zoneSince).toBe(a.zoneSince);
+      expect(r.moving).toBe(r.movement === 'moving');
+      expect('dwell' in r).toBe(false);
     }
     const ls = loadingStats(s, p);
     if (ls.n) expect(ls.avg!).toBeGreaterThan(0);

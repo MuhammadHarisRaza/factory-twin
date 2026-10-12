@@ -2,28 +2,16 @@
  * SVG rendering of an illustrative inspection frame: a procedural tile surface for the
  * batch product, the painted defect, gauge overlays and the simulated detection box.
  * This is a drawing of a simulated record — no image is captured or classified.
+ *
+ * FrameStill is the evidence image (rasterised through src/twin/inspectionImage.ts for the
+ * Quality workspace, the in-app report and the PDF); FrameThumb is the small chooser image of a
+ * record in an event's record strip.
  */
-import { memo, useId, useMemo, type KeyboardEvent } from 'react';
+import { memo, useId, useMemo } from 'react';
 import { DEFECTS } from '../../model/plant';
 import type { QualityInspection } from '../../model/types';
 import type { Frame } from './frames';
-import {
-  FRAME_H,
-  FRAME_W,
-  TILE,
-  TILE_PX,
-  TILE_X,
-  TILE_Y,
-  scaleBar,
-  stillScaleBar,
-  stillView,
-  tileGeometry,
-  tileTransform,
-  zoomOnBox,
-  type Box,
-  type DefectPaint,
-  type TileGeometry,
-} from './tileGeometry';
+import { TILE, stillScaleBar, stillView, tileGeometry, tileTransform, type Box, type DefectPaint, type TileGeometry } from './tileGeometry';
 
 const SEV_COLOR: Record<NonNullable<QualityInspection['severity']>, string> = {
   minor: 'var(--warning)',
@@ -272,9 +260,6 @@ function BoxMark({ box, color, thin }: { box: Box; color: string; thin?: boolean
   );
 }
 
-const LABEL_FS = 32;
-const LABEL_H = 44;
-
 /** Thumbnail of a frame (tile only, box without label). */
 export const FrameThumb = memo(
   function FrameThumb({ frame }: { frame: Frame }) {
@@ -292,122 +277,6 @@ export const FrameThumb = memo(
   },
   (a, b) => a.frame.id === b.frame.id && a.frame.sku === b.frame.sku,
 );
-
-/** Main viewer frame: camera view of the tile on the roller conveyor. */
-export function FrameView({
-  frame,
-  zoomed,
-  onBoxClick,
-  label,
-}: {
-  frame: Frame;
-  zoomed: boolean;
-  onBoxClick?: () => void;
-  /** Accessible description of the frame. */
-  label: string;
-}) {
-  const uid = useUid();
-  // eslint-disable-next-line react-hooks/exhaustive-deps
-  const g = useMemo(() => tileGeometry(frame), [frame.id, frame.sku]);
-  const z = zoomed ? zoomOnBox(g) : null;
-  const k = z?.k ?? 1;
-  const bar = scaleBar(k);
-  const rec = frame.rec;
-  const color = severityColor(rec?.severity ?? null);
-  const text = detectionLabel(rec);
-  const lw = text.length * LABEL_FS * 0.6 + 24;
-  const box = g.box;
-  const lx = box ? Math.min(Math.max(box.x, -40), TILE + 40 - lw) : 0;
-  // Label above the box; below it when the box touches the top edge; inside it for full-tile boxes.
-  const ly = !box
-    ? 0
-    : box.y > LABEL_H + 10
-      ? box.y - LABEL_H - 6
-      : box.y + box.h + LABEL_H + 6 <= TILE
-        ? box.y + box.h + 6
-        : box.y + 8;
-  const onKey = (e: KeyboardEvent) => {
-    if (onBoxClick && (e.key === 'Enter' || e.key === ' ')) {
-      e.preventDefault();
-      e.stopPropagation();
-      onBoxClick();
-    }
-  };
-
-  return (
-    <svg viewBox={`0 0 ${FRAME_W} ${FRAME_H}`} preserveAspectRatio="xMidYMid meet" className="q-frame-svg" role="img" aria-label={label}>
-      <defs>
-        <pattern id={`${uid}-rollers`} width="96" height="200" patternUnits="userSpaceOnUse">
-          <rect width="96" height="200" fill="#0c0f11" />
-          <rect x="8" width="80" height="200" fill="#1c2226" />
-          <rect x="28" width="12" height="200" fill="#262d32" />
-          <rect x="74" width="6" height="200" fill="#161b1e" />
-        </pattern>
-      </defs>
-      <g
-        className="q-zoom"
-        style={{ transform: z ? `translate(${z.tx}px, ${z.ty}px) scale(${z.k})` : 'translate(0px, 0px) scale(1)', transformOrigin: '0 0' }}
-      >
-        <rect x={-3200} y={-2000} width={8000} height={5000} fill={`url(#${uid}-rollers)`} />
-        <rect x={-3200} y={12} width={8000} height={22} fill="#272e33" />
-        <rect x={-3200} y={FRAME_H - 34} width={8000} height={22} fill="#272e33" />
-        <g transform={tileTransform(g)}>
-          <TileBody g={g} uid={uid} shadow />
-          {g.defect && <GaugeOverlay d={g.defect} labels={!zoomed} />}
-          {box && (
-            <g className="q-det">
-              <BoxMark box={box} color={color} />
-              <g className={`q-det-label ${zoomed ? 'hidden' : ''}`} style={{ color }} transform={`translate(${lx.toFixed(1)} ${ly.toFixed(1)})`} pointerEvents="none">
-                <rect width={lw} height={LABEL_H} rx={4} fill="currentColor" />
-                <text x={12} y={LABEL_H / 2} dominantBaseline="central" className="q-det-text">
-                  {text}
-                </text>
-              </g>
-              {onBoxClick && (
-                <rect
-                  className={`q-det-hit ${zoomed ? 'out' : ''}`}
-                  x={box.x - 8}
-                  y={box.y - 8}
-                  width={box.w + 16}
-                  height={box.h + 16}
-                  fill="transparent"
-                  role="button"
-                  tabIndex={0}
-                  aria-label={zoomed ? 'Show the full tile' : `Zoom to the ${rec?.defect ? DEFECTS[rec.defect].label.toLowerCase() : 'defect'}`}
-                  onClick={(e) => {
-                    e.stopPropagation();
-                    onBoxClick();
-                  }}
-                  onKeyDown={onKey}
-                />
-              )}
-            </g>
-          )}
-        </g>
-      </g>
-      {/* Field-of-view reticle and scale bar (camera overlay, not zoomed). */}
-      <g className="q-reticle" fill="none">
-        {(
-          [
-            [TILE_X - 26, TILE_Y - 26, 1, 1],
-            [TILE_X + TILE_PX + 26, TILE_Y - 26, -1, 1],
-            [TILE_X + TILE_PX + 26, TILE_Y + TILE_PX + 26, -1, -1],
-            [TILE_X - 26, TILE_Y + TILE_PX + 26, 1, -1],
-          ] as const
-        ).map(([x, y, sx, sy], i) => (
-          <path key={i} d={`M${x} ${y + sy * 44} L${x} ${y} L${x + sx * 44} ${y}`} />
-        ))}
-      </g>
-      <g className="q-scalebar" transform={`translate(${FRAME_W - 60 - bar.len} ${FRAME_H - 64})`}>
-        <rect x={-14} y={-38} width={bar.len + 28} height={58} rx={4} className="q-scalebar-bg" />
-        <path d={`M0 0 L${bar.len} 0 M0 -9 L0 9 M${bar.len} -9 L${bar.len} 9`} />
-        <text x={bar.len / 2} y={-14} textAnchor="middle">
-          {bar.mm} mm
-        </text>
-      </g>
-    </svg>
-  );
-}
 
 // ── Stills: record detail and raster export ──────────────────────────────────
 

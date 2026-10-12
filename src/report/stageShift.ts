@@ -54,8 +54,8 @@ export function stageEvents(s: SimState, stageId: MonitoredStageId, p: Period) {
 export const QUALITY_NOT_ADDED = 'several quality rules can describe the same rejects';
 
 /**
- * Whether a root event's estimate is added to the stage's cost total. Production, logistics and
- * energy estimates value distinct quantities; quality events can overlap (the reject-rate, defect-count
+ * Whether a root event's estimate is added to the stage's cost total. Production and logistics
+ * estimates value distinct quantities; quality events can overlap (the reject-rate, defect-count
  * and defect-rate rules all count the same rejected tiles), so they are listed but not added.
  */
 export const isAddedToStageTotal = (e: OpEvent) => !e.consequenceOf && e.category !== 'quality';
@@ -141,6 +141,8 @@ export function stageShiftModel(
   ]);
 
   // 3 Equipment states
+  // A time on another plant day carries its date (a shift can cross midnight; a state can begin days earlier).
+  const at = (t: number) => (Math.floor(t / 1440) === Math.floor(s.minute / 1440) ? plantClock(t) : plantTime(t));
   const assets = [...st.equipment, ...st.conveyors.filter((c) => !st.equipment.includes(c))];
   sec('Equipment states', [
     {
@@ -151,7 +153,7 @@ export function stageShiftModel(
         const name = CONVEYOR_BY_ID[id]?.name ?? EQUIPMENT_BY_ID[id]?.name ?? id;
         if (!m) return [id, name, 'Not monitored as a machine', '—', '—', 'Tracked through logistics records'];
         const state = OPERATIONAL_STATE_LABEL[operationalState(s, id)];
-        const feed = s.feeds[id]?.status === 'stale' ? `Stale since ${plantClock(s.feeds[id].since)}` : 'Simulated · updating';
+        const feed = s.feeds[id]?.status === 'stale' ? `Stale since ${at(s.feeds[id].since)}` : 'Simulated · updating';
         let figures = '—';
         if (CONVEYOR_BY_ID[id]) {
           const c = conveyorMetrics(s, id, p);
@@ -160,7 +162,7 @@ export function stageShiftModel(
           const mm = machineMetrics(s, id, p);
           figures = `OEE ${pct(mm.oee.oee)} (A ${pct(mm.oee.availability)} · P ${pct(mm.oee.performance)} · Q ${pct(mm.oee.quality)}) · ${n0(mm.totals.count)} tiles`;
         }
-        return [id, name, state, plantClock(m.since), feed, figures];
+        return [id, name, state, at(m.since), feed, figures];
       }),
       widths: [18, 36, 26, 14, 26, 'auto'],
     },
@@ -173,11 +175,11 @@ export function stageShiftModel(
       head: ['Event', 'Start', 'Type', 'Severity', 'Status', 'Condition', 'Duration', 'Title'],
       rows: events.map((e) => [
         e.id,
-        plantClock(e.start),
+        at(e.start),
         EVENT_TYPE_LABEL[e.type],
         e.severity.charAt(0).toUpperCase() + e.severity.slice(1),
         EVENT_STATUS_LABEL[e.status],
-        e.end == null ? 'Active' : `Cleared ${plantClock(e.end)}`,
+        e.end == null ? 'Active' : `Cleared ${at(e.end)}`,
         formatDuration((e.end ?? s.minute) - e.start),
         e.title,
       ]),
@@ -209,7 +211,7 @@ export function stageShiftModel(
     [
       'Estimated cost of root events',
       fmtMoney(finance.currency, total),
-      `${plural(nAdded, 'production / logistics / energy root event')}; quality events are listed per event, not added; consequence events are valued under their root, never twice`,
+      `${plural(nAdded, 'production / logistics root event')}; quality events are listed per event, not added; consequence events are valued under their root, never twice`,
     ],
     ...(pricedQuality.length
       ? [['Quality events (not added)', `${plural(pricedQuality.length, 'event')} · see Estimated cost by event`, `Valued per event, not added to the total: ${QUALITY_NOT_ADDED}`]]

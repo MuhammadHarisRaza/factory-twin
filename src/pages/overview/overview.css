@@ -1,0 +1,392 @@
+/* ==========================================================================
+   Overview (src/pages/OverviewPage.tsx) — tokens of src/styles.css only.
+   Header → summary → KPIs → [ 3D model | issues ] → flow strip across both
+   (side by side from 1280 px, stacked below; never a horizontal page scroll).
+   ========================================================================== */
+
+/* Header context: separated items. */
+.ov-ctx-i + .ov-ctx-i::before {
+  content: '·';
+  margin-right: 10px;
+  color: var(--text-4);
+}
+.ov-ctx-i b {
+  color: var(--text-2);
+  font-weight: var(--fw-medium);
+}
+
+/* Executive summary (icon + words). */
+.ov-sum {
+  display: inline-flex;
+  align-items: flex-start;
+  gap: 8px;
+}
+.ov-sum > svg {
+  flex: none;
+  margin-top: 3px;
+  color: var(--neutral);
+}
+.ov-sum.normal > svg {
+  color: var(--good);
+}
+.ov-sum.attention > svg {
+  color: var(--warning);
+}
+
+/* KPI cards: the definition is the wrapper's tooltip; cards fill the row height. */
+.ov-kpi {
+  display: flex;
+  min-width: 0;
+}
+.ov-kpi > .kc {
+  flex: 1;
+}
+
+/* ── Work area ─────────────────────────────────────────────────────────── */
+
+/* No container queries on ancestors of the model slot: containment could create a stacking context
+   and put the embedded scene (positioned in the content area) above the slot's controls.
+   From a 1280 px viewport the issues (the priority block) sit beside the model, as high as it, and the
+   flow strip spans both columns below; under 1280 px everything stacks: model, issues, flow. */
+.ov-work {
+  --ov-model-h: clamp(420px, 62vh, 660px);
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) 340px;
+  grid-template-areas:
+    'twin issues'
+    'flow flow';
+  gap: var(--s-4);
+  align-items: start;
+  min-width: 0;
+}
+/* Short laptop screens: a lower model keeps the KPIs, the model and the top of the flow strip in view. */
+@media (max-height: 820px) {
+  .ov-work {
+    --ov-model-h: clamp(380px, 54vh, 660px);
+  }
+}
+.ov-twin-box {
+  grid-area: twin;
+}
+.ov-issues {
+  grid-area: issues;
+}
+.ov-flow {
+  grid-area: flow;
+  min-width: 0;
+}
+@media (max-width: 1279px) {
+  .ov-work {
+    grid-template-columns: minmax(0, 1fr);
+    grid-template-areas:
+      'twin'
+      'issues'
+      'flow';
+  }
+}
+
+/* ── Embedded 3D model ─────────────────────────────────────────────────── */
+
+.ov-twin-box {
+  min-width: 0;
+  scroll-margin-top: var(--s-4);
+}
+.ov .ov-twin {
+  height: var(--ov-model-h);
+  min-height: 380px;
+}
+
+/* Controls drawn over the model: small dark chips at the edges. */
+.ov-ctl {
+  position: absolute;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 5px;
+  border: 1px solid var(--line-2);
+  border-radius: var(--r-3);
+  background: #12171ceb;
+  box-shadow: var(--shadow-1);
+  max-width: calc(100% - 24px);
+}
+.ov-ctl-tl {
+  top: 12px;
+  left: 12px;
+  flex-wrap: wrap;
+}
+.ov-ctl-tr {
+  top: 12px;
+  right: 12px;
+}
+.ov-ctl-l {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  padding: 0 4px 0 5px;
+  font-size: var(--fs-11);
+  color: var(--text-2);
+  white-space: nowrap;
+}
+.ov-zone {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  padding-left: 6px;
+  color: var(--text-2);
+}
+.ov-select {
+  height: 26px;
+  max-width: 190px;
+  font-size: var(--fs-11);
+}
+.ov-btn {
+  background: var(--bg-2);
+}
+.ov-ctl .seg {
+  background: var(--bg-0);
+}
+.ov-ctl .seg button {
+  height: 22px;
+  font-size: var(--fs-11);
+}
+
+/* Provenance + interaction hint (bottom right). */
+.ov-ctl-br {
+  position: absolute;
+  right: 12px;
+  bottom: 12px;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 4px 8px 4px 5px;
+  border-radius: var(--r-3);
+  background: #12171cd9;
+  pointer-events: auto;
+}
+.ov-hint {
+  font-size: var(--fs-11);
+  color: var(--text-2);
+  white-space: nowrap;
+}
+
+/* The one selection card (bottom left). */
+.ov-sel {
+  position: absolute;
+  left: 12px;
+  bottom: 12px;
+  width: min(310px, calc(100% - 24px));
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  padding: 11px 12px 10px;
+  border: 1px solid var(--line-2);
+  border-radius: var(--r-3);
+  background: #12171cf2;
+  box-shadow: var(--shadow-2);
+}
+.ov-sel-h {
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+  min-width: 0;
+}
+.ov-sel-t {
+  font-size: var(--fs-14);
+  font-weight: var(--fw-semibold);
+  line-height: 1.3;
+}
+.ov-sel-sub {
+  font-size: var(--fs-11);
+  color: var(--text-3);
+}
+.ov-sel-s {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px;
+}
+.ov-sel-stale {
+  font-size: var(--fs-11);
+  line-height: 1.3;
+  color: var(--text-2);
+}
+.ov-sel-f {
+  margin: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+}
+.ov-sel-f > div {
+  display: flex;
+  justify-content: space-between;
+  gap: 10px;
+  font-size: var(--fs-12);
+}
+.ov-sel-f dt {
+  color: var(--text-3);
+  white-space: nowrap;
+}
+.ov-sel-f dd {
+  margin: 0;
+  text-align: right;
+  min-width: 0;
+  color: var(--text-1);
+  font-variant-numeric: tabular-nums;
+}
+.ov-sel-a {
+  display: flex;
+  gap: 6px;
+  margin-top: 2px;
+}
+
+/* Narrow model (under ≈ 720 px wide): stack the top controls. That is a stacked page under 980 px (the
+   hint is dropped there), and the model beside the issues column at 1280–1339 px with the navigation
+   open (the hint wraps so it clears the selection card). */
+@media (max-width: 980px), (min-width: 1280px) and (max-width: 1339px) {
+  .ov-ctl-tr {
+    top: 58px;
+    left: 12px;
+    right: auto;
+  }
+}
+@media (max-width: 980px) {
+  .ov-hint {
+    display: none;
+  }
+}
+@media (min-width: 1280px) and (max-width: 1339px) {
+  .ov-hint {
+    max-width: 190px;
+    white-space: normal;
+    line-height: 1.3;
+  }
+}
+@media (max-width: 700px) {
+  .ov-ctl-l {
+    display: none;
+  }
+  .ov-ctl-br {
+    display: none;
+  }
+}
+
+/* ── Issues requiring attention ────────────────────────────────────────── */
+
+.ov-issues {
+  min-width: 0;
+  scroll-margin-top: var(--s-4);
+}
+/* Beside the model: as high as the model, the list scrolls under its header. */
+@media (min-width: 1280px) {
+  .ov-issues {
+    max-height: var(--ov-model-h);
+  }
+  .ov-issues > .sec-b {
+    flex: 1 1 auto;
+    min-height: 0;
+    overflow-y: auto;
+  }
+}
+.ov-count {
+  display: inline-block;
+  min-width: 20px;
+  height: 18px;
+  margin-left: 8px;
+  padding: 0 6px;
+  border-radius: 9px;
+  background: var(--bg-3);
+  color: var(--text-1);
+  font-size: var(--fs-11);
+  font-weight: var(--fw-medium);
+  line-height: 18px;
+  text-align: center;
+  vertical-align: 1px;
+}
+.ov-iss {
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+.ov-is {
+  position: relative;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  padding: 12px var(--s-4) 12px calc(var(--s-4) + 2px);
+  border-bottom: 1px solid var(--line);
+}
+.ov-is::before {
+  content: '';
+  position: absolute;
+  left: 0;
+  top: 12px;
+  bottom: 12px;
+  width: 3px;
+  border-radius: 0 2px 2px 0;
+  background: var(--warning);
+}
+.ov-is.sev-serious::before {
+  background: var(--serious);
+}
+.ov-is.sev-critical::before {
+  background: var(--critical);
+}
+.ov-is-top {
+  display: flex;
+  align-items: center;
+  gap: 4px 10px;
+  flex-wrap: wrap;
+}
+.ov-is-id {
+  margin-left: auto;
+  font-size: var(--fs-11);
+  color: var(--text-3);
+}
+.ov-is-title {
+  margin: 0;
+  font-size: var(--fs-13);
+  font-weight: var(--fw-semibold);
+  line-height: 1.35;
+  color: var(--text-1);
+}
+.ov-is-f {
+  margin: 0;
+  display: grid;
+  grid-template-columns: 74px minmax(0, 1fr);
+  gap: 3px 10px;
+  font-size: var(--fs-12);
+  line-height: 1.4;
+}
+.ov-is-f > div {
+  display: contents;
+}
+.ov-is-f dt {
+  color: var(--text-3);
+}
+.ov-is-f dd {
+  margin: 0;
+  min-width: 0;
+  color: var(--text-2);
+}
+.ov-is-live {
+  font-weight: var(--fw-medium);
+  color: var(--text-1);
+}
+.ov-is-est {
+  margin-left: 6px;
+  vertical-align: 1px;
+}
+.ov-is-a {
+  display: flex;
+  gap: 6px;
+  flex-wrap: wrap;
+  margin-top: 2px;
+}
+.ov-iss-foot {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  flex-wrap: wrap;
+  padding: 8px var(--s-4);
+  font-size: var(--fs-12);
+}

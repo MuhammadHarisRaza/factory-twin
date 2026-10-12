@@ -3,7 +3,7 @@
  * (src/sim/events.ts), shown with their provenance. Missing evidence is explained, never blank.
  */
 import { useEffect, useState } from 'react';
-import { openEvent } from '../../app/store';
+import { openEventRecord } from '../events/open';
 import { cameraName, type EventReport, type ReportEvidence } from '../../intel/report';
 import { DEFECTS } from '../../model/plant';
 import type { EvidenceSeries, QualityInspection } from '../../model/types';
@@ -40,13 +40,14 @@ function Snapshot({ x }: { x: ReportEvidence }) {
   );
 }
 
-function useInspectionImage(rec: QualityInspection | null, enabled: boolean) {
-  const key = rec && enabled ? `${rec.id}|${rec.time}` : '';
+/** Draws the annotated illustrative frame of an inspection record (async; null url while loading / on failure). */
+export function useInspectionImage(rec: QualityInspection | null, enabled: boolean, size = 320) {
+  const key = rec && enabled ? `${rec.id}|${rec.time}|${size}` : '';
   const [state, setState] = useState<{ key: string; url: string | null } | null>(null);
   useEffect(() => {
     if (!key || !rec) return;
     let alive = true;
-    inspectionImage(rec, 320).then((url) => {
+    inspectionImage(rec, size).then((url) => {
       if (alive) setState({ key, url });
     });
     return () => {
@@ -222,7 +223,7 @@ function EvidenceBody({ x, compact }: { x: ReportEvidence; compact?: boolean }) 
         <p className="rp-links">
           {(x.eventIds ?? []).length
             ? x.eventIds!.map((id) => (
-                <button key={id} className="row-link mono" onClick={() => openEvent(id)}>
+                <button key={id} className="row-link mono" onClick={() => openEventRecord(id)}>
                   {id}
                 </button>
               ))

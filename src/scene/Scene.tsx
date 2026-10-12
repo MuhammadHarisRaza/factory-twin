@@ -27,6 +27,8 @@ import { Packaging, Sorting } from './zones/SortingPackaging';
 import { Warehouse } from './zones/Warehouse';
 import { Maintenance } from './zones/Maintenance';
 import { CctvRenderer } from './cctv/CctvRenderer';
+import { sceneTabIndex, useSceneEmbedded, wheelAction } from './embedded';
+import { setPinOpacity } from './status/pins';
 
 const SITE_CENTER = new Vector3((SITE.x[0] + SITE.x[1]) / 2, 0, (SITE.z[0] + SITE.z[1]) / 2);
 /** Orbit damping, applied by one controls update per frame: 0.15 keeps the feel of the former 0.08 applied twice (finding #40). */
@@ -292,8 +294,12 @@ export function labelOpacity(camera: Vector3, target: Vector3, x: number, z: num
   return MathUtils.clamp(1 - (d - reach) / 18, 0, 1);
 }
 
-/** Clickable zone name tags on the ground (hidden in flow mode), faded by relevance. */
-function ZoneLabels() {
+/**
+ * Clickable zone name tags on the ground (hidden in flow mode), faded by relevance. A faded-out
+ * tag catches neither clicks nor keyboard focus (setPinOpacity); embedded in a page the tags stay
+ * clickable but leave the tab order (the page has a zone select).
+ */
+function ZoneLabels({ embedded }: { embedded: boolean }) {
   const visible = useTwin((s) => s.layers.labels && !s.layers.flow);
   const activeZone = useTwin((s) => s.zone);
   const selectZone = useTwin((s) => s.selectZone);
@@ -303,11 +309,8 @@ function ZoneLabels() {
   useFrame(({ camera }) => {
     if (!visible || !controls) return;
     ZONES.forEach((zone, i) => {
-      const el = refs.current[i];
-      if (!el) return;
       const o = zone.id === activeZone ? 1 : labelOpacity(camera.position, controls.target, zone.label[0], zone.label[1]);
-      el.style.opacity = o.toFixed(2);
-      el.style.pointerEvents = o < 0.3 ? 'none' : '';
+      setPinOpacity(refs.current[i], o);
     });
   });
 
@@ -323,6 +326,7 @@ function ZoneLabels() {
             className={`zone-tag ${activeZone === zone.id ? 'on' : ''}`}
             onClick={() => selectZone(zone.id)}
             title={`Go to ${zone.name}`}
+            tabIndex={sceneTabIndex(embedded)}
           >
             <span style={{ background: zone.color }}>{zone.id}</span>
             {zone.short}
@@ -331,6 +335,33 @@ function ZoneLabels() {
       ))}
     </>
   );
+}
+
+/**
+ * Embedded in a page (the Overview) the mouse wheel scrolls the page: the orbit controls' own wheel
+ * zoom is off (enableZoom) and only Ctrl / ⌘ + wheel — or a trackpad pinch, which browsers send as
+ * Ctrl + wheel — zooms the model, without the browser's page zoom. The full Factory Twin keeps the
+ * controls' wheel zoom unchanged. Listens where the controls and the Html labels live.
+ */
+function EmbeddedWheelZoom({ embedded }: { embedded: boolean }) {
+  const controls = useThree((s) => s.controls) as OrbitControlsImpl | null;
+  useEffect(() => {
+    const el = controls?.domElement;
+    if (!embedded || !controls || !el) return;
+    const onWheel = (e: WheelEvent) => {
+      const action = wheelAction(true, e);
+      if (action === 'page' || action === 'controls') return;
+      e.preventDefault();
+      if (action === 'none') return;
+      controls.dispatchEvent({ type: 'start', target: controls });
+      if (action === 'zoom-in') controls.dollyIn();
+      else controls.dollyOut();
+      controls.dispatchEvent({ type: 'end', target: controls });
+    };
+    el.addEventListener('wheel', onWheel, { passive: false });
+    return () => el.removeEventListener('wheel', onWheel);
+  }, [embedded, controls]);
+  return null;
 }
 
 /** All process equipment, in process order. */
@@ -373,6 +404,7 @@ export default function Scene({ active = true }: { active?: boolean }) {
   // to avoid quality flicker during a presentation.
   const [highQuality, setHighQuality] = useState(true);
   const [dpr, setDpr] = useState(1.75);
+  const embedded = useSceneEmbedded();
   return (
     <Canvas
       frameloop={active ? 'always' : 'never'}
@@ -410,7 +442,7 @@ export default function Scene({ active = true }: { active?: boolean }) {
         <FlowOverlay />
         <OperationalStatus />
         <EventFocus />
-        <ZoneLabels />
+        <ZoneLabels embedded={embedded} />
       </Suspense>
       <OrbitControls
         makeDefault
@@ -421,7 +453,9 @@ export default function Scene({ active = true }: { active?: boolean }) {
         minDistance={6}
         maxDistance={480}
         screenSpacePanning={false}
+        enableZoom={!embedded}
       />
+      <EmbeddedWheelZoom embedded={embedded} />
       <ResponsiveFov />
       <CameraRig />
       <ReadySignal />

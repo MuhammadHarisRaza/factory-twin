@@ -14,8 +14,7 @@ import { DataTable, type Column } from '../../ui/kit/DataTable';
 import { fmt1, fmtInt, fmtPct } from '../../ui/kit/format';
 import { Panel } from '../../ui/kit/Panel';
 import { EventStatusBadge, MetricText } from '../../ui/kit/Status';
-import { fmtMoney, type PeriodQualityImpact } from './derive';
-import type { ImpactFigures } from './QualityEvents';
+import { fmtMoney, type ImpactFigures, type PeriodQualityImpact } from './derive';
 
 export type EventImpactRow = { ev: OpEvent; f: ImpactFigures };
 
@@ -174,7 +173,7 @@ function AssumptionEditor() {
       <button className="btn sm ghost" onClick={resetFinance} title="Restore every financial assumption to its default">
         <RotateCcw size={13} /> Defaults
       </button>
-      <span className="q-imp-edit-note muted">Shared with OEE & Loss Intelligence, event reports and the PDF.</span>
+      <span className="q-imp-edit-note muted">Shared with Production (OEE & losses), event reports and the PDF.</span>
     </div>
   );
 }

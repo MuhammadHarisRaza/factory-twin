@@ -744,6 +744,5 @@ export type EventRules = {
   dockStayMax: number;
   yardQueueMax: number;
   turnaroundMax: number;
-  energyDeviationMax: number;
   ioImbalanceMax: number;
 };

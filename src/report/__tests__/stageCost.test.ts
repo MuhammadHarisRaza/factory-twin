@@ -1,7 +1,7 @@
 /**
  * Stage shift summary — the cost total of the stage's root events never values the same rejects
  * twice: overlapping quality rules (reject rate, defect count, defect rate over the same rejected
- * tiles) are listed per event but not added; production / logistics / energy estimates are added.
+ * tiles) are listed per event but not added; production / logistics estimates are added.
  */
 import { beforeAll, describe, expect, it } from 'vitest';
 import { eventImpact } from '../../intel/report';
@@ -51,7 +51,7 @@ describe('stage shift summary · estimated cost of root events', () => {
     expect(row[1]).toBe(pdfText(fmtMoney('USD', added)));
     expect(row[1]).not.toBe(pdfText(fmtMoney('USD', naive)));
     // The basis says which events were added and why the quality events were not.
-    expect(row[2]).toMatch(/^\d+ production \/ logistics \/ energy root events?; quality events are listed per event, not added/);
+    expect(row[2]).toMatch(/^\d+ production \/ logistics root events?; quality events are listed per event, not added/);
     const qRow = measureRow(blocks, 'Quality events (not added)');
     expect(qRow[1]).toMatch(new RegExp(`^${quality.length} events? `));
     expect(qRow[2]).toContain(QUALITY_NOT_ADDED);

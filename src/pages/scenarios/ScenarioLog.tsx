@@ -1,12 +1,9 @@
-import { X } from 'lucide-react';
+import { ClipboardList, X } from 'lucide-react';
 import { SCENARIO_KIND_LABELS } from '../../model/plant';
-import type { ScenarioActivation } from '../../model/types';
+import type { OpEvent, ScenarioActivation } from '../../model/types';
 import { useSim, useSimValue } from '../../sim/store';
 import { formatClock, formatDuration } from '../../sim/time';
-import { DataTable, type Column } from '../../ui/kit/DataTable';
-import { Panel } from '../../ui/kit/Panel';
-import { openEvent } from '../../app/store';
-import type { OpEvent } from '../../model/types';
+import { EmptyState } from '../../ui/kit/Page';
 import {
   ONE_OFF_KINDS,
   isClearable,
@@ -20,7 +17,7 @@ import {
   type ScenarioStatus,
   type ShowTarget,
 } from './catalogue';
-import { ORIGIN_LABEL, originOf } from './actions';
+import { ORIGIN_LABEL, originOf, showTarget } from './actions';
 import { ScenarioState, ShowButton, targetLabel } from './ui';
 
 type Row = {
@@ -36,8 +33,12 @@ type Row = {
   clearable: boolean;
 };
 
-/** Every scenario activated since the last reset, newest first. */
-export function ScenarioLog() {
+/**
+ * Every scenario activated since the last reset, newest first: what it was, its parameters, its
+ * lifecycle, what it has done (from records), the events it produced, where its effect shows, and
+ * Clear while it is still in effect. A compact list (the panel is a drawer, not a page).
+ */
+export function ScenarioLog({ onNavigate }: { onNavigate?: () => void }) {
   const resets = useSim((s) => s.resets);
   const clear = useSim((s) => s.clear);
   const d = useSimValue(
@@ -51,94 +52,83 @@ export function ScenarioLog() {
           params: paramSummary(sc),
           outcome: outcomeOf(s, sc),
           duration: scenarioDuration(s, sc),
-          origin: o ? ORIGIN_LABEL[o] : 'Other workspace',
+          origin: o ? ORIGIN_LABEL[o] : 'Another workspace',
           target: t ? { t, label: targetLabel(t, s) } : null,
           events: scenarioEvents(s, sc),
           clearable: isClearable(s, sc),
         };
       });
       // Newest first; equal start minutes keep activation order under the stable sort.
-      return { now: s.minute, rows: rows.reverse() };
+      return { now: s.minute, rows: rows.reverse().sort((a, b) => b.sc.start - a.sc.start) };
     },
     [resets],
   );
   const now = d.now;
-
-  const columns: Column<Row>[] = [
-    { key: 'id', header: 'ID', render: (r) => <span className="mono dim">{r.sc.id}</span>, sort: (r) => r.sc.id, width: 96 },
-    { key: 'kind', header: 'Scenario', render: (r) => SCENARIO_KIND_LABELS[r.sc.kind], sort: (r) => SCENARIO_KIND_LABELS[r.sc.kind] },
-    { key: 'params', header: 'Parameters', render: (r) => <span title={r.params}>{r.params}</span> },
-    { key: 'start', header: 'Started', numeric: true, render: (r) => when(r.sc.start, now), sort: (r) => r.sc.start },
-    {
-      key: 'end',
-      header: 'Ends / ended',
-      numeric: true,
-      render: (r) =>
-        ONE_OFF_KINDS.includes(r.sc.kind) ? (
-          <span className="muted">One-off</span>
-        ) : r.sc.end == null ? (
-          <span className="muted">Until cleared</span>
-        ) : r.sc.end > now ? (
-          <span>until {formatClock(r.sc.end)}</span>
-        ) : (
-          when(r.sc.end, now)
-        ),
-      sort: (r) => r.sc.end ?? Number.MAX_SAFE_INTEGER,
-    },
-    { key: 'dur', header: 'Duration', numeric: true, render: (r) => (r.duration == null ? '—' : formatDuration(r.duration)), sort: (r) => r.duration },
-    { key: 'status', header: 'Status', render: (r) => <ScenarioState st={r.st} now={now} time={false} />, sort: (r) => r.st.key },
-    { key: 'outcome', header: 'Outcome', render: (r) => <span title={r.outcome ?? undefined}>{r.outcome ?? <span className="muted">See impact band</span>}</span> },
-    {
-      key: 'events',
-      header: 'Events',
-      render: (r) => {
-        const main = r.events.find((e) => !e.consequenceOf) ?? r.events[0];
-        if (!main) return <span className="muted">None yet</span>;
-        return (
-          <span className="scnp-log-ev">
-            <button className="row-link mono" onClick={() => openEvent(main.id)} title={`Open the report of ${main.id}: ${main.title}`}>
-              {main.id}
-            </button>
-            {r.events.length > 1 && <span className="muted"> +{r.events.length - 1}</span>}
-          </span>
-        );
-      },
-      sort: (r) => r.events.length,
-    },
-    { key: 'source', header: 'Source', render: (r) => r.origin, sort: (r) => r.origin },
-    {
-      key: 'actions',
-      header: '',
-      render: (r) => (
-        <span className="scnp-log-a">
-          {r.target && <ShowButton target={r.target.t} label={r.target.label} />}
-          {r.clearable && (
-            <button className="btn sm" onClick={() => clear(r.sc.id)} title="End this scenario now">
-              <X size={13} aria-hidden />
-              Clear
-            </button>
-          )}
-        </span>
-      ),
-    },
-  ];
-
+  if (!d.rows.length) return <EmptyState title="No scenario yet">Activate one in the catalogue, set up a guided demo, or follow the presenter guide.</EmptyState>;
   return (
-    <Panel
-      className="col-12"
-      title="Scenario log"
-      subtitle="Every scenario input since the last reset — all simulated; nothing is sent to equipment"
-      actions={<span className="muted num">{d.rows.length} logged</span>}
-      flush
-    >
-      <DataTable
-        columns={columns}
-        rows={d.rows}
-        rowKey={(r) => r.sc.id}
-        initialSort={{ key: 'start', dir: 'desc' }}
-        maxHeight={360}
-        empty="No scenarios yet. Activate one above, or follow the presenter guide."
-      />
-    </Panel>
+    <ul className="scnl" aria-label="Scenario log">
+      {d.rows.map((r) => {
+        const main = r.events.find((e) => !e.consequenceOf) ?? r.events[0];
+        return (
+          <li key={r.sc.id} className={r.st.key === 'active' ? 'on' : ''}>
+            <div className="scnl-top">
+              <span className="mono dim">{r.sc.id}</span>
+              <b>{SCENARIO_KIND_LABELS[r.sc.kind]}</b>
+              <ScenarioState st={r.st} now={now} time={false} />
+              <span className="spacer" />
+              <span className="scnl-t num">
+                {when(r.sc.start, now)}
+                {ONE_OFF_KINDS.includes(r.sc.kind)
+                  ? ' · one-off'
+                  : r.sc.end == null
+                    ? r.st.key === 'active'
+                      ? ' · until cleared'
+                      : ''
+                    : r.sc.end > now
+                      ? ` → ${formatClock(r.sc.end)}`
+                      : ` → ${when(r.sc.end, now)}`}
+                {r.duration != null ? ` · ${formatDuration(r.duration)}` : ''}
+              </span>
+            </div>
+            <div className="scnl-p" title={r.params}>
+              {r.params}
+            </div>
+            <div className="scnl-o">
+              <span>
+                Outcome: <span className="scnl-v">{r.outcome ?? 'see Impact vs baseline'}</span>
+              </span>
+              <span className="muted">Source: {r.origin}</span>
+            </div>
+            <div className="scnl-a">
+              {main ? (
+                <button
+                  type="button"
+                  className="btn sm"
+                  onClick={() => {
+                    onNavigate?.();
+                    showTarget({ type: 'event', id: main.id });
+                  }}
+                  title={`Open the report of ${main.id}: ${main.title}`}
+                >
+                  <ClipboardList size={13} aria-hidden />
+                  {main.id}
+                  {r.events.length > 1 && <span className="muted"> +{r.events.length - 1}</span>}
+                </button>
+              ) : (
+                <span className="muted scnl-none">No event yet</span>
+              )}
+              {r.target && <ShowButton target={r.target.t} label={r.target.label} onNavigate={onNavigate} />}
+              <span className="spacer" />
+              {r.clearable && (
+                <button type="button" className="btn sm" onClick={() => clear(r.sc.id)} title="End this scenario now; its effects stop from the current minute">
+                  <X size={13} aria-hidden />
+                  Clear
+                </button>
+              )}
+            </div>
+          </li>
+        );
+      })}
+    </ul>
   );
 }

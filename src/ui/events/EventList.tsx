@@ -4,13 +4,14 @@
  * selecting one opens its full report (or calls `onSelect` when the host shows the report itself).
  */
 import { CircleCheck, CircleDot } from 'lucide-react';
-import { openEvent, useApp } from '../../app/store';
+import { useApp } from '../../app/store';
 import type { OpEvent } from '../../model/types';
 import { EVENT_CATEGORY_LABEL } from '../../sim/events';
 import { useSim, useSimMinute } from '../../sim/store';
 import { formatClock } from '../../sim/time';
 import { EventStatusBadge, SeverityBadge } from '../kit/Status';
 import { eventAssetLabel, eventDurationLabel, eventStartLabel } from './labels';
+import { openEventRecord } from './open';
 import './events.css';
 
 export type EventListProps = {
@@ -38,12 +39,18 @@ export function EventList({ events, limit, hideAsset = false, empty = 'No events
       <ul className="evl">
         {rows.map((ev) => (
           <li key={ev.id}>
-            <EventRow ev={ev} now={now} hideAsset={hideAsset} selected={ev.id === selectedId} vehicleLabel={vehicleLabel} onClick={() => (onSelect ? onSelect(ev) : openEvent(ev.id))} />
+            <EventRow ev={ev} now={now} hideAsset={hideAsset} selected={ev.id === selectedId} vehicleLabel={vehicleLabel} onClick={() => (onSelect ? onSelect(ev) : openEventRecord(ev.id))} />
           </li>
         ))}
       </ul>
       {more > 0 && (
-        <button className="row-link evl-more" onClick={() => useApp.getState().go('events')}>
+        <button
+          className="row-link evl-more"
+          onClick={() => {
+            useApp.getState().setTab('events', null);
+            useApp.getState().go('events');
+          }}
+        >
           {more} more — open Events & Reports
         </button>
       )}

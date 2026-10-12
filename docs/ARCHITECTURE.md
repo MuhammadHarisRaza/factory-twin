@@ -25,23 +25,28 @@ Everything above is preserved; the product is built around it.
 | Vehicle simulation (trucks, forklifts, loader), gate/dock/geofence events | `src/sim/logistics.ts` |
 | OEE calculations (validated, no clamping) | `src/sim/oee.ts` |
 | All derived metrics (line/machine/stage, Pareto, bottleneck, trends, shifts, quality, fleet, energy, impact vs baseline, on-target rule) | `src/sim/metrics.ts` |
-| Energy model (electricity + gas per consumer, expected vs actual, tariffs) | `src/sim/energy.ts` |
+| Energy accounting (kept inside the engine for loss estimates only — not a product module) | `src/sim/energy.ts` |
 | Condition monitoring (simulated vibration / temperature / current, degradation, maintenance, rule-based assessment) | `src/sim/health.ts` |
 | Live store, demo clock, baseline twin | `src/sim/store.ts` |
 | **Event engine**: detection rules, dedupe / reopen, lifecycle, evidence, accumulated impact | `src/sim/events.ts` |
 | Event report model (in-app report, PDF and copilot all render it) and per-event impact | `src/intel/report.ts` |
 | Financial assumptions and estimate helpers | `src/sim/finance.ts` |
 | Twin renderer bridge (camera views, snapshot image store), inspection-image rasteriser | `src/twin/` |
+| **Headline KPIs** — one view model per KPI (name, value, unit, scope, target, status, why, definition, unavailable) used by every page, the copilot and the reports | `src/intel/kpis.ts` |
+| Executive summary sentence (Overview) | `src/intel/summary.ts` |
 | Rule-based insights, recommendations, next actions | `src/intel/insights.ts` |
 | Rule-based copilot (intent → answer from the state) | `src/intel/copilot.ts` |
-| Simulated signal values (Assets & Data) | `src/sim/signals.ts` |
+| Simulated signal values (equipment technical details) | `src/sim/signals.ts` |
+| Reference-video registry, topics and player | `src/video/` |
 | Tests | `src/sim/__tests__/` |
-| App shell, navigation, scenario drawer | `src/app/` |
-| Design system (tokens, components) | `src/styles.css`, `src/ui/kit/` |
-| Factory Twin overlays (KPI chips, search, line strip, timeline, live lists, inspector tabs) | `src/ui/`, `src/ui/twin/` |
-| Copilot panel (Command Center + global drawer) | `src/ui/copilot/`, `src/app/CopilotDrawer.tsx` |
+| App shell, routing, scenario and copilot drawers, embedded-twin host | `src/app/` (`store.ts`, `Shell.tsx`, `twinHost.tsx`) |
+| Design system (tokens; page header, KPI card, section, tabs, provenance badge, side panel, disclosure, empty states) | `src/styles.css`, `src/ui/kit/` (`Page.tsx`, `kit.css`) |
+| Factory Twin overlays (KPI chips, search, line strip, stage panel, timeline, live lists) | `src/ui/twin/` |
+| Equipment / vehicle workspace (contextual KPIs, condition, technical details, camera streams) | `src/ui/equipment/` |
+| Production flow strip (Overview, reusable) | `src/ui/flow/` |
+| Copilot panel (page + global drawer) | `src/ui/copilot/`, `src/app/CopilotDrawer.tsx` |
 | 3D scene | `src/scene/` (vehicles: `SimVehicles.tsx`; selection: `Selectable.tsx`; status beacons, bottleneck, health/energy pins, inspection markers, product flow, vehicle route: `src/scene/status/`) |
-| Workspaces (each with a pure `derive.ts` + tests where it computes anything) | `src/pages/` (`production/`, `quality/`, `health/`, `energy/`, `command/`, `scenarios/`, `fleet/`, `assets/`) |
+| Workspaces (each with pure derivation modules + tests where it computes anything) | `src/pages/` (`overview/`, `production/` incl. `stage/`, `quality/`, `fleet/`, `events/`, `copilot/`, `scenarios/` for the drawer) |
 
 ## One operational state
 
@@ -51,8 +56,29 @@ counter or vehicle state, so the twin, the tables, the charts and the KPIs canno
 
 - **Equipment identity**: the equipment id (e.g. `E-PRS2`) is the 3D `<Selectable>` id, the key of
   `OPS_BY_ID`, the prefix of every signal (`E-PRS2.count_total`) and the `equipmentId` on every event.
-- **Navigation surface**: `openEquipment(id)`, `openStation(stationId)`, `openVehicle(id)` (src/app/store.ts)
-  switch to the twin and select/frame the object; the twin links back to the workspaces.
+- **Navigation surface**: `openEquipment(id)`, `openStation(stationId)`, `openVehicle(id)`, `openFleetVehicle(id)`,
+  `openEvent(id)`, `openDefect(id)`, `openStage(stageId)`, `openReports()` (src/app/store.ts).
+
+## Information architecture and routing
+
+Seven workspaces: Overview, Factory Twin, Production, Quality & Defects, Fleet & Movement, Events & Reports,
+Copilot. Routes are `#/<workspace>[/<id>][?tab=<tab>]` — `#/twin/<equipment>`, `#/production/<stage>?tab=oee`,
+`#/quality/<event or record>`, `#/fleet/<vehicle>`, `#/events/<event>?tab=reports`. User steps push a history
+entry, automatic corrections replace it, so Back / Forward move between views. Addresses of retired workspaces
+redirect to their new home (`#/monitoring/<stage>` → Production, `#/command`, `#/energy` → Overview,
+`#/health`, `#/assets` → Factory Twin, `#/scenarios` → Overview with the scenario drawer). Reset Demo clears event,
+defect and truck selections whose ids restart.
+
+**One 3D scene.** The WebGL scene is created once and never re-created. The Factory Twin shows it full size; the
+Overview renders a `<TwinSlot/>` placeholder and the scene's container is positioned over it inside the scrolling
+content area (`src/app/twinHost.tsx`), so selection, camera and loading state carry over between the two. Shared
+selection lives in the twin store (`selected`, `vehicle`, `zone`, `stage` — a highlighted production stage —
+and `alertFilter`), which the Overview flow strip, Production stage views, the twin line strip and the 3D scene
+all read and write.
+
+**KPIs.** Every headline figure is a `KpiModel` from `src/intel/kpis.ts`; pages, the twin chips, the copilot
+and the report previews / PDFs render those models, so a KPI has one name, formula, scope and status
+everywhere. A KPI that cannot be computed carries an `unavailable` reason instead of a value.
 
 ## Simulation
 
@@ -66,6 +92,10 @@ counter or vehicle state, so the twin, the tables, the charts and the KPIs canno
   records lost output and the minutes the line constraint was held up while it was open.
 - **Quality**: rejects detected at the gauge and vision tunnel by defect category, attributed back to the stage
   where the defect originates; illustrative inspection records (simulated) and hourly QC lab samples.
+- **Counting boundaries**: sorting passes only accepted tiles downstream (rejects leave the line at the
+  diverters), so packing, pallets and dispatch count good output. `countReconciliation(s, p)` chains fired →
+  sorted → inspected / rejected → good → packed → palletised with the buffer changes between the counting points
+  (hour-start buffer snapshots) and the residuals, which are zero by construction.
 - **Logistics**: outbound trucks (gate → holding → dock → loading by forklift → paperwork → gate) and inbound
   tippers (gate → weighbridge → raw-material shed → gate) on fixed routes along roads; forklifts put pallets away
   and load trailers; geofences detect restricted-zone entries. Pallet stock links production to dispatch.
@@ -85,11 +115,22 @@ counter or vehicle state, so the twin, the tables, the charts and the KPIs canno
   unavailable rather than zero.
 
 Displayed OEE is rounded to 0.1 % from the unrounded components; when the rounded A, P and Q do not multiply
-to the shown OEE, Production & OEE marks it with ≈ and states the product. This is a simplified demonstration
+to the shown OEE, Production → OEE & losses marks it with ≈ and states the product. This is a simplified demonstration
 of OEE, explained on that page with the live inputs.
 
 **On target** (`targetStatus` in metrics.ts) is one rule everywhere: ≥ 100 % ahead, ≥ 97 % on track, ≥ 90 %
 behind, below that well behind. The plan is 88 % of the kiln's design rate (1,100 good tiles/h).
+
+## Constraint statement and stale data (one rule each)
+
+- **Constraint**: `constraintClaim(s)` (`src/intel/summary.ts`) is the only source of what any surface says about the
+  line constraint. "Currently constraining output" is claimed only when the evidence supports it (the kiln stopped or
+  below its design rate now, or the bottleneck trace below); otherwise the kiln is labelled the *modeled design
+  constraint*; with a stale kiln feed its current state is *unknown*. The Overview, flow strip, 3D chip, twin line strip
+  and stage panel, Production, insights and the copilot all render the same claim.
+- **Stale feeds**: when an asset's data feed is stale, aggregate figures (KPIs, stage outputs, reports, copilot numbers)
+  keep the simulation's running accounting and are marked *Not confirmed · <asset> data stale since hh:mm*; sentences
+  never state them as fact. Raw signal values show the frozen last value received.
 
 ## Bottleneck
 
@@ -104,15 +145,13 @@ show up as brief, explainable shifts.
 
 - **Baseline twin**: the store keeps a second `SimState` built from the same seed without scenarios and
   advances it in lockstep. Because the engine is deterministic, `impactVsBaseline` is exactly "what would
-  have happened" — output, OEE, downtime, reject rate, energy cost per good m².
+  have happened" — output, OEE, downtime, reject rate.
 - **Machine health** (`src/sim/health.ts`): degradation episodes drive simulated signals; the product only
   "knows" what the signals show — `assess()` compares observed vibration with the value expected for the
   current load, extrapolates the 3-h trend to the alarm/trip limits (ISO 10816-style zones) and checks a
   load-corrected temperature. No trained model and no physical sensor.
-- **Energy** (`src/sim/energy.ts`): each consumer's expected electricity/gas follows its load; actual = expected
-  × scenario anomaly × small noise. Tariffs and emission factors are editable assumptions.
 - **Insights** (`src/intel/insights.ts`): deterministic rules over the state (stoppages, health, quality,
-  energy, buffer time-to-empty, bottleneck, target gap, logistics, shift comparison), each with evidence,
+  buffer time-to-empty, bottleneck, target gap, logistics, shift comparison), each with evidence,
   impact, recommendation and links into the twin / workspaces.
 - **Copilot** (`src/intel/copilot.ts`): keyword intent matching → an answer composed from the same metrics and
   insights, with facts, links and follow-ups. No language model is connected; the UI says so.
@@ -121,8 +160,8 @@ show up as brief, explainable shifts.
 
 ## Events, evidence and reports (shared by the four use cases)
 
-One record per event (`OpEvent`, `src/model/types.ts`) for production, conveyors, OEE, quality, vehicles, energy
-and data feeds. Detection rules run inside the deterministic simulation step (`stepEvents`), so the same seed
+One record per event (`OpEvent`, `src/model/types.ts`) for production, conveyors, OEE, quality, vehicles and
+data feeds. Detection rules run inside the deterministic simulation step (`stepEvents`), so the same seed
 and scenario log always yield the same events; ~400 events are already in the 7-day pre-rolled history.
 
 - **Rules** (`EVENT_RULE_DEFS`, thresholds in `s.rules`, editable): unexpected stop / fault (alarm code decides),
@@ -130,8 +169,9 @@ and scenario log always yield the same events; ~400 events are already in the 7-
   stopped / slowed neighbour explains it — normal line balancing is not an event), counter inactivity (stale feed),
   abnormal condition signals, input / output imbalance, reject rate, defect count, repeated defect,
   deterioration vs baseline, critical defect review, truck waiting, dock overstay, yard congestion, turnaround,
-  restricted-zone entry (trajectory vs geofence), energy deviation. Proximity and route deviation are listed as
-  unavailable (no sensing).
+  restricted-zone entry (trajectory vs geofence; each entry is its own incident). Proximity and route deviation
+  are listed as unavailable (no sensing). Energy is not monitored as a product module, so no energy events are
+  raised.
 - **Lifecycle**: Detected → Active → Acknowledged → Investigating → Resolved. A condition that clears before
   anyone acknowledged it auto-resolves; acknowledged / investigating events wait for the owner. Repeated signals
   update the open event (dedupe key); a condition returning within 10 min reopens it. Events are never deleted on
@@ -149,6 +189,24 @@ and scenario log always yield the same events; ~400 events are already in the 7-
 - **Report** (`buildEventReport`) is the single model for the in-app report, the PDF export and the copilot's
   event investigation: summary, asset, detection, visual evidence, signals, context, impact, cost estimate with
   assumptions, diagnosis (facts / causes / uncertainty), recommendations, resolution history, provenance.
+- **Operational reports** (`src/report/ops/`): shift production performance, OEE & production losses, quality &
+  defect trends and vehicle movement & delays, for a chosen period and scope. The in-app preview and the PDF
+  render the same model object, built from `src/intel/kpis.ts` and the metric layer, with a legend separating
+  measured-in-simulation, simulated, estimated and illustrative content.
+
+## Reference videos
+
+`src/video/registry.ts` holds curated public reference clips (equipment makers, tile manufacturers, stock
+libraries) per topic (`src/video/types.ts`); kiln infeed, exterior, firing and discharge are separate topics. Three
+client-provided camera recordings (`public/videos/`, sourceType `client-recording`) lead the kiln-camera, packaging and
+yard-movement topics; they are labelled *Recorded camera footage* with their camera and recording time, and always say
+they are recordings, not live, with overlays from the recording system rather than this demo's simulation.
+`<ContextVideo context={{ equipmentId, stage, topic }}/>` picks the clips for a context (`src/video/topics.ts`)
+and shows them in one player: a poster first, the provider's embed (YouTube privacy-enhanced player) or MP4
+(Pexels) only after the user presses play, one clip at a time, no autoplay. Errors reported by the YouTube player
+(removed clip, embedding disabled) and slow loads fall back to the poster with a link to the source. Every player
+is labelled *Process reference video* or *Illustrative equipment footage* with provider, publisher and licence,
+and states that it is not this plant, not live and not evidence. Each entry records how it was verified.
 
 ## Conveyors, cameras, feeds
 

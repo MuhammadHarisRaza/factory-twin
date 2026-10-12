@@ -1,7 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import { CONVEYOR_IDS, DEFECT_ORDER, M2_PER_TILE, PROCESS_MACHINES, STAGES } from '../../model/plant';
 import { activateScenario, advance, createSim } from '../../sim/engine';
-import { DEFAULT_TARIFFS } from '../../sim/energy';
 import { DEFAULT_FINANCE, lostOutputValue } from '../../sim/finance';
 import { bottleneck, capacityBreakdown, impactVsBaseline, lineMetrics, qualityIn, resolvePeriod, type Period } from '../../sim/metrics';
 import { SHIFT_MIN } from '../../sim/time';
@@ -14,7 +13,6 @@ import {
   capacitySteps,
   constraintAttribution,
   equipmentContribution,
-  investigate,
   lossLedger,
   whatIfs,
   withPeriod,
@@ -24,13 +22,12 @@ import {
 const START = 2 * 1440 + 240;
 const win = (from: number, to: number): Period => ({ from, to, label: 'test' });
 const F = DEFAULT_FINANCE;
-const T = DEFAULT_TARIFFS;
 const sum = (xs: number[]) => xs.reduce((a, b) => a + b, 0);
 
 describe('loss ledger', () => {
   const s = createSim(61, START);
   const p = resolvePeriod('24h', s.minute);
-  const L = lossLedger(s, p, F, T);
+  const L = lossLedger(s, p, F);
 
   it('takes its totals from the core capacity breakdown and splits them without gaps', () => {
     const cap = capacityBreakdown(s, p);
@@ -97,7 +94,7 @@ describe('financial impact vs plan with rejects (review #28)', () => {
   activateScenario(s, { kind: 'machine-stop', equipmentId: 'H-KILN', end: t0 + 90, label: 'Kiln stop' });
   advance(s, t0 + 150);
   const p = win(Math.floor(t0 / 60) * 60, s.minute);
-  const L = lossLedger(s, p, F, T);
+  const L = lossLedger(s, p, F);
   const reworkedTiles = L.lm.rejected * F.reworkShare;
 
   it('charges reworked rejects at rework cost only, not also as lost contribution', () => {
@@ -111,7 +108,7 @@ describe('financial impact vs plan with rejects (review #28)', () => {
     expect(shortfall.basis).toMatch(/reworked rejects/);
     // With nothing reworked, the same shortfall is valued in full: the difference is exactly the
     // contribution of the reworked tiles, which the impact no longer charges on top of rework.
-    const none = lossLedger(s, p, { ...F, reworkShare: 0 }, T);
+    const none = lossLedger(s, p, { ...F, reworkShare: 0 });
     expect(none.impact.valuedShortfallM2).toBeCloseTo(none.impact.shortfallM2, 9);
     expect(none.impact.lines[0].amount - shortfall.amount).toBeCloseTo(lostOutputValue(F, reworkedTiles).amount, 9);
     // Per reworked tile the impact changes by rework − scrap − contribution vs scrapping it.
@@ -133,7 +130,7 @@ describe('constraint attribution and equipment contribution', () => {
   activateScenario(s, { kind: 'conveyor-stop', equipmentId: 'CV-KIN', end: t0 + 60, label: 'Kiln infeed stop' });
   advance(s, t0 + 90);
   const p = win(Math.floor(t0 / 60) * 60, s.minute);
-  const L = lossLedger(s, p, F, T);
+  const L = lossLedger(s, p, F);
 
   it('charges the kiln minutes held up to the root asset, capped at what the kiln lost', () => {
     const att = constraintAttribution(s, p);
@@ -170,16 +167,6 @@ describe('constraint attribution and equipment contribution', () => {
     const cons = consequenceEvents(s, own);
     expect(cons.every((e) => own.some((o) => o.id === e.consequenceOf))).toBe(true);
   });
-
-  it('the investigation names the root asset and links its drill-down', () => {
-    const c = equipmentContribution(s, p, L);
-    const answers = investigate(L, c, bottleneck(s), F);
-    expect(answers.map((a) => a.key)).toEqual(['target', 'equipment', 'category', 'constraint']);
-    const eq = answers.find((a) => a.key === 'equipment')!;
-    expect(eq.headline).toContain(c[0].equipmentId ?? c[0].label);
-    expect(eq.links.length).toBeGreaterThan(0);
-    for (const a of answers) expect(a.copilot.length).toBeGreaterThan(5);
-  });
 });
 
 describe('stage-level flow events in the equipment drill-down (review #7)', () => {
@@ -192,7 +179,7 @@ describe('stage-level flow events in the equipment drill-down (review #7)', () =
   it('lists the press stage blockage for every press, not only the first', () => {
     const block = s.events.find((e) => e.type === 'blockage' && e.asset.stage === 'PRESS' && e.start >= t0);
     expect(block, 'press blockage raised').toBeDefined();
-    const L = lossLedger(s, p, F, T);
+    const L = lossLedger(s, p, F);
     const rows = machineRows(s, p, equipmentContribution(s, p, L));
     for (const id of ['E-PRS1', 'E-PRS2', 'E-PRS3']) {
       expect(assetEvents(s, id, p).map((e) => e.id), id).toContain(block!.id);
@@ -212,7 +199,7 @@ describe('what-if estimates', () => {
   activateScenario(s, { kind: 'machine-stop', equipmentId: 'H-KILN', end: t0 + 45, label: 'Kiln stop' });
   advance(s, t0 + 120);
   const p = win(Math.floor(t0 / 60) * 60, s.minute);
-  const L = lossLedger(s, p, F, T);
+  const L = lossLedger(s, p, F);
 
   it('eliminating the top kiln stop recovers its minutes at the running rate', () => {
     const w = whatIfs(s, L, DEFAULT_WHAT_IF, F);
@@ -236,14 +223,17 @@ describe('what-if estimates', () => {
 
   it('compares with the no-scenario baseline and values the output difference', () => {
     const base = createSim(63, s.minute, { events: false });
-    const cmp = baselineComparison(s, base, p, T, F);
-    const im = impactVsBaseline(s, base, p, T);
+    const cmp = baselineComparison(s, base, p, F);
+    const im = impactVsBaseline(s, base, p);
     expect(cmp.impact.deltaOutputM2).toBeCloseTo(im.deltaOutputM2, 9);
     expect(im.deltaOutputM2).toBeLessThan(0);
     const out = cmp.rows.find((r) => r.key === 'output')!;
     expect(out.direction).toBe(-1);
     expect(out.value!).toBeLessThan(0);
     expect(cmp.net).toBeCloseTo(sum(cmp.rows.map((r) => r.value ?? 0)), 9);
+    // Energy is not a product module: the comparison values good output only.
+    expect(cmp.rows.map((r) => r.key)).not.toContain('energy');
+    expect(cmp.net).toBeCloseTo(out.value!, 9);
   });
 });
 

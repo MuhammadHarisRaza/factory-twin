@@ -13,7 +13,7 @@ import type { jsPDF } from 'jspdf';
 import type { UserOptions } from 'jspdf-autotable';
 import { axisFormat } from './format';
 import { A4, LAYOUT, chartRange, columnWidth, contentHeight, contentWidth, fitBox, labelIndices, lineHeightMm, pageLabel, placeBlock, splitLines } from './layout';
-import { BAND_NOTE, PRODUCT_NAME, type PdfBlock, type PdfChart, type PdfDocModel, type PdfFigure, type PdfSection } from './model';
+import { BAND_NOTE, PRODUCT_NAME, type PdfBar, type PdfBlock, type PdfChart, type PdfDocModel, type PdfFigure, type PdfKpi, type PdfSection } from './model';
 import { pdfText } from './text';
 
 export type AutoTableFn = (doc: jsPDF, options: UserOptions) => void;
@@ -35,6 +35,12 @@ const C: Record<string, RGB> = {
   s2: [120, 130, 140],
   limit: [86, 94, 102],
   grid: [229, 233, 236],
+  good: [47, 179, 68],
+  warn: [214, 150, 20],
+  crit: [200, 64, 64],
+  neutral: [138, 155, 173],
+  bar: [57, 135, 229],
+  track: [236, 240, 243],
 };
 
 const BODY_PT = 8.5;
@@ -42,6 +48,8 @@ const SMALL_PT = 7;
 const SECTION_HEAD_H = 9;
 const SUBHEAD_H = 6.5;
 const CHART_H = 46;
+const KPI_H = 26;
+const KPI_GAP = 3;
 
 class Renderer {
   y = LAYOUT.top;
@@ -189,6 +197,10 @@ class Renderer {
         return 16;
       case 'total':
         return 14;
+      case 'kpis':
+        return b.items.length ? KPI_H + 2 : 0;
+      case 'bars':
+        return b.rows.length ? 8 + Math.min(2, b.rows.length) * 6 : lh + 8;
     }
   }
 
@@ -210,7 +222,7 @@ class Renderer {
       case 'list':
         return this.list(b.items, !!b.numbered);
       case 'kv':
-        return this.kv(b.rows, b.columns ?? 2);
+        return this.kv(b.rows, b.columns ?? 2, b.labelW);
       case 'table':
         return this.table(b);
       case 'figures':
@@ -221,7 +233,111 @@ class Renderer {
         return this.missing(b.title, b.reason, this.x0, this.cw, true);
       case 'total':
         return this.total(b.label, b.value, b.note);
+      case 'kpis':
+        return this.kpis(b.items);
+      case 'bars':
+        return this.bars(b.title, b.unit, b.rows, b.empty);
     }
+  }
+
+  /** KPI tiles: up to three per row (four as 2 × 2), label · value + unit · scope · status and target. */
+  private kpis(items: PdfKpi[]) {
+    if (!items.length) return;
+    const n = items.length;
+    const cols = n <= 3 ? n : n === 4 ? 2 : 3;
+    const w = columnWidth(this.cw, cols, KPI_GAP);
+    const tone: Record<NonNullable<PdfKpi['tone']>, RGB> = { good: C.good, warning: C.warn, critical: C.crit, neutral: C.neutral };
+    for (let r = 0; r < n; r += cols) {
+      this.ensure(KPI_H + 2);
+      const y = this.y;
+      items.slice(r, r + cols).forEach((k, i) => {
+        const x = this.x0 + i * (w + KPI_GAP);
+        this.fill(C.fill);
+        this.stroke(C.line, 0.2);
+        this.doc.rect(x, y, w, KPI_H, 'FD');
+        if (k.tone && !k.unavailable) {
+          this.fill(tone[k.tone]);
+          this.doc.rect(x, y + 3, 0.9, KPI_H - 6, 'F');
+        }
+        const tx = x + 3;
+        const tw = w - 5;
+        this.font(7, 'bold', C.muted);
+        this.doc.text(this.split(k.label, tw)[0] ?? '', tx, y + 4.6);
+        if (k.unavailable) {
+          this.font(10.5, 'bold', C.muted);
+          this.doc.text('Unavailable', tx, y + 10.8);
+          this.font(6.3, 'normal', C.muted);
+          this.split(k.unavailable, tw)
+            .slice(0, 3)
+            .forEach((l, j) => this.doc.text(l, tx, y + 15 + j * 2.8));
+          return;
+        }
+        this.font(14, 'bold', C.ink);
+        const value = pdfText(k.value);
+        const vw = this.doc.getTextWidth(value);
+        this.doc.text(value, tx, y + 11.6);
+        if (k.unit) {
+          this.font(7.6, 'normal', C.muted);
+          this.doc.text(pdfText(k.unit), tx + Math.min(vw, tw) + 1.2, y + 11.6);
+        }
+        this.font(6.3, 'normal', C.muted);
+        this.doc.text(this.split(k.scope, tw)[0] ?? '', tx, y + 15.6);
+        const status = [k.status, k.target].filter(Boolean).join(' · ');
+        if (status) {
+          this.font(6.6, 'bold', C.text);
+          this.split(status, tw)
+            .slice(0, 2)
+            .forEach((l, j) => this.doc.text(l, tx, y + 19.6 + j * 2.9));
+        }
+      });
+      this.y = y + KPI_H + 3;
+    }
+  }
+
+  /** Horizontal bars: label · bar on a shared scale · value · note (wrapped to two lines at most). */
+  private bars(title: string, unit: string, rows: PdfBar[], empty?: string) {
+    const lh = lineHeightMm(7.2);
+    this.ensure(8 + Math.min(2, rows.length) * 6);
+    this.font(7.8, 'bold', C.ink);
+    this.doc.text(pdfText(`${title}${unit ? ` (${unit})` : ''}`), this.x0, this.y + 3);
+    this.y += 5.5;
+    if (!rows.length) {
+      this.font(BODY_PT, 'italic', C.muted);
+      this.lines(this.split(empty ?? 'No values', this.cw), this.x0, BODY_PT);
+      this.y += 2;
+      return;
+    }
+    const labelW = 54;
+    const valueW = 22;
+    const noteW = 50;
+    const trackX = this.x0 + labelW + 2;
+    const trackW = this.cw - labelW - valueW - noteW - 6;
+    const max = Math.max(1e-9, ...rows.map((r) => r.value));
+    for (const r of rows) {
+      this.font(6.6, 'normal', C.muted);
+      const note = r.note ? this.split(r.note, noteW).slice(0, 2) : [];
+      this.font(7.2, 'normal', C.text);
+      const label = this.split(r.label, labelW).slice(0, 2);
+      const h = Math.max(5.2, Math.max(label.length, note.length) * lh + 1.6);
+      this.ensure(h);
+      const y = this.y;
+      label.forEach((l, i) => this.doc.text(l, this.x0, y + lh * 0.8 + i * lh));
+      this.fill(C.track);
+      this.doc.rect(trackX, y + 1, trackW, 3.2, 'F');
+      const bw = Math.max(0, (Math.max(0, r.value) / max) * trackW);
+      if (bw > 0) {
+        this.fill(C.bar);
+        this.doc.rect(trackX, y + 1, bw, 3.2, 'F');
+      }
+      this.font(7.2, 'bold', C.ink);
+      this.doc.text(pdfText(r.display), trackX + trackW + 2 + valueW, y + lh * 0.8, { align: 'right' });
+      if (note.length) {
+        this.font(6.6, 'normal', C.muted);
+        note.forEach((l, i) => this.doc.text(l, this.x0 + this.cw - noteW, y + lh * 0.8 + i * lh));
+      }
+      this.y = y + h;
+    }
+    this.y += 2.5;
   }
 
   private list(items: string[], numbered: boolean) {
@@ -245,13 +361,13 @@ class Renderer {
     this.y += 1.4;
   }
 
-  private kv(rows: [string, string][], columns: 2 | 4) {
+  private kv(rows: [string, string][], columns: 2 | 4, labelWidth?: number) {
     if (!rows.length) return;
     this.ensure(10);
     const body: string[][] = [];
     if (columns === 4) for (let i = 0; i < rows.length; i += 2) body.push([rows[i][0], rows[i][1], rows[i + 1]?.[0] ?? '', rows[i + 1]?.[1] ?? '']);
     else for (const r of rows) body.push([r[0], r[1]]);
-    const labelW = columns === 4 ? 24 : 36;
+    const labelW = labelWidth ?? (columns === 4 ? 24 : 36);
     const valueW = columns === 4 ? (this.cw - 2 * labelW) / 2 : this.cw - labelW;
     const label = { cellWidth: labelW, fontStyle: 'bold' as const, textColor: C.muted };
     this.autoTable(this.doc, {
@@ -277,16 +393,19 @@ class Renderer {
     }
     this.ensure(16);
     const columnStyles: NonNullable<UserOptions['columnStyles']> = {};
-    b.widths?.forEach((w, i) => {
-      columnStyles[i] = { cellWidth: w === 'auto' ? 'auto' : w };
+    b.head.forEach((_, i) => {
+      const w = b.widths?.[i];
+      columnStyles[i] = { ...(w != null ? { cellWidth: w === 'auto' ? 'auto' : w } : {}), ...(b.align?.[i] === 'r' ? { halign: 'right' as const } : {}) };
     });
     this.autoTable(this.doc, {
       ...this.tableBase(),
       theme: 'grid',
       head: [b.head.map(pdfText)],
       body: b.rows.map((r) => r.map(pdfText)),
+      ...(b.foot ? { foot: [b.foot.map(pdfText)], showFoot: 'lastPage' as const } : {}),
       styles: { fontSize: 7.6, cellPadding: { top: 1.3, bottom: 1.3, left: 1.5, right: 1.5 }, lineColor: C.line, lineWidth: 0.15, textColor: C.text, overflow: 'linebreak', valign: 'top' },
       headStyles: { fillColor: C.head, textColor: C.ink, fontStyle: 'bold', fontSize: 7.4 },
+      footStyles: { fillColor: C.fill, textColor: C.ink, fontStyle: 'bold', fontSize: 7.4 },
       columnStyles,
       tableWidth: this.cw,
     });
@@ -509,7 +628,8 @@ class Renderer {
       this.font(10, 'bold', C.bandText);
       doc.text(PRODUCT_NAME, LAYOUT.ml, 8.2);
       this.font(8.5, 'normal', C.bandText);
-      doc.text(pdfText(`${this.m.docType} · ${this.m.docId}`), LAYOUT.ml, 13.4);
+      // Kept clear of the band note on the right.
+      doc.text((doc.splitTextToSize(pdfText(`${this.m.docType} · ${this.m.docId}${this.m.bandContext ? ` · ${this.m.bandContext}` : ''}`), A4.w - LAYOUT.ml - LAYOUT.mr - 52) as string[])[0] ?? '', LAYOUT.ml, 13.4);
       this.font(6.6, 'normal', C.bandMuted);
       doc.text(pdfText(`Generated ${this.m.generatedAt} (wall clock) · ${this.m.generatedAtPlant}`), LAYOUT.ml, 17.8);
       // SIMULATED DATA marker.

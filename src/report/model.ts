@@ -11,6 +11,7 @@ import { DEFECTS } from '../model/plant';
 import type { Evidence, QualityInspection } from '../model/types';
 import { CONFIDENCE_LABEL, HISTORY_LABEL, LABELS, fmtMoney, fmtValue, plantClock, plantTime, wallClock } from './format';
 import { fileSafe, sanitizeDeep } from './text';
+import { LEGEND } from './ops/types';
 
 // ── Model types ───────────────────────────────────────────────────────────────
 
@@ -34,9 +35,25 @@ export type PdfChart = {
   limit?: { label: string; value: number };
 };
 
+/** A headline KPI tile (operational reports). `tone` colours the side bar; the status words carry the meaning. */
+export type PdfKpi = {
+  label: string;
+  value: string;
+  unit?: string;
+  scope: string;
+  target?: string;
+  status?: string;
+  tone?: 'good' | 'warning' | 'critical' | 'neutral';
+  unavailable?: string;
+};
+
+export type PdfBar = { label: string; value: number; display: string; note?: string };
+
 export type PdfBlock =
-  | { kind: 'kv'; rows: [string, string][]; columns?: 2 | 4 }
-  | { kind: 'table'; head: string[]; rows: string[][]; widths?: (number | 'auto')[]; empty?: string }
+  | { kind: 'kv'; rows: [string, string][]; columns?: 2 | 4; /** Label column width (mm); defaults 24 (4 columns) / 36 (2 columns). */ labelW?: number }
+  | { kind: 'table'; head: string[]; rows: string[][]; widths?: (number | 'auto')[]; empty?: string; align?: ('l' | 'r')[]; foot?: string[] }
+  | { kind: 'kpis'; items: PdfKpi[] }
+  | { kind: 'bars'; title: string; unit: string; rows: PdfBar[]; empty?: string }
   | { kind: 'text'; text: string; tone?: 'normal' | 'muted' }
   | { kind: 'list'; items: string[]; numbered?: boolean }
   | { kind: 'subhead'; text: string }
@@ -64,6 +81,8 @@ export type PdfDocModel = {
   disclaimer: string;
   /** Short note under the SIMULATED DATA marker in the header band (default: "Demonstration · no live plant data"). */
   bandNote?: string;
+  /** Scope and period printed after the document id in the header band of every page. */
+  bandContext?: string;
 };
 
 export type EventPdfContext = {
@@ -427,6 +446,8 @@ export function eventPdfModel(r: EventReport, ctx: EventPdfContext = {}): PdfDoc
     { kind: 'table', head: ['Item', 'Reason'], rows: P.unavailable.map((u) => [u.title, u.reason]), widths: [56, 'auto'], empty: 'Nothing missing' },
     { kind: 'subhead', text: 'Limitations' },
     { kind: 'list', items: P.disclaimers },
+    { kind: 'subhead', text: 'How to read this report' },
+    { kind: 'table', head: ['Label', 'Meaning'], rows: LEGEND.map((l) => [l.label, l.text]), widths: [38, 'auto'] },
     { kind: 'text', text: `Report generated ${wallClock(r.generatedAt)} (wall clock) · ${r.generatedAtPlant}. Built from event record ${ev.id} and its evidence; the in-app report shows the same model.`, tone: 'muted' },
   ]);
 
@@ -440,6 +461,7 @@ export function eventPdfModel(r: EventReport, ctx: EventPdfContext = {}): PdfDoc
     generatedAtPlant: r.generatedAtPlant,
     sections,
     fileName: `wAI-event-${fileSafe(ev.id)}.pdf`,
+    bandContext: `${A.id === '—' ? A.name : A.id} · ${plantTime(ev.start)} - ${ev.end != null ? plantClock(ev.end) : 'ongoing'}`,
     // A frame grabbed from a configured stream must not be described as a twin render.
     disclaimer: footerDisclaimer(r.visualEvidence),
     bandNote: hasLiveCameraFrame(r.visualEvidence) ? BAND_NOTE_LIVE_CAMERA : BAND_NOTE,

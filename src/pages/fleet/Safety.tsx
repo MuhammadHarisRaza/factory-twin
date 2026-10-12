@@ -1,5 +1,5 @@
 /**
- * Detection rules and safety configuration of Vehicle Monitoring (thresholds of the shared event
+ * Detection rules and safety configuration of Fleet & Movement (thresholds of the shared event
  * engine, restricted geofences), internal-vehicle pickups / drop-offs, and the capabilities that are
  * not available without integrations — each with what it would need. No claims beyond the simulation.
  */

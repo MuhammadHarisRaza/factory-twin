@@ -41,7 +41,7 @@ describe('scenario catalogue', () => {
 
   it('keeps factors inside the engine ranges', () => {
     const s = createSim(7, START);
-    const ranges: Record<string, [number, number]> = { bottleneck: [0.3, 0.7], quality: [2, 6], energy: [1.1, 1.4], rate: [0.4, 0.8] };
+    const ranges: Record<string, [number, number]> = { bottleneck: [0.3, 0.7], quality: [2, 6], rate: [0.4, 0.8] };
     for (const [id, [lo, hi]] of Object.entries(ranges)) {
       const p = ENTRY_BY_ID[id].params.find((x) => x.key === 'factor')!;
       for (const o of paramOptions(p, s)) {

@@ -475,7 +475,7 @@ export function fleetMetrics(s: SimState, p: Period) {
 export function internalActivity(v: Vehicle, now: number) {
   const legs = v.legs.filter((l) => l.start <= now);
   const current = legs[legs.length - 1];
-  if (!current) return { zone: null, dwell: null, idleLastHour: null, current: null };
+  if (!current) return { zone: null, dwell: null, zoneSince: null, stationaryMin: null, moving: false, idleLastHour: null, current: null };
   let since = current.start;
   for (let i = legs.length - 2; i >= 0 && legs[i].zone === current.zone; i--) since = legs[i].start;
   const entry = v.zoneLog?.filter((z) => z.start <= now).pop();
@@ -486,7 +486,21 @@ export function internalActivity(v: Vehicle, now: number) {
     idle += Math.max(0, Math.min(l.end, now) - Math.max(l.start, now - 60));
   }
   const coversHour = legs.length > 0 && legs[0].start <= now - 60;
-  return { zone: current.zone, dwell: now - since, idleLastHour: coversHour ? idle : null, current };
+  // Stationary time: how long the vehicle has been standing at its current stop (0 while moving).
+  // Zone residency (`dwell`) can span days for a forklift that works inside one zone, so it is not
+  // shown as a dwell KPI; stationary time is.
+  const moving = current.moving && current.end > now;
+  let stationarySince = current.start;
+  for (let i = legs.length - 2; i >= 0 && !legs[i].moving; i--) stationarySince = legs[i].start;
+  return {
+    zone: current.zone,
+    dwell: now - since,
+    zoneSince: since,
+    stationaryMin: moving ? 0 : now - stationarySince,
+    moving,
+    idleLastHour: coversHour ? idle : null,
+    current,
+  };
 }
 
 export const processMachines = PROCESS_MACHINES;
@@ -664,6 +678,103 @@ export function defectShift(s: SimState, recentMin = 120, referenceMin = 1440) {
     const rateRef = ref.inspected > 0 ? ref.byDefect[d] / ref.inspected : null;
     return { defect: d, label: DEFECTS[d].label, rateRecent, rateRef, ratio: rateRecent != null && rateRef ? rateRecent / rateRef : null };
   }).sort((x, y) => (y.ratio ?? 0) - (x.ratio ?? 0));
+}
+
+// ── Rising defect categories (one rule for every surface) ────────────────────
+
+/** One defect category in the rising-defect comparison. */
+export type DefectRise = {
+  defect: DefectCategory;
+  label: string;
+  /** Rejects of the category in the recent window (tiles). */
+  recentTiles: number;
+  /** recentTiles ÷ tiles inspected in the recent window (null when nothing was inspected). */
+  recentRate: number | null;
+  /** The category's rate in the 24 h reference (null when nothing was inspected then). */
+  referenceRate: number | null;
+  /** recent ÷ reference; null when the reference had no reject of the category. */
+  ratio: number | null;
+  /** Rejects above the reference rate for the tiles inspected recently (negative when below it). */
+  excessTiles: number;
+  /** The deterioration rule's condition holds for the category. */
+  rising: boolean;
+};
+
+export type RisingDefects = {
+  /** Recent window [from, to): the last 120 min of the period. */
+  window: { from: number; to: number };
+  /** Reference window [from, to): the 24 hourly buckets before the recent window, as the rule reads them. */
+  reference: { from: number; to: number };
+  recentInspected: number;
+  referenceInspected: number;
+  /** Enough inspection in both windows to call a category rising (or not). */
+  sufficient: boolean;
+  /** The rule's thresholds (ratio from the editable rule settings). */
+  threshold: { ratio: number; minInspected: number; minRate: number };
+  /** Every category, most excess rejects first. */
+  rows: DefectRise[];
+  /** The categories that are rising, most excess rejects first (rising[0] is the one "rising the most"). */
+  rising: DefectRise[];
+};
+
+/**
+ * Which defect categories are rising at the end of a period. ONE rule, read by the Quality & Defects
+ * summary, the copilot and the insights, so they name the same category or all say none is rising.
+ * It is the deterioration rule's comparison (Q-DET, `qualityRules` in src/sim/events.ts): a
+ * category's reject rate over the last 120 min of the period against the 24 h before (hourly
+ * counters ending at the hour at or before the start of the 120 min), rising when
+ *   rate ≥ deteriorationRatio × reference (s.rules), ≥ 600 tiles inspected in the 120 min and rate ≥ 0.4 %.
+ * A category without a reject in the reference has no ratio and is not called rising (as the rule).
+ * Ranked by excess rejects (tiles above the reference rate), then by ratio.
+ * The 120 min depend only on the end of the period (they may start before p.from), so every period
+ * that ends now gives the same answer. They are read from the per-minute log while it covers them
+ * (a period that ends now) and from the hourly counters otherwise (a past period ends on an hour).
+ */
+export function risingDefects(s: SimState, p: Period): RisingDefects {
+  const threshold = { ratio: s.rules.deteriorationRatio, minInspected: 600, minRate: 0.004 };
+  const to = p.to;
+  const from = Math.max(0, to - 120);
+  const recentBy = Object.fromEntries(DEFECT_ORDER.map((d) => [d, 0])) as Record<DefectCategory, number>;
+  let recentInspected = 0;
+  let window = { from, to };
+  if (to > p.from && to > from) {
+    if (from >= s.minute - LOG_MIN && to <= s.minute) {
+      const L = s.qualityLog;
+      for (let m = from; m < to; m++) {
+        const i = m % LOG_MIN;
+        if (L.t[i] !== m) continue;
+        recentInspected += L.inspected[i];
+        for (const d of DEFECT_ORDER) recentBy[d] += L.defect[d][i];
+      }
+    } else {
+      window = { from: hourFloor(from), to };
+      const q = qualityIn(s, { from: window.from, to, label: '' });
+      recentInspected = q.inspected;
+      for (const d of DEFECT_ORDER) recentBy[d] = q.byDefect[d];
+    }
+  }
+  // Reference as the rule reads it at its minute t = to − 1: the 24 h before hour ⌊(t − 120) / 60⌋.
+  const h1 = Math.floor((to - 1 - 120) / 60);
+  const reference = { from: Math.max(0, (h1 - 24) * 60), to: Math.max(0, h1 * 60) };
+  const ref = qualityIn(s, { ...reference, label: '' });
+  const sufficient = recentInspected >= threshold.minInspected && ref.inspected > 0;
+  const rows: DefectRise[] = DEFECT_ORDER.map((d) => {
+    const recentTiles = recentBy[d];
+    const recentRate = recentInspected > 0 ? recentTiles / recentInspected : null;
+    const referenceRate = ref.inspected > 0 ? ref.byDefect[d] / ref.inspected : null;
+    const ratio = recentRate != null && referenceRate ? recentRate / referenceRate : null;
+    return {
+      defect: d,
+      label: DEFECTS[d].label,
+      recentTiles,
+      recentRate,
+      referenceRate,
+      ratio,
+      excessTiles: recentTiles - (referenceRate ?? 0) * recentInspected,
+      rising: sufficient && ratio != null && ratio >= threshold.ratio && (recentRate ?? 0) >= threshold.minRate,
+    };
+  }).sort((a, b) => b.excessTiles - a.excessTiles || (b.ratio ?? 0) - (a.ratio ?? 0));
+  return { window, reference, recentInspected, referenceInspected: ref.inspected, sufficient, threshold, rows, rising: rows.filter((r) => r.rising) };
 }
 
 
@@ -854,5 +965,61 @@ export function capacityBreakdown(s: SimState, p: Period) {
       `Plan: ${TARGET.goodPerHour} good tiles per planned hour (OEE target ${Math.round(TARGET.oeeTarget * 100)} %).`,
       'Losses are valued at the constraint only; time lost elsewhere costs output only if it holds up the kiln.',
     ],
+  };
+}
+
+
+// ── Count reconciliation (counting boundaries) ───────────────────────────────
+
+/** Tiles held in a buffer at minute t (hour starts are recorded; the current minute is live). */
+function bufferAt(s: SimState, id: string, t: number) {
+  if (t >= s.minute) return s.buffers[id];
+  if (t % 60 === 0) return s.bufferHourStart[id]?.get(t / 60) ?? null;
+  const log = s.bufferLog[id];
+  const i = t % LOG_MIN;
+  return log && log.t[i] === t ? log.level[i] : null;
+}
+
+/**
+ * Counts at every counting point of the finishing end, with the buffer changes between them, so a
+ * difference between e.g. tiles fired and tiles packed is explained instead of hidden:
+ *   fired − sorted = Δ kiln outfeed WIP · sorted − rejected = accepted (good) ·
+ *   good − packed = Δ accumulation buffer · packed − palletised = Δ carton transfer.
+ * Residuals are ~0 by construction; a non-zero residual means a counting problem.
+ */
+export function countReconciliation(s: SimState, p: Period) {
+  const fired = sumBuckets(s, 'H-KILN', p).count;
+  const sorted = sumBuckets(s, 'I-SORT', p).count;
+  const q = qualityIn(s, p);
+  const packed = sumBuckets(s, 'J-BOX', p).count;
+  const palletised = sumBuckets(s, 'J-PAL', p).count;
+  const to = Math.min(p.to, s.minute);
+  const delta = (id: string) => {
+    const a = bufferAt(s, id, p.from);
+    const b = bufferAt(s, id, to);
+    return a == null || b == null ? null : b - a;
+  };
+  const dKout = delta('BUF-KOUT');
+  const dSort = delta('BUF-SORT');
+  const dPack = delta('BUF-PACK');
+  const good = q.inspected - q.rejected;
+  const res = (x: number | null) => (x == null ? null : x);
+  return {
+    period: p,
+    fired,
+    sorted,
+    inspected: q.inspected,
+    rejected: q.rejected,
+    good,
+    packed,
+    palletised,
+    pallets: palletised / TILES_PER_PALLET,
+    wip: { kilnOutfeed: dKout, accumulation: dSort, cartonTransfer: dPack },
+    residuals: {
+      firedVsSorted: res(dKout == null ? null : fired - sorted - dKout),
+      sortedVsInspected: sorted - q.inspected,
+      goodVsPacked: res(dSort == null ? null : good - packed - dSort),
+      packedVsPalletised: res(dPack == null ? null : packed - palletised - dPack),
+    },
   };
 }

@@ -1,5 +1,5 @@
 /**
- * Scenario catalogue shared by the Scenario Simulator workspace and the quick drawer:
+ * Scenario catalogue of the Scenarios panel (header → Scenarios):
  * what each scenario does, its parameters, how its activation is built, where its effect
  * shows, and pure helpers for status, parameter summaries, outcomes, linked events and the
  * impact window. No React here (unit-tested in catalogue.test.ts).
@@ -9,7 +9,6 @@ import { EQUIPMENT_BY_ID } from '../../data/equipment';
 import { CONVEYOR_BY_ID, DOCKS, GEOFENCES, PROCESS_MACHINES, STAGES, STAGE_BY_ID } from '../../model/plant';
 import type { MonitoredStageId, OpEvent, ScenarioActivation, ScenarioKind, StageId } from '../../model/types';
 import { scenariosActive, type SimState } from '../../sim/engine';
-import { CONSUMER_BY_ID } from '../../sim/energy';
 import { HEALTH_ASSETS, HEALTH_BY_ID } from '../../sim/health';
 import type { TruckRuntime } from '../../sim/logistics';
 import { resolvePeriod, type Period } from '../../sim/metrics';
@@ -34,8 +33,9 @@ export type ParamDef = {
 export type ShowTarget =
   | { type: 'equipment'; id: string }
   | { type: 'vehicle'; id: string }
-  | { type: 'workspace'; id: WorkspaceId }
-  /** A stage's detail view in Production Monitoring. */
+  /** A workspace's line-level view, optionally on a tab (e.g. Production → OEE & losses). */
+  | { type: 'workspace'; id: WorkspaceId; tab?: string }
+  /** A stage's detail view in Production. */
   | { type: 'stage'; id: MonitoredStageId }
   /** An event's report in Events & Reports. */
   | { type: 'event'; id: string }
@@ -47,7 +47,7 @@ export const targetKey = (t: ShowTarget) => (t.type === 'copilot' ? `copilot:${t
 export type CatalogueGroup = 'production' | 'quality' | 'logistics';
 export const GROUP_TITLE: Record<CatalogueGroup, string> = {
   production: 'Production, equipment & data',
-  quality: 'Quality & energy',
+  quality: 'Quality',
   logistics: 'Vehicles & logistics',
 };
 
@@ -83,13 +83,6 @@ export const dockName = (id: string) => DOCKS.find((d) => d.id === id)?.name ?? 
 
 const machineOptions: ParamOption[] = PROCESS_MACHINES.map((id) => ({ value: id, label: machineLabel(id) }));
 const stageOptions: ParamOption[] = STAGES.map((s) => ({ value: s.id, label: s.name }));
-
-export const ENERGY_CONSUMERS = ['H-KILN', 'D-HAG', 'A-COMP', 'C-BM2'];
-const consumerLabel = (id: string) => {
-  const c = CONSUMER_BY_ID[id];
-  if (!c) return id;
-  return `${id} · ${c.label}${c.thermal ? ' (gas)' : ' (electricity)'}`;
-};
 
 export const PROGRESSION: Record<string, { label: string; factor: number | undefined }> = {
   typical: { label: 'Typical progression', factor: undefined },
@@ -157,7 +150,7 @@ export const CATALOGUE: CatalogueEntry[] = [
     kind: 'bottleneck',
     group: 'production',
     summary: 'Cuts the capacity of one stage. Downstream stages starve once the buffer between them drains, and the line constraint can shift away from the kiln.',
-    effect: 'OEE & Loss bottleneck view and stage table; output vs baseline; amber reduced-rate machines in the twin; below-rate and starvation events.',
+    effect: 'Production: the stage constraining output and the stage view; output vs baseline; amber reduced-rate machines in the twin; below-rate and starvation events.',
     params: [
       { key: 'stage', label: 'Stage', initial: 'GLAZE', options: stageOptions },
       { key: 'factor', label: 'Capacity', initial: 0.45, options: [0.7, 0.55, 0.45, 0.3].map((f) => ({ value: f, label: pct(f) })) },
@@ -173,7 +166,7 @@ export const CATALOGUE: CatalogueEntry[] = [
     kind: 'machine-stop',
     group: 'production',
     summary: 'Stops a machine with an unplanned downtime event. Availability and OEE fall; buffers absorb the loss for a while or pass it on to the line.',
-    effect: 'Red machine in the twin, stop event and report, downtime Pareto in OEE & Loss, prioritised issue in the Command Center.',
+    effect: 'Red machine in the twin, stop event and report, downtime Pareto in Production, an issue requiring attention on the Overview.',
     params: [
       { key: 'machine', label: 'Machine', initial: 'H-KILN', options: machineOptions },
       { key: 'duration', label: 'Duration', initial: 30, options: DURATIONS },
@@ -186,7 +179,7 @@ export const CATALOGUE: CatalogueEntry[] = [
       label: `Breakdown ${machineLabel(str(v.machine))}${num(v.duration) > 0 ? ` · ${formatDuration(num(v.duration))}` : ''}`,
     }),
     focus: (v, sc) => ({ type: 'equipment', id: sc?.equipmentId ?? str(v.machine) }),
-    workspaces: ['production', 'command'],
+    workspaces: ['production', 'overview'],
   },
   {
     id: 'rate',
@@ -194,7 +187,7 @@ export const CATALOGUE: CatalogueEntry[] = [
     kind: 'reduced-rate',
     group: 'production',
     summary: 'Runs one machine below its ideal rate. It stays available, so the loss shows as performance, not downtime.',
-    effect: 'Amber reduced-rate state in the twin, below-rate event, performance and output in OEE & Loss.',
+    effect: 'Amber reduced-rate state in the twin, below-rate event, performance and output in Production.',
     params: [
       { key: 'machine', label: 'Machine', initial: 'H-KILN', options: machineOptions },
       { key: 'factor', label: 'Rate', initial: 0.6, options: [0.8, 0.6, 0.4].map((f) => ({ value: f, label: `${pct(f)} of ideal` })) },
@@ -210,8 +203,8 @@ export const CATALOGUE: CatalogueEntry[] = [
     kind: 'degradation',
     group: 'production',
     summary:
-      'Starts a developing component fault. Vibration and temperature drift upward; rule-based detection flags it before it fails. Untreated, a typical fault ends in an unplanned breakdown about 1½–2 h later.',
-    effect: 'Machine Health condition list, signal trends, condition event and recommendation; then either a breakdown or a short planned stop.',
+      'Starts a developing component fault. Simulated vibration and bearing temperature drift upward; rule-based detection flags it before it fails. Untreated, a typical fault ends in an unplanned breakdown about 1½–2 h later.',
+    effect: 'Condition level and signal trends in the Factory Twin equipment panel, a condition event and its recommendation; then either a breakdown or a short planned stop.',
     params: [
       {
         key: 'asset',
@@ -235,7 +228,7 @@ export const CATALOGUE: CatalogueEntry[] = [
       };
     },
     focus: (v, sc) => ({ type: 'equipment', id: sc?.equipmentId ?? str(v.asset) }),
-    workspaces: ['health', 'command'],
+    workspaces: ['twin', 'overview'],
     unavailable: (v, s) => {
       const id = str(v.asset);
       if (s.scenarios.some((sc) => sc.kind === 'degradation' && sc.equipmentId === id && scenarioStatus(s, sc).key === 'active'))
@@ -250,7 +243,7 @@ export const CATALOGUE: CatalogueEntry[] = [
     group: 'production',
     summary:
       'Cuts the simulated PLC / gateway link of one machine. Its counter, state and rate freeze at the last value; the machine keeps producing, but its status becomes unknown until data resumes.',
-    effect: 'Unknown — data stale status in the twin, Production Monitoring and the Command Center; counter-inactivity (data quality) event; line output still counted at sorting.',
+    effect: 'Unknown — data stale status in the twin, Production and the Overview; counter-inactivity (data quality) event; line output still counted at sorting.',
     params: [
       { key: 'machine', label: 'Machine', initial: 'E-PRS1', options: machineOptions },
       { key: 'duration', label: 'Duration', initial: 30, options: DURATIONS },
@@ -263,7 +256,7 @@ export const CATALOGUE: CatalogueEntry[] = [
       label: `Data feed loss ${machineLabel(str(v.machine))}${num(v.duration) > 0 ? ` · ${formatDuration(num(v.duration))}` : ''}`,
     }),
     focus: (v, sc) => ({ type: 'equipment', id: sc?.equipmentId ?? str(v.machine) }),
-    workspaces: ['monitoring', 'command'],
+    workspaces: ['production', 'overview'],
   },
   {
     id: 'quality',
@@ -271,7 +264,7 @@ export const CATALOGUE: CatalogueEntry[] = [
     kind: 'quality-deterioration',
     group: 'quality',
     summary: 'Raises the reject rate for defects that originate at the chosen stage. Rejects are detected at inspection; quality rate and OEE fall.',
-    effect: 'AI Defect Monitoring defect Pareto and trend, inspection records, quality events; OEE quality component in OEE & Loss.',
+    effect: 'Quality & Defects: defect Pareto and trend, inspection records (simulated classification), quality events; the OEE quality factor in Production.',
     params: [
       { key: 'stage', label: 'Defect origin', initial: 'GLAZE', options: (['PRESS', 'GLAZE', 'DECOR', 'KILN'] as StageId[]).map((id) => ({ value: id, label: stageLabel(id) })) },
       { key: 'factor', label: 'Severity', initial: 4, options: [2, 4, 6].map((f) => ({ value: f, label: `×${f} reject rate` })) },
@@ -288,34 +281,12 @@ export const CATALOGUE: CatalogueEntry[] = [
     workspaces: ['quality', 'production'],
   },
   {
-    id: 'energy',
-    ref: 7,
-    kind: 'energy-anomaly',
-    group: 'quality',
-    summary: 'Makes one consumer draw more energy than the energy model expects for its load (gas for the kiln and hot-air generator, electricity otherwise).',
-    effect: 'Energy Intelligence deviation table, cost and kWh/m²; energy-deviation event; energy cost vs baseline.',
-    params: [
-      { key: 'consumer', label: 'Consumer', initial: 'H-KILN', options: ENERGY_CONSUMERS.map((id) => ({ value: id, label: consumerLabel(id) })) },
-      { key: 'factor', label: 'Excess', initial: 1.2, options: [1.1, 1.2, 1.3, 1.4].map((f) => ({ value: f, label: `${plusPct(f)} vs model` })) },
-    ],
-    oneOff: false,
-    build: (v) => ({
-      kind: 'energy-anomaly',
-      equipmentId: str(v.consumer),
-      factor: num(v.factor),
-      end: null,
-      label: `${CONSUMER_BY_ID[str(v.consumer)]?.label ?? str(v.consumer)} energy ${plusPct(num(v.factor))}`,
-    }),
-    focus: (v, sc) => ({ type: 'equipment', id: sc?.equipmentId ?? str(v.consumer) }),
-    workspaces: ['energy', 'command'],
-  },
-  {
     id: 'truck',
     ref: 8,
     kind: 'truck-arrival',
     group: 'logistics',
     summary: 'An additional outbound truck arrives at the gate now, waits for a dock, loads and departs.',
-    effect: 'Vehicle Monitoring list, gate events and dock board; the truck drives through the twin.',
+    effect: 'Fleet & Movement: vehicle list, gate events and dock board; the truck drives through the twin.',
     params: [],
     oneOff: true,
     build: () => ({ kind: 'truck-arrival', end: null, label: 'Additional truck arrival' }),
@@ -331,7 +302,7 @@ export const CATALOGUE: CatalogueEntry[] = [
     kind: 'yard-congestion',
     group: 'logistics',
     summary: 'A burst of outbound trucks arrives two minutes apart. The holding area fills, waiting time and turnaround rise.',
-    effect: 'Vehicle Monitoring waiting time, holding area and turnaround; yard-congestion and truck-waiting events; queued trucks in the twin.',
+    effect: 'Fleet & Movement: waiting time, holding area and turnaround; yard-congestion and truck-waiting events; queued trucks in the twin.',
     params: [{ key: 'count', label: 'Trucks', initial: 10, options: [6, 10, 14].map((n) => ({ value: n, label: `${n} trucks` })) }],
     oneOff: true,
     build: (v) => ({ kind: 'yard-congestion', count: num(v.count), end: null, label: `Yard congestion · ${num(v.count)} trucks` }),
@@ -344,7 +315,7 @@ export const CATALOGUE: CatalogueEntry[] = [
     kind: 'prolonged-dock-stay',
     group: 'logistics',
     summary: 'Holds a docked truck after loading (documentation hold). Dock time, turnaround and dock utilisation rise; queued trucks wait longer.',
-    effect: 'Vehicle Monitoring dock board ("Held"), dock time and utilisation; dock-overstay event once the stay passes the threshold.',
+    effect: 'Fleet & Movement: dock board ("Held"), dock time and utilisation; dock-overstay event once the stay passes the threshold.',
     params: [
       { key: 'dock', label: 'Dock', initial: 'auto', options: dockOptions },
       { key: 'count', label: 'Hold', initial: 75, options: [45, 75, 120].map((n) => ({ value: n, label: `+${n} min` })) },
@@ -378,7 +349,7 @@ export const CATALOGUE: CatalogueEntry[] = [
     kind: 'restricted-entry',
     group: 'logistics',
     summary: `Forklift ${RESTRICTED_FORKLIFT} takes its next empty-pallet run across the hall pedestrian walkway, a no-entry zone. The geofence rule fires on its simulated position (zone level).`,
-    effect: 'Vehicle Monitoring safety events, the forklift route in the twin and the restricted-zone entry event report.',
+    effect: 'Fleet & Movement safety events, the forklift route in the twin and the restricted-zone entry event report.',
     params: [],
     oneOff: true,
     build: () => ({ kind: 'restricted-entry', vehicleId: RESTRICTED_FORKLIFT, end: null, label: `Restricted-zone entry · ${RESTRICTED_FORKLIFT}` }),
@@ -507,7 +478,8 @@ export function paramSummary(sc: ScenarioActivation): string {
     case 'quality-deterioration':
       return `Origin ${sc.stage ? stageLabel(sc.stage) : '—'} · ×${f ?? '—'} reject rate`;
     case 'energy-anomaly':
-      return `${consumerLabel(sc.equipmentId ?? '—')} · ${plusPct(f ?? 1.2)} vs model`;
+      // Retired scenario kind (energy is no longer a product module); kept so older logs still read.
+      return `${sc.equipmentId ?? '—'} · ${plusPct(f ?? 1.2)}`;
     case 'degradation':
       return `${machineLabel(sc.equipmentId ?? '—')} · ${progressionOf(f).toLowerCase()}`;
     case 'maintenance':
@@ -545,7 +517,7 @@ export function outcomeOf(s: SimState, sc: ScenarioActivation): string | null {
       const st = scenarioStatus(s, sc);
       if (st.note) return st.note;
       const m = maintenanceFor(s, sc).find((x) => x.end == null || x.end > now);
-      return m ? `Maintenance in progress until ${formatClock(m.end ?? now)}` : 'Developing — see Machine Health';
+      return m ? `Maintenance in progress until ${formatClock(m.end ?? now)}` : 'Developing — condition level in the Factory Twin';
     }
     case 'maintenance':
       return `Planned stop ${formatClock(sc.start)}–${formatClock(sc.end ?? now)}`;

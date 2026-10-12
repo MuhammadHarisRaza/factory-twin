@@ -2,6 +2,9 @@ import { useEffect, useLayoutEffect, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
 import {
   Activity,
+  Bell,
+  BellOff,
+  BellRing,
   BrickWall,
   Camera,
   Cog,
@@ -17,7 +20,7 @@ import {
   Truck,
   type LucideIcon,
 } from 'lucide-react';
-import { LAYER_LABELS, useTwin, type LayerId } from '../store';
+import { LAYER_LABELS, useTwin, type AlertFilter, type LayerId } from '../store';
 import { FLOW_COLORS, FLOW_LABELS, VIEWS, VIEW_ORDER } from '../data/layout';
 import type { FlowKind } from '../data/types';
 import { viewShortcut } from './ZonePanel';
@@ -53,11 +56,21 @@ const GROUPS: { label: string; layers: LayerId[] }[] = [
   { label: 'Overlays', layers: ['labels', 'minimap'] },
 ];
 
-type TipKey = 'zones' | 'views' | LayerId;
+type TipKey = 'zones' | 'views' | 'alerts' | LayerId;
 
-/** Camera views + quick views, opened beside the rail (portal, so the rail can scroll). */
-function ViewsMenu({ anchor, onClose }: { anchor: DOMRect; onClose: () => void }) {
-  const preset = useTwin((s) => s.preset);
+/** Alert-marker filter of the model (status pins, conveyor stop tags, condition and data-stale pins). */
+export const ALERT_FILTERS: { value: AlertFilter; label: string; hint: string; icon: LucideIcon }[] = [
+  { value: 'all', label: 'All alerts', hint: 'Every alert marker: warnings, serious and critical', icon: Bell },
+  { value: 'serious', label: 'Serious & critical', hint: 'Only serious and critical alert markers', icon: BellRing },
+  { value: 'off', label: 'No alert markers', hint: 'Hide the alert markers; equipment colours and the line-constraint marker stay', icon: BellOff },
+];
+export const ALERT_FILTER_BY: Record<AlertFilter, (typeof ALERT_FILTERS)[number]> = Object.fromEntries(ALERT_FILTERS.map((f) => [f.value, f])) as Record<
+  AlertFilter,
+  (typeof ALERT_FILTERS)[number]
+>;
+
+/** Popover beside the rail (portal) with a menu of items; closes on outside click and Esc. */
+function usePopover(anchor: DOMRect, onClose: () => void) {
   const ref = useRef<HTMLDivElement>(null);
   const [top, setTop] = useState(anchor.top);
   useLayoutEffect(() => {
@@ -79,8 +92,50 @@ function ViewsMenu({ anchor, onClose }: { anchor: DOMRect; onClose: () => void }
     };
   }, [onClose]);
   useEffect(() => {
-    ref.current?.querySelector('button')?.focus();
+    const el = ref.current?.querySelector<HTMLElement>('[aria-checked="true"]') ?? ref.current?.querySelector<HTMLElement>('button');
+    el?.focus();
   }, []);
+  return { ref, top };
+}
+
+/** Which alert markers the model shows. */
+function AlertMenu({ anchor, onClose }: { anchor: DOMRect; onClose: () => void }) {
+  const filter = useTwin((s) => s.alertFilter);
+  const setFilter = useTwin((s) => s.setAlertFilter);
+  const { ref, top } = usePopover(anchor, onClose);
+  return createPortal(
+    <div ref={ref} className="tw-views-pop tw-alert-pop overlay-panel" style={{ left: anchor.right + 8, top }} role="menu" aria-label="Alert markers in the model">
+      <div className="tw-pop-h">Alert markers · key A</div>
+      {ALERT_FILTERS.map((f) => {
+        const Icon = f.icon;
+        return (
+          <button
+            key={f.value}
+            type="button"
+            role="menuitemradio"
+            aria-checked={filter === f.value}
+            className={filter === f.value ? 'on' : ''}
+            title={f.hint}
+            onClick={() => {
+              setFilter(f.value);
+              onClose();
+            }}
+          >
+            <Icon size={14} aria-hidden />
+            {f.label}
+          </button>
+        );
+      })}
+      <p className="tw-pop-note">Equipment status colours always stay visible; only the floating alert markers are filtered.</p>
+    </div>,
+    document.body,
+  );
+}
+
+/** Camera views + quick views, opened beside the rail (portal, so the rail can scroll). */
+function ViewsMenu({ anchor, onClose }: { anchor: DOMRect; onClose: () => void }) {
+  const preset = useTwin((s) => s.preset);
+  const { ref, top } = usePopover(anchor, onClose);
   return createPortal(
     <div ref={ref} className="tw-views-pop overlay-panel" style={{ left: anchor.right + 8, top }} role="menu" aria-label="Camera views">
       <div className="tw-pop-h">Camera views</div>
@@ -127,6 +182,9 @@ export function Toolbar() {
   const zonePanel = useTwin((s) => s.zonePanel);
   const setZonePanel = useTwin((s) => s.setZonePanel);
   const [views, setViews] = useState<DOMRect | null>(null);
+  const [alerts, setAlerts] = useState<DOMRect | null>(null);
+  const alertFilter = useTwin((s) => s.alertFilter);
+  const AlertIcon = ALERT_FILTER_BY[alertFilter].icon;
   const tip = useTip<TipKey>();
 
   return (
@@ -154,6 +212,20 @@ export function Toolbar() {
         <Camera size={17} />
       </button>
       {views && <ViewsMenu anchor={views} onClose={() => setViews(null)} />}
+      <button
+        className={`tw-tool ${alertFilter === 'off' ? 'off' : 'on'}`}
+        onClick={(e) => {
+          tip.hide();
+          setAlerts(alerts ? null : e.currentTarget.getBoundingClientRect());
+        }}
+        aria-expanded={!!alerts}
+        aria-haspopup="menu"
+        aria-label={`Alert markers: ${ALERT_FILTER_BY[alertFilter].label} (A)`}
+        {...tip.bind('alerts', 'right')}
+      >
+        <AlertIcon size={17} />
+      </button>
+      {alerts && <AlertMenu anchor={alerts} onClose={() => setAlerts(null)} />}
       {GROUPS.map((g) => (
         <div key={g.label} className="tw-rail-g" role="group" aria-label={g.label}>
           {g.layers.map((layer) => {
@@ -177,6 +249,15 @@ export function Toolbar() {
       {tip.render((key) => {
         if (key === 'zones') return <b>{zonePanel ? 'Hide' : 'Show'} zones & views panel</b>;
         if (key === 'views') return <b>Camera views · keys 1–0</b>;
+        if (key === 'alerts')
+          return (
+            <>
+              <b>Alert markers · A</b>
+              <div className="tw-tip-row">
+                {ALERT_FILTER_BY[alertFilter].label} — {ALERT_FILTER_BY[alertFilter].hint.toLowerCase()}
+              </div>
+            </>
+          );
         const on = layers[key];
         const group = GROUPS.find((g) => g.layers.includes(key))!.label;
         return (

@@ -10,7 +10,7 @@ import { selectionCamera } from './derive';
 import { useTwinUi } from './uiStore';
 
 /**
- * Small floating camera view over the scene, opened from the inspector's Camera button.
+ * Small floating camera view over the scene, opened from the equipment workspace (Camera button or technical details).
  * It follows the selection: selecting another asset switches to the camera covering it (or closes
  * when none does); a followed vehicle switches camera as it moves between covered areas.
  * The feed itself (simulated twin render, or a configured stream that actually plays) is CameraFeed.
@@ -50,7 +50,7 @@ export function CameraWindow() {
         <span className="muted mono">{cam.id}</span>
         <span className="spacer" />
         {stage && (
-          <button className="btn ghost sm icon" onClick={() => openStage(stage)} title={`Open ${MONITORED_STAGE_BY_ID[stage].name} in Production Monitoring`} aria-label="Open stage monitoring">
+          <button className="btn ghost sm icon" onClick={() => openStage(stage)} title={`Open ${MONITORED_STAGE_BY_ID[stage].name} in Production`} aria-label="Open the stage in Production">
             <ExternalLink size={13} />
           </button>
         )}

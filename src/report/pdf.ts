@@ -1,5 +1,5 @@
 /**
- * PDF export of event reports and stage shift summaries.
+ * PDF export of event reports, operational reports and stage shift summaries.
  *
  * Both read the shared stores at click time and build from the same records the in-app views show:
  * the event PDF renders the SAME EventReport model as <EventReportView/> (src/intel/report.ts
@@ -13,7 +13,8 @@ import { MONITORED_STAGE_BY_ID } from '../model/plant';
 import type { MonitoredStageId } from '../model/types';
 import { useApp } from '../app/store';
 import { useSim } from '../sim/store';
-import { eventPdfFromReport, loadPdfLib, renderModel } from './build';
+import { buildOpsPdf, eventPdfFromReport, loadPdfLib, renderModel } from './build';
+import type { OpsReport } from './ops/types';
 import { stageShiftModel } from './stageShift';
 import { collectEvidenceImages } from './frames';
 import { inspectionRecords } from './images';
@@ -45,6 +46,24 @@ export async function exportStageShiftPdf(stageId: string): Promise<string> {
   if (!model) throw new Error(`Unknown stage ${stageId}`);
   const lib = await loadPdfLib();
   const { doc } = renderModel(lib, model);
+  doc.save(model.fileName);
+  return model.fileName;
+}
+
+/**
+ * Exports an operational report (shift, OEE, quality, vehicles) as a PDF download — the model passed
+ * in is the one the preview shows, so the document has exactly the preview's figures. Resolves to the
+ * file name; rejects with a readable message on failure.
+ */
+export async function exportOpsPdf(report: OpsReport): Promise<string> {
+  const s = useSim.getState().sim;
+  // The evidence items the report references, as recorded on their events (images are resolved now).
+  const ids = new Set(report.sections.flatMap((sec) => sec.blocks.flatMap((b) => (b.kind === 'evidence' ? b.items.map((x) => x.evidenceId) : []))));
+  const evidence = structuredClone(s.evidence.filter((x) => ids.has(x.id)));
+  const inspections = structuredClone(inspectionRecords(s, evidence));
+  const frozen = structuredClone(report);
+  const [lib, imageUrls] = await Promise.all([loadPdfLib(), collectEvidenceImages(evidence, inspections)]);
+  const { doc, model } = buildOpsPdf(lib, frozen, { imageUrls });
   doc.save(model.fileName);
   return model.fileName;
 }

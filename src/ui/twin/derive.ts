@@ -37,8 +37,9 @@ import { findDowntime, type SimState } from '../../sim/engine';
 import { EVENT_STATUS_LABEL, EVENT_TYPE_LABEL } from '../../sim/events';
 import type { HealthAssessment, HealthLevel } from '../../sim/health';
 import { phaseLabel, type TruckRuntime } from '../../sim/logistics';
-import { bottleneck, operationalState } from '../../sim/metrics';
+import { operationalState } from '../../sim/metrics';
 import { formatClock, formatDuration, shiftAt } from '../../sim/time';
+import { constraintMarker, type ConstraintMarker } from './constraint';
 
 // ── Production-line status strip ─────────────────────────────────────────────
 
@@ -50,21 +51,23 @@ export type LineStageDef = {
   /** Simulated process stages covered by the chip (empty = storage end of the line, no machine state). */
   stages: StageId[];
   zone: string;
+  /** Production stage the chip highlights in the model (useTwin.selectStage); null = no production stage (raw materials). */
+  monitored: MonitoredStageId | null;
 };
 
 /** The line as the presenter tells it: Raw → … → Warehouse (packing & palletising share one chip). */
 export const LINE_STAGES: LineStageDef[] = [
-  { key: 'RAW', label: 'Raw', name: 'Raw materials', stages: [], zone: 'B' },
-  { key: 'PREP', label: 'Prep', name: 'Body preparation', stages: ['PREP'], zone: 'C' },
-  { key: 'SPRAY', label: 'Spray', name: 'Spray drying', stages: ['SPRAY'], zone: 'D' },
-  { key: 'PRESS', label: 'Press', name: 'Pressing', stages: ['PRESS'], zone: 'E' },
-  { key: 'DRY', label: 'Dry', name: 'Drying', stages: ['DRY'], zone: 'F' },
-  { key: 'GLAZE', label: 'Glaze', name: 'Glazing', stages: ['GLAZE'], zone: 'G' },
-  { key: 'DECOR', label: 'Decor', name: 'Digital decoration', stages: ['DECOR'], zone: 'G' },
-  { key: 'KILN', label: 'Kiln', name: 'Firing', stages: ['KILN'], zone: 'H' },
-  { key: 'SORT', label: 'Sort', name: 'Sorting & inspection', stages: ['SORT'], zone: 'I' },
-  { key: 'PACK', label: 'Pack', name: 'Packing & palletising', stages: ['PACK', 'PAL'], zone: 'J' },
-  { key: 'WH', label: 'Warehouse', name: 'Finished-goods warehouse', stages: [], zone: 'K' },
+  { key: 'RAW', label: 'Raw', name: 'Raw materials', stages: [], zone: 'B', monitored: null },
+  { key: 'PREP', label: 'Prep', name: 'Body preparation', stages: ['PREP'], zone: 'C', monitored: 'PREP' },
+  { key: 'SPRAY', label: 'Spray', name: 'Spray drying', stages: ['SPRAY'], zone: 'D', monitored: 'SPRAY' },
+  { key: 'PRESS', label: 'Press', name: 'Pressing', stages: ['PRESS'], zone: 'E', monitored: 'PRESS' },
+  { key: 'DRY', label: 'Dry', name: 'Drying', stages: ['DRY'], zone: 'F', monitored: 'DRY' },
+  { key: 'GLAZE', label: 'Glaze', name: 'Glazing', stages: ['GLAZE'], zone: 'G', monitored: 'GLAZE' },
+  { key: 'DECOR', label: 'Decor', name: 'Digital decoration', stages: ['DECOR'], zone: 'G', monitored: 'GLAZE' },
+  { key: 'KILN', label: 'Kiln', name: 'Firing', stages: ['KILN'], zone: 'H', monitored: 'KILN' },
+  { key: 'SORT', label: 'Sort', name: 'Sorting & inspection', stages: ['SORT'], zone: 'I', monitored: 'SORT' },
+  { key: 'PACK', label: 'Pack', name: 'Packing & palletising', stages: ['PACK', 'PAL'], zone: 'J', monitored: 'PACK' },
+  { key: 'WH', label: 'Warehouse', name: 'Finished-goods warehouse', stages: [], zone: 'K', monitored: 'WH' },
 ];
 
 /**
@@ -127,7 +130,8 @@ export type LineStageStatus = {
   worst: OperationalState | null;
   /** Asset to locate on click: the one in the worst state (first machine when all are equal). */
   focusId: string | null;
-  bottleneck: boolean;
+  /** The line-constraint marker sits on this chip (constraintClaim — "constraining" only when `constraint.active`). */
+  constraint: ConstraintMarker | null;
 };
 
 /** Link between two consecutive chips; `conveyors` is empty where no conveyor is modelled. */
@@ -167,28 +171,26 @@ export function worstOf<T extends { op: OperationalState }>(list: T[]): T | unde
   return w;
 }
 
+/**
+ * The line strip: chips per process stage with their worst state, the conveyors between them, and
+ * the constraint marker on the chip of the stage the constraint claim names (constraintClaim — the
+ * Overview's wording: "constraining output" only with traced evidence, otherwise the kiln as the
+ * modeled design constraint).
+ */
 export function lineStatus(s: SimState) {
-  const bn = bottleneck(s);
+  const constraint = constraintMarker(s);
   const stages: LineStageStatus[] = LINE_STAGES.map((def) => {
     const machines = def.stages.flatMap((st) => STAGE_BY_ID[st].machines).map((id) => assetStatus(s, id));
     const conveyors = (LINE_CONVEYORS_WITHIN[def.key] ?? []).map((id) => assetStatus(s, id));
     const w = worstOf([...machines, ...conveyors]);
-    return { def, machines, conveyors, worst: w?.op ?? null, focusId: w?.id ?? null, bottleneck: def.stages.includes(bn.current.stage) };
+    return { def, machines, conveyors, worst: w?.op ?? null, focusId: w?.id ?? null, constraint: def.stages.includes(constraint.processStage) ? constraint : null };
   });
   const connectors: LineConnector[] = LINE_STAGES.slice(1).map((to, i) => {
     const from = LINE_STAGES[i];
     const key = `${from.key}>${to.key}`;
     return { key, from: from.key, to: to.key, conveyors: (LINE_CONVEYORS_BETWEEN[key] ?? []).map((id) => assetStatus(s, id)) };
   });
-  return {
-    stages,
-    connectors,
-    bottleneckStage: bn.current.stage,
-    /** Share of the window the bottleneck stage was producing at its own pace (its own downtime excluded). */
-    bottleneckWorking: bn.current.workingShare,
-    bottleneckDown: bn.current.downShare,
-    window: bn.period.label,
-  };
+  return { stages, connectors, constraint };
 }
 
 // ── Truck visit stepper ──────────────────────────────────────────────────────
@@ -258,7 +260,7 @@ export function selectionCamera(s: SimState, sel: { equipmentId?: string | null;
   return cameraFor(sel.equipmentId);
 }
 
-/** Monitored stage (Production Monitoring) of an asset; a conveyor counts for the stage it delivers to. */
+/** Production stage of an asset (Production workspace); a conveyor counts for the stage it delivers to. */
 export function monitoredStageOf(id: string): MonitoredStageId | null {
   const cv = CONVEYOR_BY_ID[id];
   if (cv) return (MONITORED_STAGES.find((m) => m.conveyors.includes(id) && m.id === cv.to) ?? MONITORED_STAGES.find((m) => m.conveyors.includes(id)))?.id ?? null;
@@ -332,14 +334,14 @@ export function eventWhen(e: OpEvent, now: number) {
 export type MarkerTone = 'critical' | 'serious' | 'warning' | 'neutral' | 'accent';
 export type TimelineLane = 'production' | 'quality' | 'logistics' | 'data' | 'scenario';
 
-/** Event lanes of the time strip (equipment-condition and energy events share the production lane). */
+/** Event lanes of the time strip (equipment-condition events share the production lane; any other category falls back to it). */
 export const TIMELINE_LANES: { id: Exclude<TimelineLane, 'scenario'>; label: string; categories: EventCategory[] }[] = [
-  { id: 'production', label: 'Production & equipment', categories: ['production', 'equipment', 'energy'] },
+  { id: 'production', label: 'Production & equipment', categories: ['production', 'equipment'] },
   { id: 'quality', label: 'Quality', categories: ['quality'] },
   { id: 'logistics', label: 'Vehicles & logistics', categories: ['logistics'] },
   { id: 'data', label: 'Data quality', categories: ['data'] },
 ];
-const LANE_OF = Object.fromEntries(TIMELINE_LANES.flatMap((l) => l.categories.map((c) => [c, l.id]))) as Record<EventCategory, TimelineLane>;
+const LANE_OF = Object.fromEntries(TIMELINE_LANES.flatMap((l) => l.categories.map((c) => [c, l.id]))) as Partial<Record<EventCategory, TimelineLane>>;
 
 export type TimelineMarker = {
   id: string;

@@ -1,10 +1,15 @@
-/** Period analytics of Vehicle Monitoring: turnaround per visit (vs the rule threshold) and gate movements per hour. */
+/**
+ * Period analytics of Fleet & Movement (Analytics tab). Each chart answers one question:
+ * "How long did each truck visit take against the turnaround limit?", "When do trucks arrive and
+ * leave?" and "Which docks carry the load?". Turnaround uses completed visits only — an open visit
+ * has no turnaround yet.
+ */
 import { formatClock, formatDay } from '../../sim/time';
 import { Empty, Panel } from '../../ui/kit/Panel';
-import { ColumnChart, StackedColumns, TipRow, type ColumnDatum } from '../../ui/kit/charts';
-import { fmtInt } from '../../ui/kit/format';
+import { ColumnChart, RankedBars, StackedColumns, TipRow, type ColumnDatum } from '../../ui/kit/charts';
+import { fmtInt, fmtPct } from '../../ui/kit/format';
 import { dur } from './common';
-import type { completedVisits, hourlyGate } from './derive';
+import type { completedVisits, dockUtilisation, hourlyGate } from './derive';
 
 const PER_VISIT_MAX = 40;
 const BUCKET = 15;
@@ -47,8 +52,8 @@ export function TurnaroundChart({
       title={perVisit ? 'Turnaround per visit' : 'Turnaround distribution'}
       subtitle={
         perVisit
-          ? `Gate in → gate out, visits completed in ${periodLabel} · outbound solid, inbound faded · dashed = threshold ${threshold} min · click a bar to select`
-          : `Visits per ${BUCKET}-min turnaround band · ${withT.length} visits in ${periodLabel}`
+          ? `How long did each visit take against the ${threshold}-min limit? Gate in → gate out, visits completed in ${periodLabel} · outbound solid, inbound faded · dashed = limit · click a bar to select the truck`
+          : `How are visit times distributed? Visits per ${BUCKET}-min turnaround band · ${withT.length} visits in ${periodLabel}`
       }
       footer={
         <span>
@@ -104,7 +109,7 @@ export function TurnaroundChart({
 export function GateChart({ gate, gateIn, gateOut, periodLabel }: { gate: ReturnType<typeof hourlyGate>; gateIn: number; gateOut: number; periodLabel: string }) {
   const multiDay = gate.hours.length > 30;
   return (
-    <Panel title="Gate movements per hour" subtitle={`Gate-in and gate-out records · ${periodLabel}`} footer={<span>{fmtInt(gateIn)} in · {fmtInt(gateOut)} out in the period</span>}>
+    <Panel title="Gate movements per hour" subtitle={`When do trucks arrive and leave? Gate-in and gate-out records · ${periodLabel}`} footer={<span>{fmtInt(gateIn)} in · {fmtInt(gateOut)} out in the period</span>}>
       {gate.hours.length ? (
         <StackedColumns
           labels={gate.hours.map((h) => (multiDay ? formatDay(h * 60) : formatClock(h * 60)))}
@@ -120,6 +125,36 @@ export function GateChart({ gate, gateIn, gateOut, periodLabel }: { gate: Return
       ) : (
         <Empty title="No hours in this period yet" />
       )}
+    </Panel>
+  );
+}
+
+export function DockUseChart({
+  util,
+  average,
+  loading,
+  periodLabel,
+}: {
+  util: ReturnType<typeof dockUtilisation>;
+  average: number;
+  /** Docked → loading complete of the outbound visits completed in the period. */
+  loading: { avg: number | null; n: number; max: number | null };
+  periodLabel: string;
+}) {
+  const rows = [...util].sort((a, b) => b.busy - a.busy).map((u) => ({ key: u.id, label: u.name, value: u.busy, share: u.share }));
+  const any = rows.some((r) => r.value > 0);
+  return (
+    <Panel
+      title="Dock occupancy"
+      subtitle={`Which docks carry the load? Occupied minutes per dock and share of ${periodLabel}`}
+      footer={
+        <span>
+          {fmtPct(average, 0)} average occupancy across {util.length} docks · occupied = a truck docked (loading, paperwork or hold) ·{' '}
+          {loading.n ? `loading took ${dur(loading.avg)} on average (longest ${dur(loading.max)}, ${loading.n} outbound visits)` : 'no outbound visit completed yet'}
+        </span>
+      }
+    >
+      {any ? <RankedBars rows={rows} format={(v) => dur(v)} valueHeader="Occupied" labelHeader="Dock" showCumulative={false} /> : <Empty title="No dock was occupied in this period" />}
     </Panel>
   );
 }

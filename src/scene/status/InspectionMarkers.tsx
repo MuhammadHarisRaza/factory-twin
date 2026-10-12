@@ -3,13 +3,16 @@
  * reject rate. A station turns amber while a quality exception involves it or an active quality
  * event (src/sim/events.ts) is open at it, and red while one of those events is critical. In wide
  * shots, where the three stations sit a few metres apart, they collapse into one line-level marker.
+ * The amber / red alert colouring honours the model's alert filter; the reject rate always shows.
  */
 import { useMemo, useRef } from 'react';
 import { Html } from '@react-three/drei';
 import { ScanLine } from 'lucide-react';
 import { useSimValue } from '../../sim/store';
 import { formatClock } from '../../sim/time';
-import { useTwin } from '../../store';
+import { useTwin, type AlertFilter } from '../../store';
+import { useSceneTabIndex } from '../embedded';
+import { alertShown } from './alerts';
 import { sharedQualityEvents, sharedQualityStatus, type QualityStatus, type StationEvents, type StationId } from './model';
 import { topCenter, useBoundsCount, useRelevanceFade } from './shared';
 
@@ -26,8 +29,19 @@ const pct = (r: number | null) => (r == null ? '—' : `${(r * 100).toFixed(1)} 
 
 const NO_EVENTS: StationEvents = { count: 0, level: null, events: [] };
 
-/** Chip colour: red for a critical event, amber for any other event or a flagged exception. */
-const chipClass = (flagged: boolean, ev: StationEvents) => (ev.level === 'red' ? 'ops-red' : ev.level === 'amber' || flagged ? 'ops-amber' : '');
+/**
+ * The station's active quality events the alert filter lets through (level recomputed: red for a
+ * critical event, amber otherwise). The chip itself is a label and always shows its reject rate.
+ */
+function filtered(ev: StationEvents, filter: AlertFilter): StationEvents {
+  if (filter === 'all') return ev;
+  const events = ev.events.filter((e) => alertShown(filter, e.severity));
+  return { count: events.length, events, level: events.some((e) => e.severity === 'critical') ? 'red' : events.length ? 'amber' : null };
+}
+
+/** Chip colour: red for a critical event, amber for any other event or a flagged exception (a warning, shown only under "all alerts"). */
+const chipClass = (flagged: boolean, ev: StationEvents, filter: AlertFilter) =>
+  ev.level === 'red' ? 'ops-red' : ev.level === 'amber' || (flagged && filter === 'all') ? 'ops-amber' : '';
 
 const eventsNote = (ev: StationEvents) =>
   ev.count
@@ -61,8 +75,11 @@ export function InspectionMarkers() {
   // Like the zone tags: labels layer, but out of the way of the numbered flow-mode stages.
   const visible = useTwin((s) => s.layers.labels && !s.layers.flow);
   const selected = useTwin((s) => s.selected);
+  const tabIndex = useSceneTabIndex();
+  const filter = useTwin((s) => s.alertFilter);
   const q = useSimValue((s) => sharedQualityStatus(s));
-  const events = useSimValue((s) => sharedQualityEvents(s));
+  const all = useSimValue((s) => sharedQualityEvents(s));
+  const events = useMemo(() => Object.fromEntries(Object.entries(all).map(([k, v]) => [k, filtered(v, filter)])) as Record<string, StationEvents>, [all, filter]);
   const ready = useBoundsCount(IDS);
   const anchors = useMemo(
     () => STATIONS.map((s) => ({ ...s, at: topCenter(s.equipmentId, 1.2) })),
@@ -100,8 +117,9 @@ export function InspectionMarkers() {
             <div className="ops-lift">
               <button
                 ref={refs[i]}
-                className={`ops-chip ${chipClass(t.flagged, ev)}`}
+                className={`ops-chip ${chipClass(t.flagged, ev, filter)}`}
                 onClick={() => select(a.equipmentId)}
+                tabIndex={tabIndex}
                 title={`${a.name}. ${t.detail}${t.flagged ? scenarioNote : ''}${eventsNote(ev)} Simulated inspection records.`}
               >
                 <ScanLine size={12} strokeWidth={2.3} aria-hidden />
@@ -119,8 +137,9 @@ export function InspectionMarkers() {
         <Html position={[vis.x, vis.y + 1.5, vis.z]} center zIndexRange={[7, 0]}>
           <button
             ref={lineRef}
-            className={`ops-chip ${chipClass(q.exception, events.line ?? NO_EVENTS)}`}
+            className={`ops-chip ${chipClass(q.exception, events.line ?? NO_EVENTS, filter)}`}
             onClick={() => select('I-VIS')}
+            tabIndex={tabIndex}
             title={`Sorting line inspection: ${pct(q.rate)} of tiles rejected since the start of the previous hour.${
               q.exception ? ' Quality exception active.' : ''
             }${scenarioNote}${eventsNote(events.line ?? NO_EVENTS)} Simulated inspection records.`}

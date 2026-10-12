@@ -1,6 +1,6 @@
 /**
  * Inspection-image rasteriser for reports and the PDF: draws the FrameArt still of a record (the
- * same illustration the AI Defect Monitoring workspace shows) into an offscreen canvas and returns
+ * same illustration the Quality & Defects workspace shows) into an offscreen canvas and returns
  * a PNG data URL. Every image carries a caption band saying it is an illustrative frame of a
  * simulated record — it is never a camera image and no vision model produced it.
  *
@@ -12,7 +12,7 @@ import type { QualityInspection } from '../../model/types';
 import { useSim } from '../../sim/store';
 import { registerInspectionRasteriser, type InspectionImageOpts } from '../../twin/inspectionImage';
 import { frameForRecord } from './frames';
-import { STILL_CAPTION, frameStillMarkup } from './still';
+import { GAUGE_CAPTION, STILL_CAPTION, frameStillMarkup } from './still';
 
 /** `crop`: square crop around the detection box (annotated or original). */
 export type RasteriseOpts = InspectionImageOpts & { crop?: boolean };
@@ -35,10 +35,12 @@ function caption(g: CanvasRenderingContext2D, size: number, rec: QualityInspecti
   const avail = size - 2 * pad;
   let fs = Math.max(8, Math.round(size * 0.032));
   const font = (n: number) => `500 ${n}px "IBM Plex Sans", system-ui, -apple-system, "Segoe UI", sans-serif`;
+  // Tunnel records carry a simulated classification; gauge records a simulated measurement.
+  const head = rec.stationId === 'ST-VIS' ? STILL_CAPTION : GAUGE_CAPTION;
   g.font = font(fs);
-  while (fs > 8 && g.measureText(STILL_CAPTION).width > avail) g.font = font(--fs);
+  while (fs > 8 && g.measureText(head).width > avail) g.font = font(--fs);
   const detail = `${rec.id} · ${what} · simulated record`;
-  const lines = g.measureText(STILL_CAPTION).width <= avail ? [STILL_CAPTION, detail] : ['Illustrative frame · simulated classification', 'no vision model', detail];
+  const lines = g.measureText(head).width <= avail ? [head, detail] : [head.split(' — ')[0], 'no vision model', detail];
   const lh = Math.round(fs * 1.32);
   const bandH = lines.length * lh + pad;
   g.fillStyle = 'rgba(10, 13, 15, 0.84)';

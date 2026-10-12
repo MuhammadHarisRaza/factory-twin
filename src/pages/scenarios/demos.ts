@@ -29,10 +29,10 @@ export type DemoId = 'A' | 'B' | 'C' | 'D';
 export type UseCaseId = 'production' | 'oee' | 'defects' | 'vehicles';
 
 export const USE_CASE_LABEL: Record<UseCaseId, string> = {
-  production: 'Production monitoring',
-  oee: 'OEE & loss intelligence',
-  defects: 'AI defect monitoring',
-  vehicles: 'Vehicle monitoring',
+  production: 'Production',
+  oee: 'OEE & losses',
+  defects: 'Quality & defects',
+  vehicles: 'Fleet & movement',
 };
 
 /** Truck-delay watcher: the hold is applied automatically when the injected truck docks. */
@@ -98,7 +98,7 @@ const stopDurations: ParamOption[] = [
 const pct = (f: number) => `${Math.round(f * 100)} %`;
 const durLabel = (min: number) => (min > 0 ? (min >= 60 ? `${min / 60} h` : `${min} min`) : 'until cleared');
 
-/** Monitored stage a conveyor feeds (Production Monitoring groups glazing + decoration and packing + palletising). */
+/** Monitored stage a conveyor feeds (Production groups glazing + decoration and packing + palletising). */
 export function conveyorStage(id: string): MonitoredStageId {
   const fed = CONVEYOR_BY_ID[id]?.blocksInputOf[0] ?? CONVEYOR_BY_ID[id]?.to ?? 'PACK';
   if (fed === 'DECOR') return 'GLAZE';
@@ -132,10 +132,10 @@ export const DEMOS: DemoDef[] = [
       const stage = conveyorStage(id);
       const need = run ? 'Waiting for the stop event' : 'Set up first';
       return [
-        { key: 'twin', label: `3D twin · ${id}`, target: { type: 'equipment', id }, hint: null },
-        { key: 'stage', label: `Monitoring · ${MONITORED_STAGE_BY_ID[stage]?.name ?? stage}`, target: { type: 'stage', id: stage }, hint: null },
+        { key: 'twin', label: `Factory Twin · ${id}`, target: { type: 'equipment', id }, hint: null },
+        { key: 'stage', label: `Production · ${MONITORED_STAGE_BY_ID[stage]?.name ?? stage}`, target: { type: 'stage', id: stage }, hint: null },
         { key: 'event', label: 'Event report', target: primary ? { type: 'event', id: primary.id } : null, hint: need },
-        { key: 'copilot', label: 'Ask copilot', target: primary ? { type: 'copilot', question: COPILOT_Q(id), eventId: primary.id } : null, hint: need },
+        { key: 'copilot', label: 'Ask the copilot', target: primary ? { type: 'copilot', question: COPILOT_Q(id), eventId: primary.id } : null, hint: need },
       ];
     },
     waiting: () => 'The conveyor-stop rule fires on the next simulated minute.',
@@ -146,7 +146,7 @@ export const DEMOS: DemoDef[] = [
     useCase: 'oee',
     title: 'OEE loss',
     summary:
-      'Slows a machine below its ideal rate (a performance loss) or stops it (an availability loss). OEE & Loss shows the drop, the capacity gap and its estimated value; the loss is carried by one event.',
+      'Slows a machine below its ideal rate (a performance loss) or stops it (an availability loss). Production shows the OEE drop, the capacity gap and its estimated value (assumptions shown); the loss is carried by one event.',
     params: [
       {
         key: 'mode',
@@ -173,9 +173,9 @@ export const DEMOS: DemoDef[] = [
     steps: ({ v, run, primary, scenarios }) => {
       const id = scenarios[0]?.equipmentId ?? str(v.machine);
       return [
-        { key: 'oee', label: 'OEE & Loss drill-down', target: { type: 'workspace', id: 'production' }, hint: null },
+        { key: 'oee', label: 'Production · OEE & losses', target: { type: 'workspace', id: 'production', tab: 'oee' }, hint: null },
         { key: 'event', label: 'Event report', target: primary ? { type: 'event', id: primary.id } : null, hint: run ? 'Waiting for the event' : 'Set up first' },
-        { key: 'twin', label: `3D twin · ${id}`, target: { type: 'equipment', id }, hint: null },
+        { key: 'twin', label: `Factory Twin · ${id}`, target: { type: 'equipment', id }, hint: null },
       ];
     },
     waiting: ({ s, run, scenarios }) => {
@@ -211,9 +211,9 @@ export const DEMOS: DemoDef[] = [
     ],
     primaryTypes: ['defect-count', 'defect-repeat', 'defect-rate', 'defect-deterioration'],
     steps: ({ run, primary }) => [
-      { key: 'quality', label: 'AI Defect Monitoring', target: { type: 'workspace', id: 'quality' }, hint: null },
+      { key: 'quality', label: 'Quality & Defects', target: { type: 'workspace', id: 'quality' }, hint: null },
       { key: 'event', label: 'Quality event report', target: primary ? { type: 'event', id: primary.id } : null, hint: run ? 'Waiting for a quality event' : 'Set up first' },
-      { key: 'twin', label: '3D twin · I-VIS', target: { type: 'equipment', id: 'I-VIS' }, hint: null },
+      { key: 'twin', label: 'Factory Twin · I-VIS', target: { type: 'equipment', id: 'I-VIS' }, hint: null },
     ],
     waiting: ({ s, v, scenarios }) => {
       const stage = (scenarios[0]?.stage ?? str(v.stage)) as StageId;
@@ -237,7 +237,7 @@ export const DEMOS: DemoDef[] = [
       const v = w ? s.logistics.vehicles[w.truckId] : undefined;
       const onSite = !!v && s.logistics.active.includes(v.id) && v.spawned <= s.minute;
       return [
-        { key: 'fleet', label: 'Vehicle Monitoring', target: { type: 'workspace', id: 'fleet' }, hint: null },
+        { key: 'fleet', label: 'Fleet & Movement', target: { type: 'workspace', id: 'fleet' }, hint: null },
         {
           key: 'truck',
           label: w ? `Follow ${w.truckLabel}` : 'Follow the truck',

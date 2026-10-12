@@ -1,204 +1,96 @@
-import type { ReactNode } from 'react';
-import { Gauge, OctagonX, ScanSearch, Target, Timer, Truck, Zap, type LucideIcon } from 'lucide-react';
-import { useApp, type WorkspaceId } from '../app/store';
-import { useSimValue } from '../sim/store';
-import { energyIn, fleetMetrics, lineMetrics, resolvePeriod, type PeriodKey } from '../sim/metrics';
-import { M2_PER_TILE, TARGET } from '../model/plant';
-import { formatDuration } from '../sim/time';
-import { MetricText } from './kit/Status';
-import { fmt1, fmtInt, fmtMetric, fmtPct } from './kit/format';
-import { useTip } from './twin/Tip';
-import { roundingCheck } from '../pages/production/derive';
-
-type ChipId = 'oee' | 'output' | 'downtime' | 'defects' | 'energy' | 'trucks';
-
-const PERIODS: { value: PeriodKey; label: string }[] = [
-  { value: 'shift', label: 'Shift' },
-  { value: 'today', label: 'Today' },
-  { value: '7d', label: '7 days' },
-];
-const OTHER_PERIOD: Partial<Record<PeriodKey, string>> = { 'prev-shift': 'Prev. shift', '24h': '24 h' };
-
 /**
- * KPI chip strip over the twin (simulated): line OEE, output against target, downtime,
- * defect rate, specific energy and trucks on site for the shared reporting period.
- * Each chip opens the workspace that explains the figure.
+ * Compact status chips over the Factory Twin: four of the Overview's headline KPIs for the current
+ * shift (good output against plan, line OEE, first-pass quality, issues requiring attention), read
+ * from the shared view models in src/intel/kpis.ts so they show exactly the Overview's figures.
+ * Each chip states its status in words and opens the workspace that explains it.
  */
-export function TwinStatusBar() {
-  const period = useApp((s) => s.period);
-  const setPeriod = useApp((s) => s.setPeriod);
-  const tariffs = useApp((s) => s.tariffs);
-  const go = useApp((s) => s.go);
-  const tip = useTip<ChipId>();
-  const d = useSimValue(
-    (s) => {
-      const p = resolvePeriod(period, s.minute);
-      return { p, lm: lineMetrics(s, p), e: energyIn(s, p, tariffs), fm: fleetMetrics(s, p) };
-    },
-    [period, tariffs],
-  );
-  const { lm, e, fm } = d;
-  // The tooltip shows 1-dp components; '=' only when their product rounds to the shown OEE.
-  const rc = roundingCheck(lm.oee);
-  const stops = lm.activeStops;
-  const defectRate = lm.inspected > 0 ? lm.rejected / lm.inspected : null;
-  const options = OTHER_PERIOD[period] ? [...PERIODS, { value: period, label: OTHER_PERIOD[period]! }] : PERIODS;
-  const money = (v: number) => `${tariffs.currency} ${fmtInt(v)}`;
+import { CircleCheck, CircleDashed, Gauge, OctagonX, ScanSearch, Siren, Target, TriangleAlert, type LucideIcon } from 'lucide-react';
+import { WORKSPACE_BY_ID, openView, type WorkspaceId } from '../app/store';
+import { overviewKpis, type KpiId, type KpiModel } from '../intel/kpis';
+import { resolvePeriod } from '../sim/metrics';
+import { useSimValue } from '../sim/store';
+import type { Tone } from './kit/Status';
+import { useTip } from './twin/Tip';
 
-  const chips: { id: ChipId; icon: LucideIcon; tone?: string; label: string; short?: string; value: ReactNode; sub?: ReactNode; workspace: WorkspaceId; tip: ReactNode }[] = [
-    {
-      id: 'oee',
-      icon: Gauge,
-      label: 'OEE',
-      value: <MetricText m={lm.oee.oee} />,
-      workspace: 'production',
-      tip: (
-        <>
-          <b>Line OEE · {lm.period.label}</b>
-          <div className="tw-tip-row">
-            A {fmtMetric(lm.oee.availability)} × P {fmtMetric(lm.oee.performance)} × Q {fmtMetric(lm.oee.quality)} {rc.matches ? '=' : '≈'} {fmtMetric(lm.oee.oee)}
-          </div>
-          {!rc.matches && <div className="tw-tip-note">Components rounded to 0.1 %; OEE is computed from the unrounded values.</div>}
-          <div className="tw-tip-note">
-            Availability and performance at the line constraint (kiln), quality = first-pass yield at sorting. Target {fmtPct(TARGET.oeeTarget, 0)}.
-          </div>
-        </>
-      ),
-    },
-    {
-      id: 'output',
-      icon: Target,
-      label: 'Output vs target',
-      short: 'Output',
-      value: <span className="num">{lm.attainment == null ? '—' : fmtPct(lm.attainment, 0)}</span>,
-      sub: <>{fmtInt(lm.outputM2)} m²</>,
-      workspace: 'production',
-      tip: (
-        <>
-          <b>First-quality output · {lm.period.label}</b>
-          <div className="tw-tip-row">
-            {fmtInt(lm.outputM2)} m² of {fmtInt(lm.targetM2)} m² target ({lm.attainment == null ? '—' : fmtPct(lm.attainment, 0)})
-          </div>
-          <div className="tw-tip-note">Target {fmtInt(TARGET.goodPerHour * M2_PER_TILE)} m² per planned hour, accepted at sorting.</div>
-        </>
-      ),
-    },
-    {
-      id: 'downtime',
-      icon: stops.length ? OctagonX : Timer,
-      tone: stops.length ? 'critical' : undefined,
-      label: 'Downtime',
-      value: <span className="num">{formatDuration(lm.downtimeMin)}</span>,
-      sub: stops.length ? <>{stops.length} stopped</> : undefined,
-      workspace: 'production',
-      tip: (
-        <>
-          <b>Unplanned stop time · {lm.period.label}</b>
-          <div className="tw-tip-row">{formatDuration(lm.downtimeMin)} (excludes planned stops and starved / blocked time)</div>
-          <div className="tw-tip-row">{stops.length ? `Stopped now: ${stops.map((x) => x.equipmentId).join(', ')}` : 'No machine stopped now.'}</div>
-        </>
-      ),
-    },
-    {
-      id: 'defects',
-      icon: ScanSearch,
-      label: 'Defect rate',
-      short: 'Defects',
-      value: <span className="num">{fmtPct(defectRate, 1)}</span>,
-      workspace: 'quality',
-      tip: (
-        <>
-          <b>Rejects at sorting · {lm.period.label}</b>
-          <div className="tw-tip-row">
-            {fmtInt(lm.rejected)} of {fmtInt(lm.inspected)} tiles inspected ({fmtPct(defectRate, 2)})
-          </div>
-        </>
-      ),
-    },
-    {
-      id: 'energy',
-      icon: Zap,
-      label: 'Energy',
-      value: <span className="num">{e.sec != null ? `${fmt1(e.sec)} kWh/m²` : money(e.cost)}</span>,
-      sub: e.sec != null ? <>{money(e.cost)}</> : undefined,
-      workspace: 'energy',
-      tip: (
-        <>
-          <b>Specific energy · {lm.period.label}</b>
-          <div className="tw-tip-row">
-            {e.sec != null ? `${fmt1(e.sec)} kWh per good m² (model ${fmt1(e.expectedSec)})` : 'No good output yet in this period'}
-          </div>
-          <div className="tw-tip-row">
-            {fmtInt(e.total)} kWh · {money(e.cost)}
-            {e.deviation != null ? ` · ${e.deviation >= 0 ? '+' : ''}${(e.deviation * 100).toFixed(1)} % vs model` : ''}
-          </div>
-          <div className="tw-tip-note">Illustrative model; tariffs are assumptions.</div>
-        </>
-      ),
-    },
-    {
-      id: 'trucks',
-      icon: Truck,
-      tone: fm.waiting >= 3 ? 'warning' : undefined,
-      label: 'Trucks on site',
-      short: 'Trucks',
-      value: <span className="num">{fm.onSite}</span>,
-      sub: <>{fm.waiting} waiting</>,
-      workspace: 'fleet',
-      tip: (
-        <>
-          <b>External vehicles · now</b>
-          <div className="tw-tip-row">
-            {fm.onSite} on site · {fm.waiting} waiting for a dock · {fm.atDock} at a dock · {fm.inbound} inbound
-          </div>
-        </>
-      ),
-    },
-  ];
+/** The four chips (by shared KPI id), what they open and their icon. */
+export const STATUS_CHIPS: { id: KpiId; icon: LucideIcon; short: string; workspace: WorkspaceId; tab?: string }[] = [
+  { id: 'good-output', icon: Target, short: 'Output', workspace: 'production' },
+  { id: 'factory-oee', icon: Gauge, short: 'OEE', workspace: 'production', tab: 'oee' },
+  { id: 'first-pass-quality', icon: ScanSearch, short: 'Quality', workspace: 'quality' },
+  { id: 'active-issues', icon: Siren, short: 'Issues', workspace: 'events' },
+];
+
+const TONE_ICON: Record<Tone, LucideIcon> = {
+  good: CircleCheck,
+  warning: TriangleAlert,
+  serious: TriangleAlert,
+  critical: OctagonX,
+  neutral: CircleDashed,
+  planned: CircleDashed,
+};
+
+// The chips are line-level figures: open the line-level view (Production on all stages), on the chip's tab.
+const open = (workspace: WorkspaceId, tab?: string) => openView(workspace, tab ?? null);
+
+export function TwinStatusBar() {
+  const tip = useTip<KpiId>();
+  const d = useSimValue((s) => {
+    const p = resolvePeriod('shift', s.minute);
+    const all = overviewKpis(s, p);
+    return { p, chips: STATUS_CHIPS.map((c) => ({ ...c, k: all.find((k) => k.id === c.id) as KpiModel })).filter((c) => c.k) };
+  });
 
   return (
-    <div className="tw-kpis" role="group" aria-label={`Key figures · ${lm.period.label} (simulated)`}>
-      <div className="tw-period" role="radiogroup" aria-label="Reporting period">
-        {options.map((o) => (
-          <button key={o.value} role="radio" aria-checked={o.value === period} className={o.value === period ? 'on' : ''} onClick={() => setPeriod(o.value)}>
-            {o.label}
-          </button>
-        ))}
-      </div>
-      {chips.map((c) => {
-        const Icon = c.icon;
+    <div className="tw-kpis" role="group" aria-label={`Factory status · ${d.p.label} (simulated)`}>
+      {d.chips.map(({ id, icon: Icon, short, workspace, tab, k }) => {
+        const tone = k.status?.tone;
+        const StatusIcon = tone ? TONE_ICON[tone] : null;
         return (
-          <button key={c.id} className="tw-kpi" onClick={() => go(c.workspace)} {...tip.bind(c.id, 'bottom')}>
-            <span className={c.tone ? `status ${c.tone}` : 'tw-kpi-i'}>
+          <button
+            key={id}
+            type="button"
+            className="tw-kpi"
+            onClick={() => open(workspace, tab)}
+            aria-label={`${k.label}: ${k.unavailable ? 'unavailable' : `${k.display}${k.unit ? ` ${k.unit}` : ''}`}${k.status ? `, ${k.status.label}` : ''}. Open ${WORKSPACE_BY_ID[workspace].title}.`}
+            {...tip.bind(id, 'bottom')}
+          >
+            <span className={tone && tone !== 'good' ? `status ${tone}` : 'tw-kpi-i'}>
               <Icon size={15} strokeWidth={2} aria-hidden />
             </span>
             <span className="tw-kpi-t">
               <span className="l">
-                {c.short ? (
-                  <>
-                    <span className="lg">{c.label}</span>
-                    <span className="sh">{c.short}</span>
-                  </>
-                ) : (
-                  c.label
-                )}
+                <span className="lg">{k.label}</span>
+                <span className="sh">{short}</span>
               </span>
               <span className="v">
-                {c.value}
-                {c.sub && <small> · {c.sub}</small>}
+                {k.unavailable ? <span className="na">Unavailable</span> : <span className="num">{k.display}</span>}
+                {!k.unavailable && k.unit && <small className="u"> {k.unit}</small>}
+                {k.status && StatusIcon && (
+                  <small className={`tw-kpi-s ${tone}`}>
+                    <StatusIcon size={11} strokeWidth={2.4} aria-hidden />
+                    <span>{k.status.label}</span>
+                  </small>
+                )}
               </span>
             </span>
           </button>
         );
       })}
       {tip.render((id) => {
-        const c = chips.find((x) => x.id === id);
-        return c ? (
+        const c = d.chips.find((x) => x.id === id);
+        if (!c) return null;
+        const k = c.k;
+        return (
           <>
-            {c.tip}
-            <div className="tw-tip-foot">Simulated · click to open the workspace</div>
+            <b>
+              {k.label} · {k.scope}
+            </b>
+            {k.unavailable ? <div className="tw-tip-row">{k.unavailable}</div> : <div className="tw-tip-row">{k.why}</div>}
+            {k.target && <div className="tw-tip-row">{k.target}</div>}
+            <div className="tw-tip-note">{k.definition}</div>
+            <div className="tw-tip-foot">Simulated · same figure as the Overview · click to open {WORKSPACE_BY_ID[c.workspace].title}</div>
           </>
-        ) : null;
+        );
       })}
     </div>
   );

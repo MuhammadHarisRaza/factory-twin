@@ -6,14 +6,15 @@ import { paramOptions, resolveValues, targetKey } from './catalogue';
 import { DEMO_BY_ID, USE_CASE_LABEL, demoKey, demoView, type DemoId } from './demos';
 import { clearDemo, currentRun, setupDemo, useDemoRuns, useScenarioParams } from './actions';
 import { ParamSelect, ScenarioState, ShowButton } from './ui';
-import '../scenarios.css';
+import './scenarios.css';
 
 /**
- * Presenter card of one end-to-end demonstration: parameters, one-click set-up, what the
- * scenario is doing, the operational event it produced (the same record as Events & Reports,
- * the PDF and the copilot) and the "Show me" steps in presentation order.
+ * Presenter card of one end-to-end demonstration (Scenarios panel → Guided demos): parameters,
+ * one-click set-up, what the scenario is doing, the operational event it produced (the same record
+ * as Events & Reports, the PDF and the copilot) and the "Show me" steps in presentation order —
+ * each into one of the seven workspaces.
  */
-export function DemoCard({ id, compact = false, onNavigate }: { id: DemoId; compact?: boolean; onNavigate?: () => void }) {
+export function DemoCard({ id, onNavigate }: { id: DemoId; onNavigate?: () => void }) {
   const def = DEMO_BY_ID[id];
   const key = demoKey(id);
   const values = useScenarioParams((s) => s.values[key]);
@@ -61,7 +62,7 @@ export function DemoCard({ id, compact = false, onNavigate }: { id: DemoId; comp
         )}
       </header>
 
-      {!compact && <p className="scnp-what">{def.summary}</p>}
+      <p className="scnp-what">{def.summary}</p>
 
       <div className="scnp-row">
         {params.map(({ p, i }) => (

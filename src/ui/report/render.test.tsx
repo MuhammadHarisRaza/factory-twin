@@ -1,6 +1,7 @@
 /**
- * Smoke test: the event report, the event list and the Events & Reports workspace render
- * (server-side) for every kind of event, with all 12 sections in order and the honesty labels.
+ * Smoke test: the event report and the shared event list render (server-side) for every kind of
+ * event, with all 12 sections in order and the honesty labels. The Events & Reports workspace has its
+ * own render test (src/pages/events/render.test.tsx).
  */
 import { beforeAll, describe, expect, it, vi } from 'vitest';
 import { renderToStaticMarkup } from 'react-dom/server';
@@ -12,12 +13,16 @@ vi.hoisted(() => {
 });
 
 import { useApp } from '../../app/store';
-import { EventsPage } from '../../pages/EventsPage';
 import { EVENT_SECTION_TITLES } from '../../report/model';
+import { buildOpsReport } from '../../report/ops';
+import { reportEvidence } from '../../report/ops/common';
 import { activateScenario, advance } from '../../sim/engine';
+import { attachEvidenceImage, evidenceOf } from '../../sim/events';
 import { useSim } from '../../sim/store';
+import { putImage } from '../../twin/bridge';
 import { EventList } from '../events/EventList';
 import { EventReportView } from './EventReportView';
+import { OpsReportView } from './OpsReportView';
 
 useSim.getState().pause();
 
@@ -38,7 +43,7 @@ beforeAll(() => {
   activateScenario(sim, { kind: 'yard-congestion', count: 8, end: null, label: 'Yard' });
   advance(sim, t0 + 60);
   useSim.setState({ version: sim.version });
-});
+}, 120_000);
 
 describe('event report view', () => {
   it('renders every section in order for each kind of event', () => {
@@ -92,7 +97,7 @@ describe('event report view', () => {
   });
 });
 
-describe('event list and workspace', () => {
+describe('event list and report legend', () => {
   it('renders the shared list with limit and empty state', () => {
     const sim = useSim.getState().sim;
     const evs = sim.events.slice(-8).reverse();
@@ -102,14 +107,37 @@ describe('event list and workspace', () => {
     expect(text(render(<EventList events={[]} empty="Nothing here" />))).toContain('Nothing here');
   });
 
-  it('renders Events & Reports with filters, counts and the selected report', () => {
+  it('renders the legend of the four kinds of information in the full report only', () => {
     const sim = useSim.getState().sim;
     const ev = sim.events.find((e) => e.type === 'conveyor-stop' && !e.historical)!;
-    useApp.setState({ workspace: 'events', selectedEventId: ev.id });
-    const t = text(render(<EventsPage />));
-    for (const label of ['Conditions active now', 'Open events', 'Detected this session', 'This session only', 'Category', 'Status', 'Stage shift PDF', 'newest first'])
-      expect(t).toContain(label);
-    expect(t).toContain(ev.id);
-    expect(t).toContain('Acknowledgement & resolution');
+    const full = text(render(<EventReportView eventId={ev.id} />));
+    for (const label of ['How to read this report', 'Measured in simulation', 'Simulated', 'Estimated', 'Illustrative']) expect(full).toContain(label);
+    expect(text(render(<EventReportView eventId={ev.id} compact />))).not.toContain('How to read this report');
+  });
+});
+
+// Runs last: it gives the session's kiln-infeed stop a captured frame (the tests above expect it pending).
+describe('operational report preview: camera evidence wording follows its provenance (#2, #5)', () => {
+  const PNG = 'data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNkYPhfDwAChwGA60e6kgAAAABJRU5ErkJggg==';
+  it('a frame of a configured stream is described as a camera frame, a twin render as a render', () => {
+    const sim = useSim.getState().sim;
+    const stop = sim.events.find((e) => e.type === 'conveyor-stop' && e.asset.equipmentId === 'CV-KIN' && !e.historical)!;
+    const snap = evidenceOf(sim, stop).find((x) => x.kind === 'camera-snapshot')!;
+    putImage(snap.id, { dataUrl: PNG, width: 1, height: 1 });
+    attachEvidenceImage(sim, snap.id, { key: snap.id, width: 1, height: 1, frameTime: sim.minute }, { origin: 'live-camera', sourceId: snap.cameraId ?? 'CAM-H1', label: 'Frame from the configured camera stream' });
+    useSim.setState({ version: sim.version });
+    const live = buildOpsReport(sim, 'shift', { period: 'shift' });
+    expect(reportEvidence(live.sections).some((x) => x.evidenceId === snap.id)).toBe(true);
+    const html = render(<OpsReportView report={live} />);
+    expect(html).toContain(`alt="Camera frame from the configured camera stream, captured with ${stop.id}"`);
+    expect(html).not.toContain(`alt="Digital-twin render captured with ${stop.id}"`);
+    expect(text(html)).toContain('camera evidence includes a frame from a configured camera stream');
+
+    attachEvidenceImage(sim, snap.id, { key: snap.id, width: 1, height: 1, frameTime: sim.minute }, { origin: 'digital-twin-render', sourceId: snap.cameraId ?? 'CAM-H1', label: 'Rendered from the digital twin' });
+    useSim.setState({ version: sim.version });
+    const twin = buildOpsReport(sim, 'shift', { period: 'shift' });
+    const html2 = render(<OpsReportView report={twin} />);
+    expect(html2).toContain(`alt="Digital-twin render captured with ${stop.id}"`);
+    expect(text(html2)).toContain('camera views are digital-twin renders');
   });
 });

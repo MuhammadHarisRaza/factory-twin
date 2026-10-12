@@ -1,4 +1,4 @@
-/* Copilot panel (Factory Copilot page, Command Center dock, global drawer). Tokens from styles.css. */
+/* Copilot panel (Copilot workspace, global drawer). Tokens from styles.css. */
 
 .cp {
   display: flex;
@@ -8,7 +8,6 @@
   height: 100%;
   background: var(--bg-1);
 }
-.cp-dock,
 .cp-page {
   border: 1px solid var(--line);
   border-radius: var(--r-3);
@@ -53,11 +52,11 @@
   padding: var(--s-4);
   display: flex;
   flex-direction: column;
-  gap: 18px;
+  gap: 20px;
 }
 .cp-page .cp-log {
   padding: var(--s-4) var(--s-5);
-  gap: 22px;
+  gap: 26px;
 }
 .cp-turn {
   display: flex;
@@ -77,8 +76,6 @@
   overflow-wrap: anywhere;
 }
 .cp-a {
-  border-left: 2px solid var(--accent-line);
-  padding: 1px 0 1px 12px;
   min-width: 0;
 }
 .cp-meta {
@@ -94,32 +91,64 @@
   font-variant-numeric: tabular-nums;
 }
 
-/* Answer sections: Observed / Inferred / Estimate / How */
+/* Answer sections — label above the lines, a thin rule marks each section. */
 .cp-secs {
   display: flex;
   flex-direction: column;
-  gap: 8px;
+  gap: 10px;
   margin-top: 8px;
 }
 .cp-sec {
-  display: grid;
-  grid-template-columns: 74px minmax(0, 1fr);
-  gap: 10px;
   min-width: 0;
+  padding-left: 11px;
+  border-left: 2px solid var(--line-3);
+}
+.cp-sec-confirmed {
+  border-left-color: var(--accent);
+}
+.cp-sec-simulated {
+  border-left-color: #e9c46a99;
+}
+.cp-sec-inferred,
+.cp-sec-hypotheses {
+  border-left-style: dashed;
+}
+.cp-sec-unknown {
+  border-left-color: var(--text-4);
+}
+.cp-sec-estimate {
+  border-left-style: dotted;
+}
+.cp-sec-method {
+  border-left-color: var(--line-2);
 }
 .cp-sec-h {
-  padding-top: 2px;
-  font-size: var(--fs-11);
+  display: flex;
+  align-items: center;
+  gap: 5px;
+  margin-bottom: 3px;
+  font-size: 10.5px;
   font-weight: var(--fw-semibold);
-  letter-spacing: 0.04em;
+  letter-spacing: 0.06em;
   text-transform: uppercase;
   color: var(--text-2);
   cursor: help;
   line-height: 1.35;
+  width: max-content;
+  max-width: 100%;
+}
+.cp-sec-h svg {
+  flex: none;
+  color: var(--text-3);
+}
+.cp-sec-confirmed .cp-sec-h svg {
+  color: var(--accent-strong);
+}
+.cp-sec-simulated .cp-sec-h,
+.cp-sec-simulated .cp-sec-h svg {
+  color: #e9c46a;
 }
 .cp-sec-h small {
-  display: block;
-  margin-top: 1px;
   font-size: 10px;
   font-weight: var(--fw-regular);
   letter-spacing: 0;
@@ -128,8 +157,6 @@
 }
 .cp-sec-b {
   min-width: 0;
-  border-left: 1px solid var(--line-2);
-  padding-left: 10px;
 }
 .cp-sec-b p,
 .cp-text p {
@@ -144,7 +171,7 @@
   margin-bottom: 0;
 }
 .cp-sec-b ol,
-.cp-text ol {
+.cp-sec-b ul {
   margin: 0 0 5px;
   padding-left: 20px;
   display: flex;
@@ -153,17 +180,23 @@
   font-size: var(--fs-13);
   line-height: 1.45;
 }
-.cp-sec-b li::marker,
-.cp-text li::marker {
+.cp-sec-b ol:last-child,
+.cp-sec-b ul:last-child {
+  margin-bottom: 0;
+}
+.cp-sec-b li::marker {
   color: var(--text-3);
   font-variant-numeric: tabular-nums;
 }
-/* Inferred: hypotheses read lighter than observed facts. */
-.cp-sec-inferred .cp-sec-b p {
+/* Simulated events, inferred and hypotheses read lighter than confirmed facts. */
+.cp-sec-simulated .cp-sec-b p,
+.cp-sec-inferred .cp-sec-b p,
+.cp-sec-hypotheses .cp-sec-b p,
+.cp-sec-unknown .cp-sec-b p {
   color: var(--text-2);
 }
-.cp-sec-estimate .cp-sec-b {
-  border-left-style: dashed;
+.cp-sec-simulated .cp-sec-b p {
+  font-size: var(--fs-12);
 }
 .cp-sec-method .cp-sec-h,
 .cp-sec-method .cp-sec-b p {
@@ -176,8 +209,25 @@
   font-size: var(--fs-12);
   color: var(--text-3);
 }
+/* A section with nothing to say: label and line stay visible, in a quieter tone. */
+.cp-sec.none {
+  border-left-color: var(--line-2);
+  border-left-style: solid;
+}
+.cp-sec.none .cp-sec-h,
+.cp-sec.none .cp-sec-h svg {
+  color: var(--text-3);
+}
+.cp-sec-b p.cp-none-l {
+  color: var(--text-3);
+  font-size: var(--fs-12);
+  font-style: italic;
+}
+.cp-actions li {
+  color: var(--text-1);
+}
 
-/* Confidence of an inference (not a status: neutral outline, text carries the meaning). */
+/* Confidence of a statement, in words (never colour alone). */
 .cp-conf {
   display: inline-block;
   margin-right: 6px;
@@ -188,6 +238,7 @@
   line-height: 16px;
   color: var(--text-1);
   vertical-align: 1px;
+  cursor: help;
 }
 .cp-conf-likely,
 .cp-conf-possible {
@@ -294,8 +345,11 @@
   border-color: var(--accent-line);
   color: var(--text-1);
 }
+.cp-chip-ctx {
+  color: var(--text-3);
+}
 
-/* Suggested questions grouped by use case */
+/* Suggested questions grouped by workspace */
 .cp-groups {
   display: flex;
   flex-direction: column;
@@ -329,7 +383,7 @@
   margin-bottom: 8px;
 }
 
-/* Footer: event context, suggestions toggle, input */
+/* Footer: context chips, suggestions toggle, input */
 .cp-f {
   border-top: 1px solid var(--line);
   padding: 10px var(--s-4) 12px;
@@ -341,33 +395,74 @@
   display: flex;
   flex-direction: column;
   gap: 6px;
-  padding: 8px 10px;
-  border: 1px solid var(--accent-line);
-  border-radius: var(--r-2);
-  background: var(--accent-soft);
+  min-width: 0;
 }
-.cp-ctx-h {
+.cp-ctx-chips {
   display: flex;
-  align-items: center;
+  flex-wrap: wrap;
   gap: 6px;
   min-width: 0;
-  font-size: var(--fs-12);
 }
-.cp-ctx-icon {
-  flex: none;
-  color: var(--accent-strong);
-}
-.cp-ctx-l {
-  color: var(--text-3);
+.cp-cchip {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  max-width: 100%;
+  min-width: 0;
+  height: 24px;
+  padding: 0 4px 0 8px;
+  border: 1px solid var(--line-2);
+  border-radius: var(--r-2);
+  background: var(--bg-2);
+  font-size: var(--fs-11);
+  color: var(--text-2);
   white-space: nowrap;
 }
-.cp-ctx-t {
-  flex: 1;
+.cp-cchip:not(:has(.cp-cchip-x)) {
+  padding-right: 8px;
+}
+.cp-cchip svg {
+  flex: none;
+  color: var(--text-3);
+}
+.cp-cchip.on {
+  border-color: var(--accent-line);
+  background: var(--accent-soft);
+}
+.cp-cchip.on > svg {
+  color: var(--accent-strong);
+}
+.cp-cchip-k {
+  color: var(--text-3);
+}
+.cp-cchip b {
+  color: var(--text-1);
+  font-weight: var(--fw-medium);
+}
+.cp-cchip-t {
   min-width: 0;
   overflow: hidden;
   text-overflow: ellipsis;
-  white-space: nowrap;
   color: var(--text-2);
+}
+.cp-cchip .status {
+  font-size: var(--fs-11);
+}
+.cp-cchip-x {
+  display: inline-grid;
+  place-items: center;
+  flex: none;
+  width: 18px;
+  height: 18px;
+  padding: 0;
+  border: 0;
+  border-radius: var(--r-1);
+  background: none;
+  color: var(--text-3);
+}
+.cp-cchip-x:hover {
+  background: var(--bg-4);
+  color: var(--text-1);
 }
 .cp-ctx .cp-chip {
   padding: 2px 8px;
@@ -411,14 +506,9 @@
 
 /* Global drawer */
 .drawer.cp-drawer {
-  width: min(500px, 100vw);
+  width: min(540px, 100vw);
 }
 .drawer.cp-drawer .cp {
   flex: 1;
   height: auto;
-}
-.cp-drawer .cp-sec,
-.cp-dock .cp-sec {
-  grid-template-columns: 62px minmax(0, 1fr);
-  gap: 8px;
 }

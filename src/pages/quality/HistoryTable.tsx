@@ -1,5 +1,5 @@
 /**
- * Inspection-record table of AI Defect Monitoring (up to 500 rows).
+ * Inspection-record table of Quality & Defects (up to 500 rows).
  *
  * Memoised on its inputs (kept identity-stable by ./history), so a simulated minute without a new
  * record, scenario link or event link does not render it. When it does render (a new record, a new
@@ -24,8 +24,8 @@ type Props = {
   selected: string | null;
   links: Map<string, string[]>;
   affected: Map<string, ScenarioActivation>;
-  /** Select a record (null = clear the selection). Must be identity-stable. */
-  onSelect: (id: string | null) => void;
+  /** Open a record. Must be identity-stable. */
+  onSelect: (id: string) => void;
   /** Focus an event and its evidence. Must be identity-stable. */
   onShowEvent: (id: string) => void;
   empty: string;
@@ -36,7 +36,7 @@ const recordKey = (r: QualityInspection) => r.id;
 
 export const HistoryTable = memo(function HistoryTable({ rows, selected, links, affected, onSelect, onShowEvent, empty }: Props) {
   const columns = useMemo(() => historyColumns(links, affected, onShowEvent), [links, affected, onShowEvent]);
-  const onRowClick = useCallback((r: QualityInspection) => onSelect(r.id === selected ? null : r.id), [onSelect, selected]);
+  const onRowClick = useCallback((r: QualityInspection) => onSelect(r.id), [onSelect]);
   return <DataTable columns={columns} rows={rows} rowKey={recordKey} onRowClick={onRowClick} selectedKey={selected} maxHeight={480} empty={empty} />;
 });
 

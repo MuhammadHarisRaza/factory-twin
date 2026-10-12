@@ -1,4 +1,4 @@
-import { useMemo, useState, type ReactNode } from 'react';
+import { useMemo, useState, type CSSProperties, type ReactNode } from 'react';
 import { ArrowDown, ArrowUp } from 'lucide-react';
 import { Empty } from './Panel';
 
@@ -14,9 +14,30 @@ export type Column<T> = {
   title?: string;
 };
 
+/** A sort header button that looks like the header text (font, colour and size inherited; focus ring from :focus-visible). */
+const SORT_BUTTON: CSSProperties = {
+  display: 'inline-flex',
+  alignItems: 'center',
+  gap: 4,
+  height: '100%',
+  width: '100%',
+  padding: 0,
+  margin: 0,
+  border: 0,
+  borderRadius: 2,
+  background: 'none',
+  font: 'inherit',
+  color: 'inherit',
+  letterSpacing: 'inherit',
+  textTransform: 'inherit',
+  whiteSpace: 'nowrap',
+  cursor: 'pointer',
+};
+
 /**
  * Sortable table with sticky header, optional row selection/click and an empty
- * state. Rows are keyed by `rowKey`.
+ * state. Rows are keyed by `rowKey`. A sortable header is a button (keyboard: Tab, Enter / Space)
+ * and the header cell carries aria-sort; clickable rows open with Enter or Space.
  */
 export function DataTable<T>({
   columns,
@@ -63,6 +84,7 @@ export function DataTable<T>({
           <tr>
             {columns.map((c) => {
               const active = sort?.key === c.key;
+              const arrow = active && (sort!.dir === 'asc' ? <ArrowUp size={11} aria-hidden /> : <ArrowDown size={11} aria-hidden />);
               return (
                 <th
                   key={c.key}
@@ -70,14 +92,20 @@ export function DataTable<T>({
                   style={{ width: c.width }}
                   title={c.title}
                   aria-sort={active ? (sort!.dir === 'asc' ? 'ascending' : 'descending') : undefined}
-                  onClick={
-                    c.sort
-                      ? () => setSort(active ? { key: c.key, dir: sort!.dir === 'asc' ? 'desc' : 'asc' } : { key: c.key, dir: c.numeric ? 'desc' : 'asc' })
-                      : undefined
-                  }
                 >
-                  {c.header}
-                  {active && (sort!.dir === 'asc' ? <ArrowUp size={11} style={{ marginLeft: 4 }} /> : <ArrowDown size={11} style={{ marginLeft: 4 }} />)}
+                  {c.sort ? (
+                    <button
+                      type="button"
+                      className="th-sort"
+                      style={{ ...SORT_BUTTON, justifyContent: c.numeric ? 'flex-end' : 'flex-start' }}
+                      onClick={() => setSort(active ? { key: c.key, dir: sort!.dir === 'asc' ? 'desc' : 'asc' } : { key: c.key, dir: c.numeric ? 'desc' : 'asc' })}
+                    >
+                      {c.header}
+                      {arrow}
+                    </button>
+                  ) : (
+                    c.header
+                  )}
                 </th>
               );
             })}
@@ -92,7 +120,15 @@ export function DataTable<T>({
                 className={`${onRowClick ? 'clickable' : ''} ${selectedKey === k ? 'sel' : ''}`}
                 onClick={onRowClick ? () => onRowClick(row) : undefined}
                 tabIndex={onRowClick ? 0 : undefined}
-                onKeyDown={onRowClick ? (e) => e.key === 'Enter' && onRowClick(row) : undefined}
+                onKeyDown={
+                  onRowClick
+                    ? (e) => {
+                        if (e.target !== e.currentTarget || (e.key !== 'Enter' && e.key !== ' ')) return;
+                        e.preventDefault();
+                        onRowClick(row);
+                      }
+                    : undefined
+                }
               >
                 {columns.map((c) => (
                   <td key={c.key} className={c.numeric ? 'n' : ''}>

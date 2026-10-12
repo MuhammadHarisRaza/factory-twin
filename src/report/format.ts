@@ -75,6 +75,12 @@ export const LABELS = {
   copilot: 'rule-based on the current demo state — no language model',
 } as const;
 
+/**
+ * Where the financial assumptions are edited in the app (FinancePanel). The same place as named by
+ * the assumption list of src/sim/finance.ts (assumptionList) — a test keeps the two in step.
+ */
+export const ASSUMPTIONS_LOCATION = 'Production → Analysis → Assumptions & what-ifs';
+
 /** Plant time of a minute with the day ("Mon 12 Oct 10:42"). */
 export const plantTime = (m: number | null | undefined) => (m == null ? '—' : formatDateTime(m));
 export const plantClock = (m: number | null | undefined) => (m == null ? '—' : formatClock(m));

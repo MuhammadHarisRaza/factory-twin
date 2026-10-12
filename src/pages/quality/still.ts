@@ -30,3 +30,5 @@ export async function frameStillMarkup(frame: Frame, opts: StillOpts): Promise<s
 
 /** Caption every exported frame carries, so the image can never pass for a camera picture. */
 export const STILL_CAPTION = 'Illustrative frame · simulated classification — no vision model';
+/** The same for a gauge record: a simulated measurement against a tolerance, not a classification. */
+export const GAUGE_CAPTION = 'Illustrative frame · simulated gauge measurement — no vision model';

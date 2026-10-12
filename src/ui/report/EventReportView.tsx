@@ -8,7 +8,8 @@
  */
 import { useMemo } from 'react';
 import { Box, ExternalLink, MessageSquareText } from 'lucide-react';
-import { openEvent, useApp } from '../../app/store';
+import { useApp } from '../../app/store';
+import { openEventRecord } from '../events/open';
 import { buildEventReport, cameraName, type EventReport } from '../../intel/report';
 import { CONFIDENCE_HINT, LABELS, fmtMoney, fmtValue, plantTime, wallClock } from '../../report/format';
 import { inspectionRecords } from '../../report/images';
@@ -18,6 +19,7 @@ import { Empty } from '../kit/Panel';
 import { EventStatusBadge, SeverityBadge, SourceTag } from '../kit/Status';
 import { SupportingEvidence, VisualEvidence } from './evidence';
 import { Lifecycle } from './Lifecycle';
+import { ReportLegend } from './OpsReportView';
 import { ConditionBadge, ConfidenceTag, KV, PdfButton, Prov, Sec, Sub, Unavailable, showEventInTwin } from './parts';
 import './report.css';
 
@@ -88,7 +90,7 @@ function ReportBody({ r, compact }: { r: EventReport; compact: boolean }) {
           </button>
           <PdfButton eventId={ev.id} />
           {compact ? (
-            <button className="btn sm ghost" onClick={() => openEvent(ev.id)}>
+            <button className="btn sm ghost" onClick={() => openEventRecord(ev.id)}>
               <ExternalLink size={13} aria-hidden /> Open full report
             </button>
           ) : (
@@ -217,7 +219,7 @@ function ReportBody({ r, compact }: { r: EventReport; compact: boolean }) {
               {C.related.map((x) => (
                 <tr key={x.id}>
                   <td>
-                    <button className="row-link mono" onClick={() => openEvent(x.id)} title={`Open the report of ${x.id}`}>
+                    <button className="row-link mono" onClick={() => openEventRecord(x.id)} title={`Open the report of ${x.id}`}>
                       {x.id}
                     </button>
                   </td>
@@ -367,7 +369,7 @@ function ReportBody({ r, compact }: { r: EventReport; compact: boolean }) {
                   <td className="muted">{c.basis}</td>
                   <td>
                     {c.relatedEventId ? (
-                      <button className="row-link mono" onClick={() => openEvent(c.relatedEventId!)}>
+                      <button className="row-link mono" onClick={() => openEventRecord(c.relatedEventId!)}>
                         {c.relatedEventId}
                       </button>
                     ) : (
@@ -410,7 +412,7 @@ function ReportBody({ r, compact }: { r: EventReport; compact: boolean }) {
         {compact && (
           <p className="rp-hint">
             Manage the lifecycle in{' '}
-            <button className="row-link" onClick={() => openEvent(ev.id)}>
+            <button className="row-link" onClick={() => openEventRecord(ev.id)}>
               Events & Reports
             </button>
             .
@@ -441,6 +443,12 @@ function ReportBody({ r, compact }: { r: EventReport; compact: boolean }) {
             <li key={i}>{d}</li>
           ))}
         </ul>
+        {!compact && (
+          <>
+            <Sub>How to read this report</Sub>
+            <ReportLegend />
+          </>
+        )}
       </Sec>
 
       <footer className="rp-foot">

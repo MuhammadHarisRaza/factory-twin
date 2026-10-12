@@ -1,7 +1,7 @@
 /**
- * Vehicle Monitoring page derivations. Pure helpers over the one simulation state; all
- * durations build on src/sim/metrics.ts (visitDurations, internalActivity) and only add
- * row shaping for the page's tables, board and charts.
+ * Fleet & Movement derivations. Pure helpers over the one simulation state; all durations build
+ * on src/sim/metrics.ts (visitDurations, internalActivity) and only add row shaping for the
+ * page's tables, dock board and charts.
  */
 import { DOCKS, GEOFENCES } from '../../model/plant';
 import type { RecordSource, Vehicle } from '../../model/types';
@@ -109,9 +109,12 @@ export type IntRow = {
   id: string;
   v: Vehicle;
   zone: string | null;
+  /** Context only: since when the vehicle has been working in its current zone (zone residency is not a dwell). */
+  zoneSince: number | null;
   moving: boolean;
   activity: string | null;
-  dwell: number | null;
+  /** Dwell of an internal vehicle: minutes at the current stop (0 while moving). */
+  stationaryMin: number | null;
   idleLastHour: number | null;
   restrictedToday: number;
 };
@@ -125,9 +128,10 @@ export function internalRows(s: SimState): IntRow[] {
       id: v.id,
       v,
       zone: a.zone,
-      moving: !!a.current?.moving && a.current.end > now,
+      zoneSince: a.zoneSince,
+      moving: a.moving,
       activity: a.current?.activity ?? null,
-      dwell: a.dwell,
+      stationaryMin: a.stationaryMin,
       idleLastHour: a.idleLastHour,
       restrictedToday: s.logistics.restrictedEvents.filter((e) => e.vehicleId === v.id && e.time >= from && e.time <= now).length,
     };

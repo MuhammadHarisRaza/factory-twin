@@ -1,5 +1,5 @@
 /**
- * OEE & Loss Intelligence — line level: the flow through the stages, traced from the line
+ * Production — line level: the flow through the stages, traced from the line
  * constraint, and what the buffers between them say about it (upstream accumulation, downstream
  * starvation, how long the WIP protects the next stage). Pure functions over the one SimState.
  */

@@ -4,7 +4,7 @@ import { activateScenario, advance, createSim, type SimState } from '../../../si
 import { operationalState } from '../../../sim/metrics';
 import {
   HOLD_END_GAP,
-  bottleneckTitle,
+  constraintChipTitle,
   conveyorMark,
   conveyorRuns,
   conveyorTagAnchor,
@@ -16,8 +16,8 @@ import {
   seedBelt,
   staleFeeds,
   stepBelt,
-  type BottleneckInfo,
 } from '../model';
+import { constraintMarker } from '../../../ui/twin/constraint';
 
 const START = 2 * 1440 + 300;
 
@@ -199,35 +199,26 @@ describe('data feeds and quality events', () => {
   });
 });
 
-describe('bottleneck label (finding #3)', () => {
-  const info: BottleneckInfo = {
-    stage: 'KILN',
-    name: 'Firing',
-    machines: ['H-KILN'],
-    shifted: false,
-    activeShare: 1,
-    workingShare: 0.2,
-    downShare: 0.8,
-    periodLabel: 'Last 120 min',
-  };
-
-  it('a stopped stage reads as down, never as working 100 %', () => {
-    const t = bottleneckTitle(info, 'Single-layer roller kiln');
-    expect(t).toContain('producing 20 %');
-    expect(t).toContain('down 80 %');
-    expect(t).toContain('waiting on neighbouring stages 0 %');
-    expect(t).toContain('last 120 min');
+describe('3D line-constraint chip (findings #3, #4, #16)', () => {
+  it('a stopped kiln reads as stopped and constraining, never as working 100 %', () => {
+    const s = createSim(82, START);
+    activateScenario(s, { kind: 'machine-stop', equipmentId: 'H-KILN', end: null, label: 'Kiln stop' });
+    advance(s, START + 25);
+    const m = constraintMarker(s);
+    expect(m.active).toBe(true);
+    const t = constraintChipTitle(m, 'Single-layer roller kiln');
+    expect(t).toMatch(/^Constraining output · Kiln firing & cooling\nThe kiln has been (stopped|in fault) since \d\d:\d\d/);
+    expect(t).toMatch(/down \d+ % of the last 2 h/);
     expect(t).not.toContain('100 %');
+    expect(t.endsWith('Select Single-layer roller kiln.')).toBe(true);
   });
 
-  it('omits the downtime part when the stage was not down and flags a shifted constraint', () => {
-    const t = bottleneckTitle(
-      { ...info, stage: 'SORT', name: 'Sorting & inspection', activeShare: 0.9, workingShare: 0.9, downShare: 0, shifted: true },
-      'Diverters',
-    );
-    expect(t).toContain('producing 90 %');
-    expect(t).not.toContain('down ');
-    expect(t).toContain('waiting on neighbouring stages 10 %');
-    expect(t).toContain('shifted from the kiln');
+  it('a kiln that nothing held up is the neutral modeled design constraint, not "the bottleneck"', () => {
+    const s = createSim(81, 2 * 1440 + 4 * 60 + 20);
+    const m = constraintMarker(s);
+    expect(m.active).toBe(false);
+    const t = constraintChipTitle(m, 'Single-layer roller kiln');
+    expect(t).toMatch(/^Design constraint \(modeled\) · Kiln firing & cooling\nNo other stage held the kiln up in the last 2 h/);
+    expect(t).not.toMatch(/bottleneck|limits the line|constraining output/i);
   });
 });

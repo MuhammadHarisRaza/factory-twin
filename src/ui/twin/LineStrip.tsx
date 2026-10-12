@@ -8,8 +8,9 @@ import { fleetMetrics, resolvePeriod } from '../../sim/metrics';
 import type { TruckRuntime } from '../../sim/logistics';
 import { formatClock, formatDuration } from '../../sim/time';
 import { OPERATIONAL_STATE, OP_COLOR_HEX, toneToColor } from '../kit/Status';
-import { fmtInt, fmtPct } from '../kit/format';
+import { fmtInt } from '../kit/format';
 import type { OperationalState } from '../../model/types';
+import type { ConstraintMarker } from './constraint';
 import { LINE_STAGES, currentStep, lineStatus, visitSteps, worstOf, type AssetStatus, type LineConnector, type LineStageStatus } from './derive';
 import { useTip } from './Tip';
 
@@ -34,15 +35,35 @@ function AssetTipRow({ a }: { a: AssetStatus }) {
   );
 }
 
+/**
+ * The constraint marker in a chip's tooltip, in the Overview's wording (constraintClaim): amber and
+ * "currently constraining output" only with traced evidence, otherwise the neutral modeled design
+ * constraint with the evidence behind it.
+ */
+function ConstraintTipRow({ c }: { c: ConstraintMarker }) {
+  return (
+    <div className="tw-tip-row">
+      <span className={`tw-bn-note ${c.active ? 'active' : ''}`}>
+        <Hourglass size={12} aria-hidden />
+        {c.label}
+      </span>
+      <span className="muted"> · {c.sentence}</span>
+    </div>
+  );
+}
+
 type TipKey = `s:${string}` | `c:${string}`;
 
 /**
  * Process stages Raw → Warehouse as chips coloured by the worst machine state, linked by the
  * conveyors that carry tiles between them (thin connectors coloured by the conveyor's state).
+ * A stage chip highlights that production stage in the model and opens its panel (useTwin.stage,
+ * shared with the Overview flow strip and Production); clicking the highlighted stage again clears it.
  */
 function StageStrip() {
   const selected = useTwin((s) => s.selected);
   const zone = useTwin((s) => s.zone);
+  const stage = useTwin((s) => s.stage);
   const data = useSimValue((s) => {
     const fm = fleetMetrics(s, resolvePeriod('shift', s.minute));
     return { ...lineStatus(s), stock: s.logistics.stockPallets, onSite: fm.onSite, waiting: fm.waiting };
@@ -52,8 +73,20 @@ function StageStrip() {
   const locate = (st: LineStageStatus) => {
     tip.hide();
     const tw = useTwin.getState();
-    if (st.focusId) tw.select(st.focusId);
-    else tw.selectZone(st.def.zone);
+    const m = st.def.monitored;
+    if (!m) {
+      // Raw materials: no production stage, show the receiving zone.
+      tw.selectStage(null);
+      tw.selectZone(st.def.zone);
+      return;
+    }
+    if (tw.stage === m && !tw.selected && !tw.vehicle) {
+      tw.selectStage(null);
+      return;
+    }
+    if (tw.vehicle) tw.selectVehicle(null);
+    if (tw.selected) tw.select(null);
+    tw.selectStage(m);
   };
   const locateConveyor = (cn: LineConnector) => {
     tip.hide();
@@ -68,7 +101,11 @@ function StageStrip() {
         {data.stages.map((st, i) => {
           const color = st.worst ? opColor(st.worst) : OP_COLOR_HEX.grey;
           const Icon = st.worst ? OPERATIONAL_STATE[st.worst].icon : st.def.key === 'RAW' ? Boxes : Warehouse;
-          const on = selected ? st.machines.some((m) => m.id === selected) || st.conveyors.some((c) => c.id === selected) : zone === st.def.zone;
+          const on = selected
+            ? st.machines.some((m) => m.id === selected) || st.conveyors.some((c) => c.id === selected)
+            : stage
+              ? st.def.monitored === stage
+              : zone === st.def.zone;
           const stateLabel = st.worst ? OPERATIONAL_STATE[st.worst].label : 'No machine state';
           const cn = i > 0 ? data.connectors[i - 1] : null;
           const cw = cn?.conveyors.length ? worstOf(cn.conveyors) : null;
@@ -87,15 +124,16 @@ function StageStrip() {
                   <span className="tw-conn" aria-hidden />
                 ))}
               <button
-                className={`tw-stage ${on ? 'on' : ''} ${st.bottleneck ? 'bn' : ''} ${st.worst ? '' : 'store'}`}
+                className={`tw-stage ${on ? 'on' : ''} ${st.constraint ? `bn ${st.constraint.active ? 'active' : ''}` : ''} ${st.worst ? '' : 'store'}`}
                 style={{ ['--c' as string]: color }}
                 onClick={() => locate(st)}
-                aria-label={`${st.def.name}: ${stateLabel}${st.bottleneck ? ', current bottleneck' : ''}`}
+                aria-label={`${st.def.name}: ${stateLabel}${st.constraint ? `, ${st.constraint.label.toLowerCase()}` : ''}${st.def.monitored ? (stage === st.def.monitored ? ' — highlighted, click to clear' : ' — click to highlight the stage') : ''}`}
+                aria-pressed={st.def.monitored ? stage === st.def.monitored : undefined}
                 {...tip.bind(`s:${st.def.key}`, 'top')}
               >
                 <Icon size={13} strokeWidth={2.3} aria-hidden />
                 <span>{st.def.label}</span>
-                {st.bottleneck && <Hourglass className="tw-bn-i" size={11} strokeWidth={2.4} aria-hidden />}
+                {st.constraint && <Hourglass className="tw-bn-i" size={11} strokeWidth={2.4} aria-hidden />}
               </button>
             </Fragment>
           );
@@ -140,16 +178,10 @@ function StageStrip() {
             {st.conveyors.map((c) => (
               <AssetTipRow key={c.id} a={c} />
             ))}
-            {st.bottleneck && (
-              <div className="tw-tip-row">
-                <span className="tw-bn-note">
-                  <Hourglass size={12} aria-hidden />
-                  Current bottleneck · producing {fmtPct(data.bottleneckWorking, 0)} of planned time
-                  {data.bottleneckDown >= 0.005 ? `, down ${fmtPct(data.bottleneckDown, 0)}` : ''} ({data.window.toLowerCase()})
-                </span>
-              </div>
-            )}
-            <div className="tw-tip-foot">Simulated · click to locate {st.focusId ? st.focusId : `zone ${z.id}`}</div>
+            {st.constraint && <ConstraintTipRow c={st.constraint} />}
+            <div className="tw-tip-foot">
+              Simulated · {st.def.monitored ? (stage === st.def.monitored ? 'click to clear the highlight' : 'click to highlight the stage in the model') : `click to show zone ${z.id}`}
+            </div>
           </>
         );
       })}

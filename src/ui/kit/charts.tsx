@@ -3,8 +3,35 @@
  * recessive grid and axes, thin marks with 4 px rounded data-ends anchored on the
  * baseline, a 2 px surface gap between adjacent fills, one y-axis per chart, hover
  * tooltips by default, legends only for two or more series, text in text colours.
+ * Selectable marks (ColumnChart / RankedBars with onSelect) are keyboard controls: focusable,
+ * activated with Enter or Space, named for screen readers, with a visible focus mark.
  */
-import { useLayoutEffect, useRef, useState, type ReactNode } from 'react';
+import { useLayoutEffect, useRef, useState, type CSSProperties, type FocusEvent, type KeyboardEvent, type ReactNode } from 'react';
+
+/** Enter / Space activate a non-button control (role="button"). */
+const onActivate = (fn: () => void) => (e: KeyboardEvent) => {
+  if (e.key !== 'Enter' && e.key !== ' ') return;
+  e.preventDefault();
+  fn();
+};
+
+/** A button that looks like the text it wraps (focus ring from :focus-visible). */
+const PLAIN_BUTTON: CSSProperties = {
+  display: 'block',
+  width: '100%',
+  padding: 0,
+  margin: 0,
+  border: 0,
+  borderRadius: 2,
+  background: 'none',
+  font: 'inherit',
+  color: 'inherit',
+  textAlign: 'left',
+  whiteSpace: 'nowrap',
+  overflow: 'hidden',
+  textOverflow: 'ellipsis',
+  cursor: 'pointer',
+};
 
 function useWidth<T extends HTMLElement>() {
   const ref = useRef<T>(null);
@@ -62,7 +89,10 @@ function barPath(x: number, y: number, w: number, h: number, r = 3) {
 
 export type ColumnDatum = { key: string; label: string; value: number; target?: number; muted?: boolean };
 
-/** One series of columns with an optional dashed per-bucket target step. */
+/**
+ * One series of columns with an optional dashed per-bucket target step. With `onSelect` every column
+ * is a keyboard control (Tab to it, Enter / Space selects; the tooltip follows focus).
+ */
 export function ColumnChart({
   data,
   height = 200,
@@ -71,6 +101,8 @@ export function ColumnChart({
   tickEvery = 1,
   tip,
   onSelect,
+  label,
+  barLabel,
 }: {
   data: ColumnDatum[];
   height?: number;
@@ -79,9 +111,15 @@ export function ColumnChart({
   tickEvery?: number;
   tip?: (d: ColumnDatum) => ReactNode;
   onSelect?: (d: ColumnDatum) => void;
+  /** Accessible name of the chart. */
+  label?: string;
+  /** Accessible name of a selectable column (default: its label, value and target). */
+  barLabel?: (d: ColumnDatum) => string;
 }) {
   const [ref, width] = useWidth<HTMLDivElement>();
   const [hover, setHover] = useState<Tip>(null);
+  const [focused, setFocused] = useState<string | null>(null);
+  const nameOf = barLabel ?? ((d: ColumnDatum) => `${d.label}: ${format(d.value)}${d.target != null ? `, target ${format(d.target)}` : ''}`);
   const max = Math.max(1, ...data.map((d) => Math.max(d.value, d.target ?? 0)));
   const { top, ticks } = niceScale(max);
   const iw = width - PAD.l - PAD.r;
@@ -92,29 +130,55 @@ export function ColumnChart({
   const hasTarget = data.some((d) => d.target != null);
   return (
     <div className="chart" ref={ref} onMouseLeave={() => setHover(null)}>
-      <svg width={width} height={height} role="img">
-        <g className="grid">
+      {/* Interactive: a group of buttons (an "img" would hide them from assistive technology). */}
+      <svg width={width} height={height} role={onSelect ? 'group' : 'img'} aria-label={label}>
+        <g className="grid" aria-hidden>
           {ticks.map((t) => (
             <line key={t} x1={PAD.l} x2={width - PAD.r} y1={y(t)} y2={y(t)} />
           ))}
         </g>
         {ticks.map((t) => (
-          <text key={t} x={PAD.l - 6} y={y(t) + 3.5} textAnchor="end">
+          <text key={t} x={PAD.l - 6} y={y(t) + 3.5} textAnchor="end" aria-hidden={onSelect ? true : undefined}>
             {format(t)}
           </text>
         ))}
         {data.map((d, i) => {
           const x = PAD.l + i * step + 1;
           const h = y(0) - y(d.value);
+          const showTip = () => tip && setHover({ x: x + bw / 2, y: y(Math.max(d.value, d.target ?? 0)), content: tip(d) });
           return (
             <g
               key={d.key}
-              onMouseMove={() => tip && setHover({ x: x + bw / 2, y: y(Math.max(d.value, d.target ?? 0)), content: tip(d) })}
+              onMouseMove={showTip}
               onClick={onSelect ? () => onSelect(d) : undefined}
-              style={{ cursor: onSelect ? 'pointer' : undefined }}
+              style={{ cursor: onSelect ? 'pointer' : undefined, outline: 'none' }}
+              {...(onSelect
+                ? {
+                    role: 'button',
+                    tabIndex: 0,
+                    'aria-label': nameOf(d),
+                    onKeyDown: onActivate(() => onSelect(d)),
+                    onFocus: (e: FocusEvent<SVGGElement>) => {
+                      // The focus mark is for keyboard focus; a mouse click shows the tooltip only.
+                      let keyboard = true;
+                      try {
+                        keyboard = e.currentTarget.matches(':focus-visible');
+                      } catch {
+                        /* selector unsupported: show the mark */
+                      }
+                      if (keyboard) setFocused(d.key);
+                      showTip();
+                    },
+                    onBlur: () => {
+                      setFocused((k) => (k === d.key ? null : k));
+                      setHover(null);
+                    },
+                  }
+                : {})}
             >
               <rect x={x - 1} y={PAD.t} width={step} height={ih} fill="transparent" />
               <path d={barPath(x, y(d.value), bw, h)} fill={color} opacity={d.muted ? 0.45 : 1} />
+              {focused === d.key && <rect x={x - 1} y={PAD.t} width={step} height={ih} fill="none" stroke="var(--accent)" strokeWidth={1.5} rx={2} pointerEvents="none" />}
             </g>
           );
         })}
@@ -133,7 +197,7 @@ export function ColumnChart({
         <line className="baseline" x1={PAD.l} x2={width - PAD.r} y1={y(0)} y2={y(0)} />
         {data.map((d, i) =>
           i % tickEvery === 0 ? (
-            <text key={d.key} x={PAD.l + i * step + step / 2} y={height - 6} textAnchor="middle">
+            <text key={d.key} x={PAD.l + i * step + step / 2} y={height - 6} textAnchor="middle" aria-hidden={onSelect ? true : undefined}>
               {d.label}
             </text>
           ) : null,
@@ -393,7 +457,8 @@ export type RankedRow = { key: string; label: ReactNode; value: number; share?: 
 
 /**
  * Sorted horizontal bars with value and cumulative share as text columns — the Pareto
- * reading without a dual-axis chart.
+ * reading without a dual-axis chart. With `onSelect` each row's label is a button (Tab, Enter /
+ * Space); a click anywhere on the row selects it too.
  */
 export function RankedBars({
   rows,
@@ -419,10 +484,14 @@ export function RankedBars({
   return (
     <div role="table">
       <div className="hbar head" role="row">
-        <span>{labelHeader}</span>
-        <span />
-        <span className="val">{valueHeader}</span>
-        <span className="cum">{showCumulative ? 'Cum. %' : 'Share'}</span>
+        <span role="columnheader">{labelHeader}</span>
+        <span aria-hidden />
+        <span className="val" role="columnheader">
+          {valueHeader}
+        </span>
+        <span className="cum" role="columnheader">
+          {showCumulative ? 'Cum. %' : 'Share'}
+        </span>
       </div>
       {rows.map((r) => (
         <div
@@ -430,16 +499,34 @@ export function RankedBars({
           role="row"
           className={`hbar ${onSelect ? 'clickable' : ''}`}
           style={selectedKey && selectedKey !== r.key ? { opacity: 0.45 } : undefined}
-          aria-selected={selectedKey === r.key || undefined}
           onClick={onSelect ? () => onSelect(r) : undefined}
           title={typeof r.label === 'string' ? r.label : undefined}
         >
-          <span className="label">{r.label}</span>
-          <span className="track">
+          <span className="label" role="cell">
+            {onSelect ? (
+              <button
+                type="button"
+                style={PLAIN_BUTTON}
+                aria-pressed={selectedKey != null ? selectedKey === r.key : undefined}
+                aria-label={typeof r.label === 'string' ? `${r.label}: ${format(r.value)}` : undefined}
+                onClick={(e) => {
+                  e.stopPropagation();
+                  onSelect(r);
+                }}
+              >
+                {r.label}
+              </button>
+            ) : (
+              r.label
+            )}
+          </span>
+          <span className="track" role="cell" aria-hidden>
             <span className="bar" style={{ width: `${(r.value / max) * 100}%`, background: r.color ?? color }} />
           </span>
-          <span className="val">{format(r.value)}</span>
-          <span className="cum">
+          <span className="val" role="cell">
+            {format(r.value)}
+          </span>
+          <span className="cum" role="cell">
             {showCumulative
               ? r.cumulative != null
                 ? `${Math.round(r.cumulative * 100)} %`

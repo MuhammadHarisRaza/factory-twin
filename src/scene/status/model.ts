@@ -11,7 +11,8 @@ import { CONVEYOR_IDS, DEFECTS, DEFECT_ORDER, INSPECTION_STATIONS, OPS_BY_ID, RE
 import type { AlertSeverity, MachineState, OperationalState, StageId, Vehicle, VehicleLeg } from '../../model/types';
 import { findDowntime, type SimState } from '../../sim/engine';
 import { HEALTH_ASSETS, assess } from '../../sim/health';
-import { bottleneck, defectShift, energyIn, operationalState, qualityIn, type Period } from '../../sim/metrics';
+import { energyIn, operationalState, qualityIn, risingDefects, type Period } from '../../sim/metrics';
+import type { ConstraintMarker } from '../../ui/twin/constraint';
 
 // ── Polylines ─────────────────────────────────────────────────────────────────
 
@@ -204,7 +205,7 @@ export const lastHour = (now: number): Period => {
   return { from, to: now, label: 'Last hour' };
 };
 
-// ── Health, energy, quality, bottleneck flags ─────────────────────────────────
+// ── Health, energy, quality, constraint flags ─────────────────────────────────
 
 export type FlagLevel = 'watch' | 'warning' | 'alarm';
 export type HealthFlag = { id: string; level: FlagLevel; score: number };
@@ -260,8 +261,8 @@ export function qualityStatus(s: SimState): QualityStatus {
   // The quality insight's rule (src/intel/insights.ts), so the twin and the insight list agree.
   let rule = false;
   if (recent.inspected >= 300 && ref.inspected >= 1000 && rate != null && refRate != null) {
-    const top = defectShift(s, 120, 1440)[0];
-    const rising = !!top && top.ratio != null && top.ratio > 1.6 && (top.rateRecent ?? 0) > 0.004;
+    // The one rising-defect rule (risingDefects), as the insight, the Quality summary and the copilot use it.
+    const rising = risingDefects(s, { from: Math.max(0, now - 120), to: now, label: 'Last 2 h' }).rising.length > 0;
     rule = rate >= refRate * 1.35 || rising;
   }
   const high = rate != null && recent.inspected >= 200 && rate > 0.05;
@@ -293,46 +294,14 @@ export function qualityStatus(s: SimState): QualityStatus {
 /** `qualityStatus`, computed once per simulated minute however many overlays read it. */
 export const sharedQualityStatus = perVersion(qualityStatus);
 
-export type BottleneckInfo = {
-  stage: StageId;
-  name: string;
-  machines: string[];
-  shifted: boolean;
-  /** Not waiting on neighbouring stages (producing or down on its own). */
-  activeShare: number;
-  /** Actually producing at its own pace (active minus its own downtime). */
-  workingShare: number;
-  /** Down on its own. */
-  downShare: number;
-  /** The bottleneck window, e.g. "Last 120 min". */
-  periodLabel: string;
-};
-
-/** The active-period bottleneck (src/sim/metrics.ts `bottleneck`), or null before any production. */
-export function bottleneckInfo(s: SimState): BottleneckInfo | null {
-  const b = bottleneck(s);
-  const c = b.current;
-  if (!c || !(c.activeShare > 0)) return null;
-  return {
-    stage: c.stage,
-    name: c.name,
-    machines: STAGE_BY_ID[c.stage].machines,
-    shifted: b.shifted,
-    activeShare: c.activeShare,
-    workingShare: c.workingShare,
-    downShare: c.downShare,
-    periodLabel: b.period.label,
-  };
-}
-
-/** Tooltip of the 3D bottleneck label: what the stage did over the bottleneck window (finding #3). */
-export function bottleneckTitle(info: BottleneckInfo, targetName: string): string {
-  const pct = (x: number) => `${Math.round(Math.max(0, x) * 100)} %`;
-  const did = [`producing ${pct(info.workingShare)}`];
-  if (info.downShare >= 0.005) did.push(`down ${pct(info.downShare)}`);
-  return `${info.name} limits the line (${info.periodLabel.toLowerCase()}): ${did.join(', ')}, waiting on neighbouring stages ${pct(1 - info.activeShare)}${
-    info.shifted ? ' — the constraint has shifted from the kiln' : ''
-  }. Select ${targetName}.`;
+/**
+ * Tooltip of the 3D line-constraint chip (ConstraintHighlight, also seen on the Overview). The
+ * marker is the shared constraintMarker over constraintClaim (src/intel/summary.ts), so the model
+ * never calls a stage the bottleneck where the Overview's summary and flow strip only claim the
+ * modeled design constraint: the claim with its evidence, then what a click does.
+ */
+export function constraintChipTitle(m: ConstraintMarker, targetName: string): string {
+  return `${m.title}\nSelect ${targetName}.`;
 }
 
 // ── Conveyors, data feeds, quality events ─────────────────────────────────────

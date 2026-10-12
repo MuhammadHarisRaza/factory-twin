@@ -5,9 +5,9 @@ import { resolvePeriod, type PeriodKey } from '../../sim/metrics';
 import { useSimValue } from '../../sim/store';
 import { DataTable, type Column } from '../../ui/kit/DataTable';
 import { fmtInt, fmtPct } from '../../ui/kit/format';
-import { Panel } from '../../ui/kit/Panel';
+import { EmptyState } from '../../ui/kit/Page';
 import { MetricText, OperationalStatus, StatusBadge } from '../../ui/kit/Status';
-import { Kpi, Verdict, m2 } from './common';
+import { Block, Verdict, m2 } from './common';
 import { machineLosses } from './derive';
 import { conveyorRows, machineRows, type ConveyorRow, type MachineRow } from './equipment';
 import { LossBars } from './LossBars';
@@ -19,36 +19,33 @@ const KILN_STAGE = LINE.designConstraint;
 /** Equipment level: every process machine and conveyor for the period; a row opens the drill-down. */
 export function EquipmentView({ periodKey, selected, onAsset }: { periodKey: PeriodKey; selected: string | null; onAsset: (id: string) => void }) {
   const finance = useApp((s) => s.finance);
-  const tariffs = useApp((s) => s.tariffs);
   const d = useSimValue(
     (s) => {
       const p = resolvePeriod(periodKey, s.minute);
-      const L = lossLedger(s, p, finance, tariffs);
+      const L = lossLedger(s, p, finance);
       const c = equipmentContribution(s, p, L);
       return { p, L, machines: machineRows(s, p, c), conveyors: conveyorRows(s, p, c), losses: machineLosses(s, p) };
     },
-    [periodKey, finance, tariffs],
+    [periodKey, finance],
   );
   return (
     <>
       <EquipmentSummary machines={d.machines} conveyors={d.conveyors} periodLabel={d.p.label} />
       <MachineTable rows={d.machines} selected={selected} onAsset={onAsset} lineLoss={d.L.outputLossM2} />
-      <ConveyorTable rows={d.conveyors} selected={selected} onAsset={onAsset} />
-      <Panel
-        className="col-4"
-        title="Own lost output by machine"
-        subtitle="Down, starved and blocked minutes × the machine’s ideal rate · click for the drill-down"
-        footer={<span>Asset-level view: a machine away from the kiln costs line output only when it holds the kiln up, so these bars are not added to the line loss.</span>}
-      >
-        {d.losses.some((r) => r.totalM2 > 0) ? (
-          <LossBars rows={d.losses} selectedKey={selected} onSelect={onAsset} />
-        ) : (
-          <div className="empty">
-            <b>No losses</b>
-            No unplanned downtime, starved or blocked time in this period
-          </div>
-        )}
-      </Panel>
+      <div className="prod-2col">
+        <ConveyorTable rows={d.conveyors} selected={selected} onAsset={onAsset} />
+        <Block
+          title="Own lost output by machine"
+          subtitle="Down, starved and blocked minutes × the machine’s ideal rate · select for the drill-down"
+          note={<span>Asset-level view: a machine away from the kiln costs line output only when it holds the kiln up, so these bars are not added to the line loss.</span>}
+        >
+          {d.losses.some((r) => r.totalM2 > 0) ? (
+            <LossBars rows={d.losses} selectedKey={selected} onSelect={onAsset} />
+          ) : (
+            <EmptyState title="No losses">No unplanned downtime, starved or blocked time in this period.</EmptyState>
+          )}
+        </Block>
+      </div>
     </>
   );
 }
@@ -64,54 +61,52 @@ function EquipmentSummary({ machines, conveyors, periodLabel }: { machines: Mach
   const worstCv = [...cvAvail].sort((a, b) => a.availability! - b.availability!)[0];
   const n = stopped.length + cvStopped.length;
   return (
-    <section className="summary prod-kpis prod-kpis-4" aria-label="Equipment summary">
-      <div className="prod-kpi-head">
-        <div className="kpi-label">Equipment · {periodLabel}</div>
-        <Verdict tone={n ? 'critical' : 'good'}>
-          {n ? `${n} asset${n === 1 ? '' : 's'} stopped now: ${[...stopped, ...cvStopped].map((r) => r.id).join(', ')}` : 'All machines and conveyors running or waiting on material'}
-        </Verdict>
-        <div className="kpi-value">
-          {stopped.length}
-          <small>of {machines.length} machines stopped</small>
+    <div className="prod-eq-summary" aria-label={`Equipment · ${periodLabel}`}>
+      <Verdict tone={n ? 'critical' : 'good'}>
+        {n ? `${n} asset${n === 1 ? '' : 's'} stopped now: ${[...stopped, ...cvStopped].map((r) => r.id).join(', ')}` : 'All machines and conveyors running or waiting on material'}
+      </Verdict>
+      <div className="mini-kpis">
+        <div className="mini-kpi">
+          <span>Machines stopped now</span>
+          <b>
+            {stopped.length}
+            <small>of {machines.length}</small>
+          </b>
+          <em>
+            {cvStopped.length} of {conveyors.length} conveyors stopped
+          </em>
         </div>
-        <div className="kpi-sub">
-          <span>
-            {cvStopped.length} of {conveyors.length} conveyors stopped · starved / blocked assets count as not stopped
-          </span>
+        <div className="mini-kpi" title="Machine OEE uses that machine's own time accounting and the rejects attributed to its stage — it is not the line OEE">
+          <span>Lowest machine OEE</span>
+          <b>{lowest ? <MetricText m={lowest.mm.oee.oee} /> : '—'}</b>
+          <em>{lowest ? `${lowest.id} · ${lowest.name}` : 'No machine OEE available'}</em>
+        </div>
+        <div className="mini-kpi">
+          <span>Most unplanned downtime</span>
+          <b>
+            {mostDown && mostDown.downMin > 0 ? (
+              <>
+                {fmtInt(mostDown.downMin)}
+                <small>min</small>
+              </>
+            ) : (
+              'None'
+            )}
+          </b>
+          <em>{mostDown && mostDown.downMin > 0 ? `${mostDown.id} · ${mostDown.name}` : 'No unplanned stops in the period'}</em>
+        </div>
+        <div className="mini-kpi" title="Unplanned loss at the kiln charged to the asset that caused it (counted once)">
+          <span>Largest share of the line loss</span>
+          <b>{lineTop && lineTop.lineLossM2 >= 0.5 ? m2(lineTop.lineLossM2) : 'None'}</b>
+          <em>{lineTop && lineTop.lineLossM2 >= 0.5 ? `${lineTop.id} · ${lineTop.name}` : 'Nothing held the kiln back'}</em>
+        </div>
+        <div className="mini-kpi">
+          <span>Lowest conveyor availability</span>
+          <b>{worstCv ? fmtPct(worstCv.availability, 1) : '—'}</b>
+          <em>{worstCv ? `${worstCv.id} · ${worstCv.stops} stop${worstCv.stops === 1 ? '' : 's'}` : 'No conveyor data'}</em>
         </div>
       </div>
-      <Kpi
-        label="Lowest machine OEE"
-        title="Machine OEE uses that machine's own time accounting and the rejects attributed to its stage — it is not the line OEE"
-        value={lowest ? <MetricText m={lowest.mm.oee.oee} /> : '—'}
-        lines={[<span key="i">{lowest ? `${lowest.id} · ${lowest.name}` : 'No machine OEE available'}</span>]}
-      />
-      <Kpi
-        label="Most unplanned downtime"
-        value={
-          mostDown && mostDown.downMin > 0 ? (
-            <>
-              {fmtInt(mostDown.downMin)}
-              <small>min</small>
-            </>
-          ) : (
-            'None'
-          )
-        }
-        lines={[<span key="i">{mostDown && mostDown.downMin > 0 ? `${mostDown.id} · ${mostDown.name}` : 'No unplanned stops in the period'}</span>]}
-      />
-      <Kpi
-        label="Largest share of the line loss"
-        title="Unplanned loss at the kiln charged to the asset that caused it (counted once)"
-        value={lineTop && lineTop.lineLossM2 >= 0.5 ? m2(lineTop.lineLossM2) : 'None'}
-        lines={[<span key="i">{lineTop && lineTop.lineLossM2 >= 0.5 ? `${lineTop.id} · ${lineTop.name}` : 'Nothing held the kiln back'}</span>]}
-      />
-      <Kpi
-        label="Lowest conveyor availability"
-        value={worstCv ? fmtPct(worstCv.availability, 1) : '—'}
-        lines={[<span key="i">{worstCv ? `${worstCv.id} · ${worstCv.stops} stop${worstCv.stops === 1 ? '' : 's'}` : 'No conveyor data'}</span>]}
-      />
-    </section>
+    </div>
   );
 }
 
@@ -180,14 +175,14 @@ function MachineTable({ rows, selected, onAsset, lineLoss }: { rows: MachineRow[
     },
   ];
   return (
-    <Panel
-      className="col-12"
-      title="Process machines"
-      subtitle={`Period figures per machine · line loss at the kiln ${m2(lineLoss)} in total · click a row for events, reports and the 3D view`}
+    <Block
+      title="Equipment OEE — process machines"
+      subtitle={`Each machine’s own OEE for the period · line loss at the kiln ${m2(lineLoss)} in total · select a row for events, reports and the 3D view`}
+      note={<span>Machine OEE uses the machine’s own time accounting and ideal rate, with the rejects attributed to its stage; the line OEE is measured at the kiln and is not an average of these.</span>}
       flush
     >
       <DataTable columns={cols} rows={rows} rowKey={(r) => r.id} onRowClick={(r) => onAsset(r.id)} selectedKey={selected} maxHeight="none" />
-    </Panel>
+    </Block>
   );
 }
 
@@ -228,14 +223,13 @@ function ConveyorTable({ rows, selected, onAsset }: { rows: ConveyorRow[]; selec
   ];
   const stopped = rows.filter((r) => STOPPED.has(r.op)).length;
   return (
-    <Panel
-      className="col-8"
+    <Block
       title="Conveyors"
-      subtitle="Availability, utilisation and stops · OEE is not meaningful for a conveyor · click a row for the drill-down"
+      subtitle="Availability, utilisation and stops · OEE is not meaningful for a conveyor · select a row for the drill-down"
       actions={stopped ? <StatusBadge tone="critical" icon={OctagonX} label={`${stopped} stopped`} /> : <StatusBadge tone="good" icon={CircleCheck} label="None stopped" />}
       flush
     >
       <DataTable columns={cols} rows={rows} rowKey={(r) => r.id} onRowClick={(r) => onAsset(r.id)} selectedKey={selected} maxHeight="none" />
-    </Panel>
+    </Block>
   );
 }

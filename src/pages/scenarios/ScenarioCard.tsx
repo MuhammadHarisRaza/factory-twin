@@ -19,8 +19,8 @@ import {
 } from './catalogue';
 import { runScenario, useScenarioParams, type Origin } from './actions';
 import { LevelBadge, ParamSelect, ScenarioState, ShowButton, targetLabel } from './ui';
-// Also used by the quick drawer, so the card brings its own styles.
-import '../scenarios.css';
+// The card brings its own styles.
+import './scenarios.css';
 
 /** What the condition signals show for the chosen asset, and whether maintenance can be scheduled. */
 function healthOf(s: SimState, id: string) {
@@ -41,12 +41,12 @@ function healthOf(s: SimState, id: string) {
 }
 
 /**
- * One scenario: what it does, its parameters, Activate / Clear, current status and
- * "Show me" links to where the effect is visible — including the report of the operational
- * event the scenario produced (the same record everywhere). Used by the workspace and the drawer.
+ * One scenario (Scenarios panel → Catalogue): what it does, its parameters, Activate / Clear,
+ * current status and "Show me" links to where the effect is visible — including the report of the
+ * operational event the scenario produced (the same record everywhere).
  * Only instances still in effect can be cleared; a fault that broke down or was removed is over.
  */
-export function ScenarioCard({ entry, origin, compact = false, onNavigate }: { entry: CatalogueEntry; origin: Origin; compact?: boolean; onNavigate?: () => void }) {
+export function ScenarioCard({ entry, origin, onNavigate }: { entry: CatalogueEntry; origin: Origin; onNavigate?: () => void }) {
   const values = useScenarioParams((s) => s.values[entry.id]);
   const setParam = useScenarioParams((s) => s.set);
   const clear = useSim((s) => s.clear);
@@ -115,12 +115,10 @@ export function ScenarioCard({ entry, origin, compact = false, onNavigate }: { e
       </header>
 
       <p className="scnp-what">{entry.summary}</p>
-      {!compact && (
-        <p className="scnp-where">
-          <Eye size={13} aria-hidden />
-          <span>{entry.effect}</span>
-        </p>
-      )}
+      <p className="scnp-where">
+        <Eye size={13} aria-hidden />
+        <span>{entry.effect}</span>
+      </p>
 
       <div className="scnp-row">
         {main.map(({ p, i }) => (

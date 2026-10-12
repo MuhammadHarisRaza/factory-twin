@@ -96,23 +96,6 @@ describe('Scenario C · quality deterioration', () => {
   });
 });
 
-describe('Scenario D · energy anomaly', () => {
-  it('raises the affected consumer above its model and costs it', () => {
-    const s = createSim(34, START);
-    activateScenario(s, { kind: 'energy-anomaly', equipmentId: 'H-KILN', factor: 1.2, end: null, label: 'Kiln combustion drift' });
-    advance(s, START + 120);
-    const e = energyIn(s, win(START, START + 120));
-    const kiln = e.rows.find((r) => r.id === 'H-KILN')!;
-    expect(kiln.deviation!).toBeGreaterThan(0.16);
-    expect(kiln.deviation!).toBeLessThan(0.24);
-    const others = e.rows.filter((r) => r.id !== 'H-KILN' && r.deviation != null);
-    for (const r of others) expect(Math.abs(r.deviation!)).toBeLessThan(0.04);
-    expect(e.excessCost).toBeCloseTo(e.cost - e.expectedCost, 9);
-    expect(s.alerts.some((a) => a.title.startsWith('Energy anomaly: H-KILN'))).toBe(true);
-    expect(insights(s).some((i) => i.kind === 'energy' && i.equipmentId === 'H-KILN')).toBe(true);
-  });
-});
-
 describe('Scenario E · developing machine fault', () => {
   it('is detected from signals before it fails, and fails if ignored', () => {
     const s = createSim(35, START);

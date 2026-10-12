@@ -46,8 +46,8 @@ metrics layer, the reports and the UI do not change. Counting points per stage a
 ## Cameras
 
 Each camera position (`CAMERAS` in `src/model/plant.ts`) has a **simulated feed rendered from the digital twin**,
-burnt-in labelled *SIMULATED VIEW*. A real stream can be configured per camera in *Assets & Data → Camera
-sources*; it is used only if the browser can play it:
+burnt-in labelled *SIMULATED VIEW*. A real stream can be configured per camera in the Factory Twin (select the
+equipment → *Technical details* → *Cameras* → *Configure a stream*); it is used only if the browser can play it:
 
 - Browsers cannot open **RTSP / ONVIF** streams. Use a gateway that restreams to **HLS** (only where the browser
   plays it natively), **MJPEG / JPEG** or **MP4 / WebM** over http(s) (e.g. MediaMTX, go2rtc, the VMS vendor's web
@@ -62,6 +62,19 @@ sources*; it is used only if the browser can play it:
   it is not shown as *Live* unless freshness can be confirmed another way.
 - Video segments linked to events need an **NVR / VMS** integration (segment URLs by camera and time); not part
   of this release — reports show *Video segment: not available*.
+
+## Reference videos and client recordings
+
+The contextual videos (`src/video/registry.ts`) are not cameras of this demo. Public reference footage is played in the
+provider's own embedded player (YouTube, privacy-enhanced domain) or streamed from the provider (Pexels), loaded only
+when the user presses play, and labelled as reference material. Three camera recordings provided by the client
+(a tile-counting camera at a kiln roller line, a counting camera over the packaging line, a site-entrance camera with
+vehicle detection) are served from `public/videos/` and lead the kiln, packaging and yard topics. They are labelled
+*Recorded camera footage* with the camera and time shown in the recording, say on every player that they are recordings
+(not live feeds) and that their boxes and counts come from the system that recorded them, not from this demo's
+simulation. None of these videos is used as evidence of an event. A real
+integration adds `sourceType: 'connected'` entries backed by an NVR / VMS (recorded segments by camera and time)
+through a gateway; RTSP cannot be played by a browser directly.
 
 ## Vision inference
 

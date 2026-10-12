@@ -1,5 +1,5 @@
 /**
- * Pure derivations for AI Defect Monitoring: how an inspection record links to quality events,
+ * Pure derivations for Quality & Defects: how an inspection record links to quality events,
  * the detection rules evaluated at a record, the production context at the time and the scrap /
  * rework impact. Everything is read from the one shared simulation state — nothing is kept here.
  *
@@ -9,7 +9,6 @@
 import { BASE_REJECT_RATE, DEFECTS, DEFECT_ORDER, INSPECTION_STATIONS, PRODUCTS, STAGE_BY_ID } from '../../model/plant';
 import type {
   DefectCategory,
-  EventStatus,
   MachineState,
   OpEvent,
   QualityInspection,
@@ -17,7 +16,7 @@ import type {
   StageId,
 } from '../../model/types';
 import { LOG_MIN, minuteAt, type SimState } from '../../sim/engine';
-import { EVENT_RULE_DEFS, eventById, eventsFor, qualityWindow } from '../../sim/events';
+import { eventById, eventsFor, qualityWindow } from '../../sim/events';
 import { rejectCost, type FinanceAssumptions, type MoneyLine } from '../../sim/finance';
 import { lineMetrics, qualityIn, type Period } from '../../sim/metrics';
 import type { Metric, OeeResult } from '../../sim/oee';
@@ -27,12 +26,10 @@ import type { EventImpact } from '../../intel/report';
 
 /** Model / source shown for tunnel classifications. Simulated — not a trained model. */
 export const SIM_MODEL = 'SIM-CV v0 (simulated)';
-export const SIM_INFERENCE = 'Simulated inference · deterministic rules, no vision model';
-export const VISION_NOTE = 'Real vision inference would come from a configured model (VISION data source — not connected).';
+const SIM_INFERENCE = 'Simulated inference · deterministic rules, no vision model';
 
 export const VISION_CLASSES: DefectCategory[] = INSPECTION_STATIONS.find((s) => s.id === 'ST-VIS')?.detects ?? [];
 export const GAUGE_CLASSES: DefectCategory[] = INSPECTION_STATIONS.find((s) => s.id === 'ST-GAUGE')?.detects ?? [];
-export const isGaugeDefect = (d: DefectCategory) => DEFECTS[d].station === 'ST-GAUGE';
 
 export type InspectionMethod = {
   kind: 'vision' | 'gauge' | 'lab';
@@ -89,7 +86,6 @@ export function eventsOfRecord(s: SimState, links: Map<string, string[]>, recId:
 }
 
 const SEV_RANK = { info: 0, warning: 1, serious: 2, critical: 3 } as const;
-export const STATUS_ORDER: Record<EventStatus, number> = { active: 0, investigating: 1, acknowledged: 2, resolved: 3 };
 
 /**
  * Quality events for the page: every event still open now (whatever the period — an open event
@@ -104,14 +100,6 @@ export function qualityEventsIn(s: SimState, p: Period): { open: OpEvent[]; reso
     .filter((e) => e.status === 'resolved')
     .sort((a, b) => (b.end ?? b.start) - (a.end ?? a.start));
   return { open, resolved };
-}
-
-/** Label and threshold of the rule that raised an event (thresholds from the rule set in force). */
-export function eventRule(s: SimState, ev: OpEvent) {
-  const def = EVENT_RULE_DEFS.find((r) => r.id === ev.trigger.ruleId);
-  const threshold = ev.trigger.threshold ? `${ev.trigger.threshold.value}${ev.trigger.threshold.unit ? ` ${ev.trigger.threshold.unit}` : ''}` : null;
-  const current = def?.threshold ? s.rules[def.threshold] : null;
-  return { id: ev.trigger.ruleId, label: def?.label ?? ev.trigger.ruleId, threshold, current };
 }
 
 // ── Rules evaluated at one record ────────────────────────────────────────────
@@ -228,7 +216,7 @@ export type StateAt = { id: string; role: string; state: MachineState | null };
  */
 export function contextStates(s: SimState, rec: Pick<QualityInspection, 'time' | 'defect'>, t = rec.time): StateAt[] {
   const ids: { id: string; role: string }[] = [];
-  if (rec.defect) for (const id of STAGE_BY_ID[DEFECTS[rec.defect].origin].machines) ids.push({ id, role: `Origin · ${STAGE_BY_ID[DEFECTS[rec.defect].origin].name}` });
+  if (rec.defect) for (const id of STAGE_BY_ID[DEFECTS[rec.defect].origin].machines) ids.push({ id, role: `Modeled origin · ${STAGE_BY_ID[DEFECTS[rec.defect].origin].name}` });
   ids.push({ id: 'I-SORT', role: 'Sorting line' });
   return ids.map((x) => ({ ...x, state: minuteAt(s, x.id, t)?.state ?? null }));
 }
@@ -260,6 +248,8 @@ export function impactFigures(impact: EventImpact) {
     currency: impact.estimate?.currency ?? null,
   };
 }
+
+export type ImpactFigures = ReturnType<typeof impactFigures>;
 
 export const fmtMoney = (currency: string, v: number | null | undefined, digits = 0) =>
   v == null || !Number.isFinite(v) ? '—' : `${currency} ${v.toLocaleString('en-GB', { minimumFractionDigits: digits, maximumFractionDigits: digits })}`;

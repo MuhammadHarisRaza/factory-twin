@@ -194,20 +194,6 @@ describe('report text from the record, not the current settings (#6, #10)', () =
   });
 });
 
-describe('energy money figures carry their assumptions (#12)', () => {
-  it('energy insights with a money impact list the tariffs', () => {
-    const s = createSim(62, START);
-    activateScenario(s, { kind: 'energy-anomaly', equipmentId: 'A-COMP', factor: 1.6, end: null, label: 'Compressed air leak' });
-    advance(s, s.minute + 180);
-    const energy = insights(s).filter((i) => i.kind === 'energy');
-    expect(energy.length).toBeGreaterThan(0);
-    for (const i of energy) {
-      expect(i.estimate?.length).toBeGreaterThan(0);
-      expect(i.estimate!.join(' ')).toMatch(/Illustrative energy model; tariffs USD [\d.]+\/kWh electricity, USD [\d.]+\/kWh gas/);
-    }
-  });
-});
-
 describe('plan and capacity (#24, #26)', () => {
   it('a planned stop at the kiln lowers the plan instead of showing as a shortfall', () => {
     const base = createSim(61, START + 300);

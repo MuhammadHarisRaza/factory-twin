@@ -1,6 +1,6 @@
 /**
- * Scenario buttons of Vehicle Monitoring. Each activates a scenario on the one simulation state
- * (useSim.activate) with the same definition the Scenario Simulator uses, then selects the vehicle
+ * Scenario buttons of Fleet & Movement. Each activates a scenario on the one simulation state
+ * (useSim.activate) with the same definition the scenario drawer uses, then selects the vehicle
  * it acts on so the presenter can follow it through the pipeline, the map and the events.
  */
 import { useState } from 'react';

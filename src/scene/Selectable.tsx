@@ -10,6 +10,8 @@ import type { OperationalState } from '../model/types';
 import { operationalState } from '../sim/metrics';
 import { useSimValue } from '../sim/store';
 import { OPERATIONAL_STATE, OP_COLOR_HEX, toneToColor } from '../ui/kit/Status';
+import { alertShown, sharedSeverities, stopMarkerSeverity } from './status/alerts';
+import { useSceneTabIndex } from './embedded';
 
 /** Operational states that get a status pin above the asset when it is not tagged (conveyors use their own run tags). */
 const PINNED: ReadonlySet<OperationalState> = new Set<OperationalState>(['stopped', 'fault', 'planned', 'reduced']);
@@ -37,33 +39,62 @@ function bracketPoints(box: Box3) {
   return pts;
 }
 
+/** The twin's selection accent (also used by the vehicle ring and the planned route). */
+const SELECT_COLOR = '#46c4dc';
+
 /**
- * Restrained selection cue: corner brackets drawn over the scene plus a soft floor
- * footprint for the selected asset; brackets only (thinner, white) on hover.
+ * Restrained selection cue: corner brackets drawn over the scene, plus — for the selected asset —
+ * a soft floor footprint with a crisp outline, so the selection reads clearly in wide shots and
+ * stays distinct from a highlighted production stage (thin dashed outline, no brackets) and the
+ * line-constraint marker (grey or amber dashes). Brackets only (thinner, white) on hover.
  */
 function SelectionOutline({ box, selected }: { box: Box3; selected: boolean }) {
   const points = useMemo(() => bracketPoints(box), [box]);
   const center = box.getCenter(new Vector3());
   const size = box.getSize(new Vector3());
+  const footprint = useMemo(() => {
+    const pad = 0.6;
+    const y = 0.12;
+    return [
+      [box.min.x - pad, y, box.min.z - pad],
+      [box.max.x + pad, y, box.min.z - pad],
+      [box.max.x + pad, y, box.max.z + pad],
+      [box.min.x - pad, y, box.max.z + pad],
+      [box.min.x - pad, y, box.min.z - pad],
+    ] as [number, number, number][];
+  }, [box]);
   return (
     <>
       <Line
         points={points}
         segments
-        color={selected ? '#46c4dc' : '#ffffff'}
-        lineWidth={selected ? 2.4 : 1.6}
+        color={selected ? SELECT_COLOR : '#ffffff'}
+        lineWidth={selected ? 2.6 : 1.6}
         transparent
-        opacity={selected ? 0.95 : 0.75}
+        opacity={selected ? 1 : 0.75}
         depthTest={false}
         renderOrder={10}
       />
       {selected && (
-        <mesh position={[center.x, 0.09, center.z]} rotation={[-Math.PI / 2, 0, 0]} renderOrder={9}>
-          <planeGeometry args={[size.x + 1.2, size.z + 1.2]} />
-          <meshBasicMaterial color="#46c4dc" transparent opacity={0.14} depthWrite={false} />
-        </mesh>
+        <>
+          <mesh position={[center.x, 0.09, center.z]} rotation={[-Math.PI / 2, 0, 0]} renderOrder={9}>
+            <planeGeometry args={[size.x + 1.2, size.z + 1.2]} />
+            <meshBasicMaterial color={SELECT_COLOR} transparent opacity={0.18} depthWrite={false} />
+          </mesh>
+          <Line points={footprint} color={SELECT_COLOR} lineWidth={2} transparent opacity={0.95} renderOrder={9} />
+        </>
       )}
     </>
+  );
+}
+
+/** The state pin above a stopped / held asset; selects it. Out of the tab order while the scene is embedded in a page. */
+function StatusPinButton({ id, className, title, children }: { id: string; className: string; title: string; children: ReactNode }) {
+  const tabIndex = useSceneTabIndex();
+  return (
+    <button className={className} onClick={() => useTwin.getState().select(id)} title={title} tabIndex={tabIndex}>
+      {children}
+    </button>
   );
 }
 
@@ -90,16 +121,20 @@ export function Selectable({
   const zoneActive = useTwin((s) => s.zone === item.zone);
   const labelsOn = useTwin((s) => s.layers.labels);
   const statusOn = useTwin((s) => s.layers.status);
+  const alertFilter = useTwin((s) => s.alertFilter);
   // Operational state from the shared simulation (process machines and conveyors only): a planned stop
   // is not a fault, and an asset whose data feed is stale is 'unknown' rather than assumed running.
   const state = useSimValue((s) => (s.machines[id] ? operationalState(s, id) : null), [id]);
+  // Severity of the stop / state marker (the asset's active stop event, else its state) for the alert filter.
+  const markerSeverity = useSimValue((s) => (state ? stopMarkerSeverity(sharedSeverities(s)[id], state) : null), [id, state]);
   const st = state ? OPERATIONAL_STATE[state] : null;
   // Product-wide four-colour scheme (green · amber · red · grey).
   const op = st ? toneToColor(st.tone) : null;
   // Conveyors are marked along their run by the status layer (status/ConveyorStatus.tsx).
   const conveyor = CONVEYOR_BY_ID[id] != null;
-  const pinned = statusOn && !conveyor && state != null && PINNED.has(state);
-  const stopped = statusOn && !conveyor && (state === 'stopped' || state === 'fault');
+  const alertOn = markerSeverity != null && alertShown(alertFilter, markerSeverity);
+  const pinned = statusOn && alertOn && !conveyor && state != null && PINNED.has(state);
+  const stopped = statusOn && alertOn && !conveyor && (state === 'stopped' || state === 'fault');
 
   useLayoutEffect(() => {
     if (!ref.current) return;
@@ -193,14 +228,10 @@ export function Selectable({
           )}
           {pinned && !showTag && st && StIcon && (
             <Html position={[center.x, box.max.y + 1.2, center.z]} center zIndexRange={[8, 0]}>
-              <button
-                className={`status-pin status ${st.tone} ops-${op}`}
-                onClick={() => useTwin.getState().select(id)}
-                title={`${item.name}: ${st.label}`}
-              >
+              <StatusPinButton id={id} className={`status-pin status ${st.tone} ops-${op}`} title={`${item.name}: ${st.label}`}>
                 <StIcon size={12} strokeWidth={2.4} />
                 {st.label}
-              </button>
+              </StatusPinButton>
             </Html>
           )}
           {stopped && downPts && (

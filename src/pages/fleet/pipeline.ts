@@ -1,8 +1,8 @@
 /**
- * Vehicle Monitoring derivations: the truck stage pipeline, loading state, period visit
- * statistics, internal-vehicle handling events and dwell, route trails and the vehicle events
- * of the shared event engine. Pure functions over the one simulation state — a truck's stage is
- * read from its visit phase, current leg activity and visit timestamps; nothing is stored here.
+ * Fleet & Movement derivations: the truck stage pipeline, loading state, period visit statistics,
+ * internal-vehicle pickups / drop-offs, route trails and the vehicle events of the shared event
+ * engine. Pure functions over the one simulation state — a truck's stage is read from its visit
+ * phase, current leg activity and visit timestamps; nothing is stored here.
  */
 import { CHECKIN_MIN } from '../../sim/logistics';
 import type { Vec2 } from '../../data/types';
@@ -11,9 +11,10 @@ import type { EventRules, EventType, Evidence, Geofence, OpEvent, RestrictedZone
 import type { SimState } from '../../sim/engine';
 import { EVENT_RULE_DEFS, eventsFor, evidenceOf } from '../../sim/events';
 import type { TruckRuntime } from '../../sim/logistics';
-import { externalVehicles, internalActivity, internalVehicles, type Period } from '../../sim/metrics';
+import { externalVehicles, internalVehicles, type Period } from '../../sim/metrics';
 import { dayStart, formatClock } from '../../sim/time';
 import { DOCK_NAME, externalRows, internalRows, type ExtRow, type IntRow } from './derive';
+import { visitIntegrity, type VisitIntegrity } from './integrity';
 
 /**
  * Driver check-in at the gatehouse after parking in the holding area, before a truck can be called
@@ -242,20 +243,6 @@ export function loadingStats(s: SimState, p: Period) {
   return { avg: mean(xs), n: xs.length, max: xs.length ? Math.max(...xs) : null };
 }
 
-/** Current dwell of the internal vehicles in their zones (simulated positions, zone level). */
-export function internalDwell(s: SimState) {
-  const now = s.minute;
-  const rows = internalVehicles(s)
-    .map((v) => ({ v, a: internalActivity(v, now) }))
-    .filter((x) => x.a.dwell != null);
-  const longest = rows.reduce<(typeof rows)[number] | null>((m, x) => (!m || x.a.dwell! > m.a.dwell! ? x : m), null);
-  return {
-    avg: mean(rows.map((x) => x.a.dwell!)),
-    n: rows.length,
-    longest: longest ? { id: longest.v.id, dwell: longest.a.dwell!, zone: longest.a.zone } : null,
-  };
-}
-
 // ── Internal vehicles: handling events, route trail ───────────────────────────
 
 export type HandlingEvent = {
@@ -435,6 +422,8 @@ export type TruckRow = ExtRow & {
   loading: number | null;
   /** Most severe vehicle event whose condition is still active. */
   alert: OpEvent | null;
+  /** Active / completed / incomplete visit record (an incomplete record is not shown as a dwell). */
+  integrity: VisitIntegrity;
 };
 
 /** External vehicles on site plus those that left in the period, with stage, loading state and alert. */
@@ -450,6 +439,7 @@ export function truckRows(s: SimState, p: Period, alerts: Map<string, OpEvent> =
       load: loadState(r.v, now, c),
       loading: c != null && vis.dockStart != null && c <= now ? c - vis.dockStart : null,
       alert: alerts.get(r.id) ?? null,
+      integrity: visitIntegrity(s, r.v),
     };
   });
 }

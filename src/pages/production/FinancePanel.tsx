@@ -2,7 +2,7 @@ import { useEffect, useState } from 'react';
 import { RotateCcw } from 'lucide-react';
 import { useApp } from '../../app/store';
 import { DEFAULT_FINANCE, contributionPerM2, type FinanceAssumptions } from '../../sim/finance';
-import { Panel } from '../../ui/kit/Panel';
+import { Block, EstTag } from './common';
 import { fmtMoney } from './loss';
 
 type NumKey = Exclude<keyof FinanceAssumptions, 'currency'>;
@@ -57,7 +57,7 @@ function CurrencyField({ value, onCommit }: { value: string; onCommit: (v: strin
   useEffect(() => setDraft(value), [value]);
   const valid = /^[A-Z]{3}$/.test(draft);
   return (
-    <label className="field prod-fin-field" title="Three-letter currency code; shared with the energy tariffs">
+    <label className="field prod-fin-field" title="Three-letter currency code of every money estimate">
       <span>Currency</span>
       <input
         className="input"
@@ -77,25 +77,28 @@ function CurrencyField({ value, onCommit }: { value: string; onCommit: (v: strin
 }
 
 /** Editable financial assumptions (one set for the whole product: this page, event reports, PDFs and the copilot). */
-export function FinancePanel({ className }: { className: string }) {
+export function FinancePanel() {
   const f = useApp((s) => s.finance);
   const setFinance = useApp((s) => s.setFinance);
   const resetFinance = useApp((s) => s.resetFinance);
   const isDefault = FIELDS.every((x) => f[x.key] === DEFAULT_FINANCE[x.key]);
   const contrib = contributionPerM2(f);
   return (
-    <Panel
-      className={className}
+    <Block
+      className="prod-fin"
       title="Financial assumptions"
-      subtitle="Illustrative — edit to match the plant · used by every money figure"
+      subtitle="Illustrative — edit to match the plant · used by every money estimate"
       actions={
-        <button className="btn sm" onClick={resetFinance} disabled={isDefault} title={isDefault ? 'Assumptions are at their defaults' : 'Restore the default assumptions (the currency stays, it is shared with the energy tariffs)'}>
-          <RotateCcw size={12} aria-hidden /> Reset assumptions
-        </button>
+        <>
+          <EstTag />
+          <button type="button" className="btn sm" onClick={resetFinance} disabled={isDefault} title={isDefault ? 'Assumptions are at their defaults' : 'Restore the default assumptions (the currency stays)'}>
+            <RotateCcw size={12} aria-hidden /> Reset assumptions
+          </button>
+        </>
       }
-      footer={
+      note={
         <span>
-          Used on this page, in event reports and PDFs and by the copilot. Prices and costs are not read from an ERP — they are assumptions, and every money figure is an estimate.
+          Used on this page, in event reports and PDFs and by the copilot. Prices and costs are not read from an ERP — they are assumptions, and every money figure is an estimate, never a saving.
         </span>
       }
     >
@@ -130,6 +133,6 @@ export function FinancePanel({ className }: { className: string }) {
           <span>The selling price is not above the variable cost — lost output has no positive value under these assumptions.</span>
         </div>
       )}
-    </Panel>
+    </Block>
   );
 }

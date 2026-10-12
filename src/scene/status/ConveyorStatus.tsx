@@ -4,7 +4,8 @@
  * beacons) with a small "Stopped" tag, amber while it runs but accumulates because the receiving
  * stage cannot take tiles, grey on a planned stop. Derived once per simulated minute from
  * `operationalState`; the outline geometry is static per conveyor (built once), and the pulse and
- * relevance fade are written in the render loop — no per-frame React state.
+ * relevance fade are written in the render loop — no per-frame React state. The marks honour the
+ * model's alert filter (useTwin.alertFilter).
  */
 import { createRef, useRef, type RefObject } from 'react';
 import { useFrame } from '@react-three/fiber';
@@ -18,6 +19,8 @@ import { formatClock } from '../../sim/time';
 import { useTwin } from '../../store';
 import { OP_COLOR_HEX, type OpColor, type Tone } from '../../ui/kit/Status';
 import { CONVEYOR_GEOMETRY } from '../Conveyors';
+import { useSceneTabIndex } from '../embedded';
+import { alertShown, sharedSeverities, stopMarkerSeverity } from './alerts';
 import { conveyorTagAnchor, outlineLoop, sharedConveyorRuns, type ConveyorMark, type ConveyorRun } from './model';
 import { useRelevanceFade } from './shared';
 
@@ -45,7 +48,17 @@ function runTitle(r: ConveyorRun) {
 export function ConveyorStatus() {
   const visible = useTwin((s) => s.layers.status && s.layers.conveyors);
   const selected = useTwin((s) => s.selected);
-  const runs = useSimValue((s) => sharedConveyorRuns(s)).filter((r) => RUNS[r.id]);
+  const tabIndex = useSceneTabIndex();
+  const filter = useTwin((s) => s.alertFilter);
+  // Runs the alert filter lets through: a stop takes the severity of its stop event (else serious),
+  // accumulating is a warning, a planned stop information.
+  const runs = useSimValue(
+    (s) => {
+      const sev = sharedSeverities(s);
+      return sharedConveyorRuns(s).filter((r) => RUNS[r.id] && alertShown(filter, stopMarkerSeverity(sev[r.id], r.op)));
+    },
+    [filter],
+  );
 
   // One stable element ref per conveyor tag (fade by relevance) and the outline objects (pulse).
   const tags = useRef(new Map<string, RefObject<HTMLButtonElement | null>>());
@@ -103,6 +116,7 @@ export function ConveyorStatus() {
                   className={`status-pin status ${spec.tone} ops-${spec.color}`}
                   onClick={() => select(r.id)}
                   title={runTitle(r)}
+                  tabIndex={tabIndex}
                 >
                   <Icon size={12} strokeWidth={2.4} aria-hidden />
                   {spec.label}

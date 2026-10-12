@@ -7,14 +7,12 @@ import {
   CircleSlash,
   Eye,
   Gauge,
-  HeartPulse,
   LayoutDashboard,
   MessageSquareText,
   OctagonX,
   ScanSearch,
   TriangleAlert,
   Truck,
-  Zap,
   type LucideIcon,
 } from 'lucide-react';
 import type { WorkspaceId } from '../../app/store';
@@ -73,49 +71,46 @@ export function ScenarioState({ st, now, time = true }: { st: ScenarioStatus; no
 
 // ── Show me ───────────────────────────────────────────────────────────────────
 
-export const WS_LABEL: Partial<Record<WorkspaceId, string>> = {
-  monitoring: 'Production Monitoring',
-  production: 'OEE & Loss',
-  quality: 'AI Defect Monitoring',
-  fleet: 'Vehicle Monitoring',
-  events: 'Events & Reports',
-  health: 'Machine Health',
-  energy: 'Energy',
-  command: 'Command Center',
+/** The seven workspaces' names, as in the navigation. */
+export const WS_LABEL: Record<WorkspaceId, string> = {
+  overview: 'Overview',
   twin: 'Factory Twin',
+  production: 'Production',
+  quality: 'Quality & Defects',
+  fleet: 'Fleet & Movement',
+  events: 'Events & Reports',
+  copilot: 'Copilot',
 };
-const WS_ICON: Partial<Record<WorkspaceId, LucideIcon>> = {
-  monitoring: Activity,
+const WS_ICON: Record<WorkspaceId, LucideIcon> = {
+  overview: LayoutDashboard,
+  twin: Box,
   production: Gauge,
   quality: ScanSearch,
   fleet: Truck,
   events: ClipboardList,
-  health: HeartPulse,
-  energy: Zap,
-  command: LayoutDashboard,
-  twin: Box,
+  copilot: MessageSquareText,
 };
 
 export function targetLabel(t: ShowTarget, s?: SimState) {
   switch (t.type) {
     case 'equipment':
-      return `Twin · ${t.id}`;
+      return `Factory Twin · ${t.id}`;
     case 'vehicle':
-      return `Twin · follow ${s?.logistics.vehicles[t.id]?.label ?? t.id}`;
+      return `Factory Twin · follow ${s?.logistics.vehicles[t.id]?.label ?? t.id}`;
     case 'stage':
-      return `Monitoring · ${MONITORED_STAGE_BY_ID[t.id]?.name ?? t.id}`;
+      return `Production · ${MONITORED_STAGE_BY_ID[t.id]?.name ?? t.id}`;
     case 'event':
-      return `Event report · ${t.id}`;
+      return `Events & Reports · ${t.id}`;
     case 'copilot':
-      return 'Ask copilot';
+      return 'Ask the copilot';
     default:
-      return WS_LABEL[t.id] ?? t.id;
+      return WS_LABEL[t.id];
   }
 }
 
 const targetIcon = (t: ShowTarget): LucideIcon =>
   t.type === 'workspace'
-    ? (WS_ICON[t.id] ?? Eye)
+    ? WS_ICON[t.id]
     : t.type === 'vehicle'
       ? Truck
       : t.type === 'stage'
@@ -133,11 +128,11 @@ function targetTitle(t: ShowTarget, label: string) {
     case 'vehicle':
       return 'Open the Factory Twin following this vehicle';
     case 'stage':
-      return 'Open the stage in Production Monitoring';
+      return 'Open the stage in Production (highlighted in the 3D model)';
     case 'event':
       return `Open the report of ${t.id} in Events & Reports (the same record as the PDF)`;
     case 'copilot':
-      return `Ask the copilot (rule-based on the current demo state — no language model): “${t.question}”`;
+      return `Ask the copilot (rule-based on the simulated plant state — no language model): “${t.question}”`;
     default:
       return `Open ${label}`;
   }

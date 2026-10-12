@@ -22,13 +22,20 @@ import {
 } from '../sim/events';
 import { DEFAULT_FINANCE, assumptionList, lostOutputValue, rejectCost, waitingCost, type Estimate, type FinanceAssumptions } from '../sim/finance';
 import { HEALTH_BY_ID, assess } from '../sim/health';
-import { energyIn, lineMetrics, qualityIn, resolvePeriod } from '../sim/metrics';
+import { lineMetrics, qualityIn, resolvePeriod } from '../sim/metrics';
+import { factoryOeeKpi, goodOutputKpi, type KpiModel } from './kpis';
 import { formatClock, formatDateTime, formatDuration, shiftAt, toIso } from '../sim/time';
 
 export type ImpactRow = { label: string; value: string; basis: string };
+
 export type EventImpact = { rows: ImpactRow[]; estimate: Estimate | null; notes: string[] };
 
 const fmtN = (v: number, d = 0) => v.toLocaleString('en-GB', { maximumFractionDigits: d, minimumFractionDigits: d });
+/**
+ * A KPI's figure as its card shows it, with the card's stale mark when the feed it rests on stopped updating:
+ * "91.7 % — not confirmed · kiln data stale since 10:30" (the same figure and mark as the app, never a plain value).
+ */
+const withStale = (k: KpiModel, value: string) => (k.provenance === 'stale' && k.status ? `${value} — ${k.status.label.charAt(0).toLowerCase()}${k.status.label.slice(1)}` : value);
 const m2 = (tiles: number) => tiles * M2_PER_TILE;
 
 /** First-pass yield over the 24 h before a minute (to convert kiln tiles into good tiles). */
@@ -95,8 +102,8 @@ export function eventImpact(s: SimState, ev: OpEvent, finance: FinanceAssumption
       const kw = ((c.thermal?.[0] ?? 0) + c.elec[0]) * (c.stoppedFactor ?? 1);
       const kwh = (kw * a.constraintMin) / 60;
       const cost = (((c.thermal?.[0] ?? 0) * (c.stoppedFactor ?? 1) * tariffs.gas + c.elec[0] * (c.stoppedFactor ?? 1) * tariffs.electricity) * a.constraintMin) / 60;
-      rows.push({ label: 'Kiln energy without output', value: `${fmtN(kwh)} kWh`, basis: 'Idle burn of the illustrative energy model while the kiln was not firing tiles' });
-      lines.push({ label: 'Energy burnt without output', amount: cost, basis: `${fmtN(kwh)} kWh at the configured gas / electricity tariffs` });
+      rows.push({ label: 'Kiln energy without output', value: `${fmtN(kwh)} kWh`, basis: 'Idle burn of the illustrative energy model while the kiln was not firing tiles (estimate)' });
+      lines.push({ label: 'Energy burnt without output', amount: cost, basis: `${fmtN(kwh)} kWh at the illustrative gas / electricity tariffs` });
     }
     limitations.push('Line loss is valued only while the kiln was held up; time lost elsewhere is recoverable while buffers cover it.');
   } else if (ev.category === 'quality') {
@@ -135,18 +142,6 @@ export function eventImpact(s: SimState, ev: OpEvent, finance: FinanceAssumption
       missing.push('No cost model for safety events; no pedestrian-proximity sensing to assess near-misses.');
     }
     limitations.push('Vehicle positions are simulated — no GPS, indoor positioning or camera analytics is connected.');
-  } else if (ev.category === 'energy') {
-    const id = ev.asset.equipmentId!;
-    const p = { from: ev.start, to: Math.min(end, s.minute), label: '' };
-    const row = energyIn(s, p, tariffs).rows.find((r) => r.id === id);
-    if (row) {
-      const excess = row.total - row.expected;
-      rows.push({ label: 'Energy vs model', value: `${fmtN(row.total)} vs ${fmtN(row.expected)} kWh`, basis: 'Hourly buckets of the illustrative energy model in the event window' });
-      rows.push({ label: 'Excess energy', value: `${fmtN(Math.max(0, excess))} kWh`, basis: 'Actual − model' });
-      lines.push({ label: 'Excess energy cost', amount: Math.max(0, row.cost - row.expectedCost), basis: `At the configured tariffs (${tariffs.currency})` });
-      rows.push({ label: 'Excess CO₂e', value: `${fmtN(Math.max(0, excess) * (CONSUMER_BY_ID[id]?.thermal ? tariffs.co2Gas : tariffs.co2Electricity))} kg`, basis: 'Configured emission factor' });
-    }
-    limitations.push('Illustrative energy model; tariffs and emission factors are assumptions.');
   } else if (ev.category === 'equipment') {
     const a = ev.asset.equipmentId ? HEALTH_BY_ID[ev.asset.equipmentId] : undefined;
     if (a) {
@@ -244,7 +239,6 @@ function assetOf(ev: OpEvent): ReportAsset {
     return { kind: 'Inspection station', id: a.stationId, name: st?.name ?? a.stationId, stage, zone: a.zone ?? null, camera: camera?.id ?? null };
   }
   if (a.equipmentId && CONVEYOR_BY_ID[a.equipmentId]) return { kind: 'Conveyor', id: a.equipmentId, name: CONVEYOR_BY_ID[a.equipmentId].name, stage, zone: a.zone ?? null, camera: camera?.id ?? null };
-  if (ev.category === 'energy' && a.equipmentId) return { kind: 'Energy consumer', id: a.equipmentId, name: CONSUMER_BY_ID[a.equipmentId]?.label ?? a.equipmentId, stage, zone: a.zone ?? null, camera: camera?.id ?? null };
   if (a.equipmentId) return { kind: 'Machine', id: a.equipmentId, name: EQUIPMENT_BY_ID[a.equipmentId]?.name ?? a.equipmentId, stage, zone: a.zone ?? null, camera: camera?.id ?? null };
   if (a.geofenceId) {
     const g = GEOFENCES.find((x) => x.id === a.geofenceId);
@@ -270,7 +264,11 @@ export function buildEventReport(
   const rule = EVENT_RULE_DEFS.find((r) => r.id === ev.trigger.ruleId);
   const ctxMetrics = supporting.find((x) => x.kind === 'metrics')?.metrics ?? [];
   const sh = shiftAt(ev.start);
-  const lm = lineMetrics(s, resolvePeriod('shift', s.minute));
+  const shiftNow = resolvePeriod('shift', s.minute);
+  const lm = lineMetrics(s, shiftNow);
+  // The same figures, plan wording ("Plan to date … · shift …") and stale marks as the Line OEE and Good output cards.
+  const output = goodOutputKpi(s, shiftNow, lm);
+  const oee = factoryOeeKpi(s, shiftNow, lm);
   const related = ev.related
     .map((id) => eventById(s, id))
     .filter((x): x is OpEvent => !!x)
@@ -331,8 +329,8 @@ export function buildEventReport(
       atDetection: ctxMetrics,
       related,
       lineNow: [
-        { label: 'Line OEE (shift to date)', value: lm.oee.oee.status === 'ok' ? `${(lm.oee.oee.value! * 100).toFixed(1)} %` : '—' },
-        { label: 'Output vs target (shift)', value: `${fmtN(lm.outputM2)} / ${fmtN(lm.targetM2)} m²` },
+        { label: 'Line OEE (shift to date)', value: oee.unavailable ? '—' : withStale(oee, `${oee.display} ${oee.unit ?? '%'}`) },
+        { label: 'Output vs plan (shift to date)', value: withStale(output, `${output.display} m² · ${output.target ?? 'no planned production time yet'}`) },
         { label: 'Plant time now', value: formatDateTime(s.minute) },
       ],
     },

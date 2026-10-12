@@ -4,10 +4,10 @@
    Every overlay lives in its own grid region, so panels cannot overlap at any
    size; the centre region stays empty (pointer-events pass through to the
    scene). Regions:
-     top     KPI chip strip
+     top     context crumbs · four status chips (the Overview's KPIs)
      left    zones & views panel (foldable from the rail)
-     mid     scene · view/layer rail (left edge) · flow legend · hint · site plan
-     right   inspector (top) · live list (bottom), spanning down to the bottom edge
+     mid     scene · view/layer/alert rail (left edge) · flow legend · camera · hint · site plan
+     right   equipment / vehicle / stage workspace (top) · live list (bottom)
      bottom  line status / truck visit stepper · shift timeline
    Tokens only; shared classes from styles.css are reused, the absolute
    positions of the older twin overlay classes are reset inside the grid.
@@ -16,7 +16,7 @@
 .tw-layout {
   --tw-gap: 10px;
   --tw-left-w: 288px;
-  --tw-right-w: 360px;
+  --tw-right-w: 380px;
   position: absolute;
   inset: 0;
   z-index: 15;
@@ -43,8 +43,7 @@
   min-height: 0;
 }
 .tw-layout .overlay-panel,
-.tw-layout .tw-kpi,
-.tw-layout .tw-period {
+.tw-layout .tw-kpi {
   pointer-events: auto;
 }
 
@@ -52,6 +51,11 @@
 
 .tw-top {
   grid-area: top;
+  display: flex;
+  flex-wrap: wrap;
+  align-items: stretch;
+  gap: 6px 10px;
+  min-width: 0;
 }
 .tw-left {
   grid-area: left;
@@ -198,37 +202,12 @@
   align-items: stretch;
   gap: 6px;
 }
-.tw-period,
 .tw-kpi {
   height: 40px;
   border: 1px solid var(--line-2);
   border-radius: var(--r-3);
   background: #12171cf2;
   box-shadow: var(--shadow-1);
-}
-.tw-period {
-  display: flex;
-  align-items: center;
-  gap: 2px;
-  padding: 0 4px;
-}
-.tw-period button {
-  height: 30px;
-  padding: 0 9px;
-  border: 0;
-  border-radius: var(--r-2);
-  background: none;
-  color: var(--text-2);
-  font-size: var(--fs-12);
-  white-space: nowrap;
-}
-.tw-period button:hover {
-  color: var(--text-1);
-  background: var(--bg-3);
-}
-.tw-period button.on {
-  background: var(--bg-4);
-  color: var(--text-1);
 }
 .tw-kpi {
   display: flex;
@@ -274,6 +253,110 @@
   font-size: 11.5px;
   font-weight: var(--fw-regular);
   color: var(--text-2);
+}
+.tw-kpi .v .na {
+  font-weight: var(--fw-regular);
+  color: var(--text-3);
+}
+/* Status in words next to the value (icon + label, never colour alone). */
+.tw-kpi .v .tw-kpi-s {
+  display: inline-flex;
+  align-items: center;
+  gap: 3px;
+  margin-left: 8px;
+  font-size: 11px;
+  color: var(--text-2);
+}
+.tw-kpi-s.good svg {
+  color: var(--good);
+}
+.tw-kpi-s.warning svg,
+.tw-kpi-s.serious svg {
+  color: var(--warning);
+}
+.tw-kpi-s.critical svg {
+  color: var(--critical);
+}
+.tw-kpi-s.neutral svg,
+.tw-kpi-s.planned svg {
+  color: var(--neutral);
+}
+
+/* ── Context crumbs ──────────────────────────────────────────────────────── */
+
+.tw-ctx {
+  display: flex;
+  align-items: center;
+  gap: 2px;
+  height: 40px;
+  padding: 0 6px;
+  min-width: 0;
+  max-width: 100%;
+}
+.tw-ctx-b {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  height: 28px;
+  padding: 0 8px;
+  border: 0;
+  border-radius: var(--r-2);
+  background: none;
+  color: var(--text-2);
+  font-size: var(--fs-12);
+  white-space: nowrap;
+}
+.tw-ctx-b:hover {
+  background: var(--bg-3);
+  color: var(--text-1);
+}
+.tw-ctx-b svg {
+  color: var(--text-3);
+  flex: none;
+}
+.tw-ctx-sep {
+  flex: none;
+  color: var(--text-4);
+}
+.tw-ctx-stage {
+  display: inline-flex;
+  align-items: center;
+  min-width: 0;
+  border: 1px solid var(--accent-line);
+  border-radius: var(--r-2);
+  background: var(--accent-soft);
+}
+.tw-ctx-stage .tw-ctx-b {
+  color: var(--text-1);
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.tw-ctx-x {
+  display: grid;
+  place-items: center;
+  width: 22px;
+  height: 22px;
+  margin-right: 3px;
+  padding: 0;
+  border: 0;
+  border-radius: var(--r-1);
+  background: none;
+  color: var(--text-2);
+}
+.tw-ctx-x:hover {
+  background: var(--bg-4);
+  color: var(--text-1);
+}
+.tw-ctx-leaf {
+  padding: 0 8px;
+  font-size: var(--fs-12);
+  font-weight: var(--fw-medium);
+  color: var(--text-1);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  min-width: 0;
 }
 
 /* ── Rail (views & layers) ───────────────────────────────────────────────── */
@@ -362,6 +445,16 @@
 .views .tw-quick svg {
   color: var(--accent-strong);
   flex: none;
+}
+.tw-views-pop button.on {
+  background: var(--accent-soft);
+  color: var(--text-1);
+}
+.tw-pop-note {
+  margin: 4px 6px 2px;
+  font-size: var(--fs-11);
+  line-height: 1.4;
+  color: var(--text-3);
 }
 
 /* ── Line status strip ───────────────────────────────────────────────────── */
@@ -477,9 +570,14 @@
   background: var(--accent-soft);
   border-color: var(--accent-line);
 }
+/* Line-constraint marker (constraintClaim): neutral for the modeled design constraint, amber only
+   while the evidence says the stage is constraining output. */
 .tw-stage.bn {
-  outline: 1px dashed var(--accent);
+  outline: 1px dashed var(--line-3);
   outline-offset: 2px;
+}
+.tw-stage.bn.active {
+  outline-color: var(--warning);
 }
 .tw-bn-i {
   position: absolute;
@@ -489,13 +587,19 @@
   box-sizing: content-box;
   border-radius: 50%;
   background: var(--bg-1);
-  color: var(--accent-strong);
+  color: var(--text-3);
+}
+.tw-stage.bn.active .tw-bn-i {
+  color: var(--warning);
 }
 .tw-bn-note {
   display: inline-flex;
   align-items: center;
   gap: 5px;
-  color: var(--accent-strong);
+  color: var(--text-2);
+}
+.tw-bn-note.active {
+  color: var(--warning);
 }
 
 /* ── Truck visit stepper ─────────────────────────────────────────────────── */
@@ -1014,7 +1118,7 @@
   color: var(--text-3);
 }
 
-/* ── Inspector with tabs ─────────────────────────────────────────────────── */
+/* ── Contextual panel (equipment, vehicle, stage, zone) ─────────────────── */
 
 .tw-insp {
   container-type: inline-size;
@@ -1028,11 +1132,6 @@
   flex-wrap: wrap;
   gap: 8px 12px;
   margin-top: 7px;
-}
-.tw-insp-tabs {
-  flex: none;
-  padding: 0 10px 6px;
-  border-bottom: 1px solid var(--line);
 }
 .tw-insp-b {
   flex: 1 1 auto;
@@ -1106,12 +1205,6 @@
 .tw-evl-rep {
   flex: none;
 }
-@container (max-width: 340px) {
-  .tw-insp-tabs button {
-    padding: 0 6px;
-    font-size: 11.5px;
-  }
-}
 .tw-link {
   display: inline-flex;
   align-items: center;
@@ -1176,23 +1269,6 @@
 .tw-list li + li {
   margin-top: 3px;
 }
-.tw-action {
-  margin-top: 8px;
-  padding: 7px 10px;
-  border-left: 2px solid var(--accent);
-  border-radius: 0 var(--r-1) var(--r-1) 0;
-  background: var(--bg-2);
-}
-.tw-action b {
-  font-size: var(--fs-11);
-  font-weight: var(--fw-medium);
-  color: var(--accent-strong);
-}
-.tw-action p {
-  margin: 2px 0 0;
-  font-size: var(--fs-12);
-  line-height: 1.5;
-}
 .tw-honest {
   margin: 0;
   padding: 8px 14px 10px;
@@ -1201,44 +1277,6 @@
   line-height: 1.45;
   color: var(--text-3);
 }
-.tw-recs {
-  display: flex;
-  flex-direction: column;
-}
-.tw-rec {
-  padding: 9px 0 11px;
-  border-bottom: 1px solid var(--line);
-}
-.tw-rec:first-child {
-  padding-top: 2px;
-}
-.tw-rec header {
-  display: flex;
-  flex-direction: column;
-  align-items: flex-start;
-  gap: 4px;
-}
-.tw-rec header b {
-  font-size: 12.5px;
-  font-weight: var(--fw-semibold);
-  line-height: 1.35;
-}
-.tw-rec > p {
-  margin: 5px 0;
-  font-size: var(--fs-12);
-  line-height: 1.5;
-  color: var(--text-2);
-}
-.tw-rec .tw-rec-impact {
-  color: var(--text-1);
-}
-.tw-rec-links {
-  display: flex;
-  flex-wrap: wrap;
-  gap: 6px;
-  margin-top: 8px;
-}
-
 /* ── Header search & actions ─────────────────────────────────────────────── */
 
 .tw-actions {
@@ -1435,19 +1473,22 @@
 @media (max-width: 1339px) {
   .tw-layout {
     --tw-left-w: 260px;
-    --tw-right-w: 320px;
+    --tw-right-w: 340px;
   }
   .tw-line .tw-strip-t {
     display: none;
   }
 }
 @media (max-width: 1280px) {
-  .tw-kpi .v small {
-    display: none;
-  }
   .tw-kpi {
     padding: 0 10px 0 8px;
     gap: 7px;
+  }
+  .tw-kpi .l .lg {
+    display: none;
+  }
+  .tw-kpi .l .sh {
+    display: inline;
   }
 }
 /* Narrow windows: the bottom strips take the full width (the right column stops above them). */
@@ -1464,11 +1505,9 @@
       'mid right'
       'bottom bottom';
   }
-  .tw-kpi .l .lg {
+  /* The status keeps its icon (check / triangle / octagon) and its words in the tooltip and label. */
+  .tw-kpi-s span {
     display: none;
-  }
-  .tw-kpi .l .sh {
-    display: inline;
   }
 }
 @media (max-width: 1100px) {
@@ -1476,9 +1515,6 @@
     --tw-right-w: 300px;
     padding: 10px;
     --tw-gap: 8px;
-  }
-  .tw-period button {
-    padding: 0 7px;
   }
 }
 

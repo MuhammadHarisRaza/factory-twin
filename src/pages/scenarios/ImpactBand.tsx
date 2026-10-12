@@ -1,5 +1,4 @@
 import { Equal, FlaskConical, Loader2, TrendingDown, TrendingUp } from 'lucide-react';
-import { useApp } from '../../app/store';
 import { impactVsBaseline } from '../../sim/metrics';
 import { useSim, useSimValue } from '../../sim/store';
 import { fmt1, fmtInt, fmtPct } from '../../ui/kit/format';
@@ -21,15 +20,14 @@ function Verdict({ delta, dir }: { delta: number | null; dir: Direction | null }
 const plural = (n: number, one: string, many = `${one}s`) => `${n} ${n === 1 ? one : many}`;
 
 /**
- * Answer-first band: what the active scenarios have changed compared with the baseline —
- * the same deterministic seed simulated without scenarios. The baseline is built in background
- * slices after start-up and after every reset (src/sim/store.ts); the band waits for it rather than
- * forcing a synchronous build, so the UI never freezes.
+ * What the scenarios have changed compared with the baseline — the same deterministic seed
+ * simulated without scenarios, advanced minute by minute alongside the plant. The baseline is built
+ * in background slices after start-up and after every reset (src/sim/store.ts); the band waits for
+ * it rather than forcing a synchronous build, so the UI never freezes.
  */
 export function ImpactBand({ mode }: { mode: WindowMode }) {
   const baseline = useSim((s) => s.baseline);
   const resetting = useSim((s) => s.resetting);
-  const tariffs = useApp((s) => s.tariffs);
 
   const d = useSimValue(
     (s) => {
@@ -44,10 +42,10 @@ export function ImpactBand({ mode }: { mode: WindowMode }) {
         removed: faults.removed,
         brokeDown: faults.brokeDown,
         total: s.scenarios.length,
-        impact: baseline ? impactVsBaseline(s, baseline, w.period, tariffs) : null,
+        impact: baseline ? impactVsBaseline(s, baseline, w.period) : null,
       };
     },
-    [mode, baseline, tariffs],
+    [mode, baseline],
   );
   const { impact: im, w } = d;
 
@@ -119,17 +117,8 @@ export function ImpactBand({ mode }: { mode: WindowMode }) {
           dir: judge(im.deltaRejectRatePts, 0.05, false),
           title: 'Share of inspected tiles rejected at the gauge and optical inspection — a rate, so a stopped line does not look better',
         },
-        {
-          label: 'Energy cost per good m²',
-          value: signed(im.deltaCostPerGoodM2, (v) => v.toFixed(2)),
-          unit: tariffs.currency,
-          sub: `With scenarios ${im.costPerGoodM2 != null ? `${tariffs.currency} ${im.costPerGoodM2.toFixed(2)}` : '—'} · baseline ${im.baselineCostPerGoodM2 != null ? `${tariffs.currency} ${im.baselineCostPerGoodM2.toFixed(2)}` : '—'} · total ${signed(im.deltaEnergyCost, fmtInt)} ${tariffs.currency}`,
-          delta: im.deltaCostPerGoodM2,
-          dir: judge(im.deltaCostPerGoodM2, 0.005, false),
-          title: 'Illustrative energy model; tariffs are assumptions (editable in Energy Intelligence). Per good m², because a stopped kiln still burns gas while producing nothing.',
-        },
       ]
-    : ['Good output', 'Line OEE', 'Unplanned downtime', 'Reject rate', 'Energy cost per good m²'].map((label) => ({
+    : ['Good output', 'Line OEE', 'Unplanned downtime', 'Reject rate'].map((label) => ({
         label,
         value: '—',
         unit: '',
@@ -140,28 +129,30 @@ export function ImpactBand({ mode }: { mode: WindowMode }) {
       }));
 
   return (
-    <section className="summary scnp-band" aria-label="Impact versus baseline">
-      <div>
-        <div className="kpi-label">
+    <section className="scni" aria-label="Impact versus baseline">
+      <div className="scni-head">
+        <div className="scni-label">
           <FlaskConical size={13} aria-hidden />
           Impact vs baseline · {w.period.label}
         </div>
-        <div className="kpi-headline">{headline}</div>
-        <div className="kpi-sub scnp-note">{windowNote}</div>
+        <div className="scni-headline">{headline}</div>
+        <div className="scni-note">{windowNote}</div>
       </div>
-      {cells.map((c) => (
-        <div key={c.label} title={c.title}>
-          <div className="kpi-label">{c.label} Δ</div>
-          <div className="kpi-value">
-            {c.value}
-            {c.unit && <small>{c.unit}</small>}
+      <div className="scni-grid">
+        {cells.map((c) => (
+          <div key={c.label} className="scni-cell" title={c.title}>
+            <div className="scni-label">{c.label} Δ</div>
+            <div className="scni-value num">
+              {c.value}
+              {c.unit && <small>{c.unit}</small>}
+            </div>
+            <div className="scni-sub">{c.sub}</div>
+            <div className="scni-sub">
+              <Verdict delta={c.delta} dir={c.dir} />
+            </div>
           </div>
-          <div className="kpi-sub">{c.sub}</div>
-          <div className="kpi-sub">
-            <Verdict delta={c.delta} dir={c.dir} />
-          </div>
-        </div>
-      ))}
+        ))}
+      </div>
     </section>
   );
 }

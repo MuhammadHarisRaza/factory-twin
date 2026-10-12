@@ -4,9 +4,9 @@ import { useApp } from '../../app/store';
 import { resolvePeriod, type PeriodKey } from '../../sim/metrics';
 import { useSim, useSimValue } from '../../sim/store';
 import { fmt1 } from '../../ui/kit/format';
-import { Panel, Segmented } from '../../ui/kit/Panel';
+import { Segmented } from '../../ui/kit/Panel';
 import { StatusBadge } from '../../ui/kit/Status';
-import { EstTag } from './common';
+import { Block, EstTag } from './common';
 import { DEFAULT_WHAT_IF, baselineComparison, fmtMoney, whatIfs, type BaselineRow, type LossLedger, type WhatIfOptions } from './loss';
 
 const PTS = ['1', '2', '3', '5'] as const;
@@ -17,14 +17,12 @@ const CUTS = ['0.1', '0.25', '0.5'] as const;
  * change, basis and assumptions; plus the comparison with the no-scenario baseline.
  */
 export function ImprovementPanel({
-  className,
   L,
   scenarioCount,
   activeScenarios,
   comparing,
   onCompare,
 }: {
-  className: string;
   L: LossLedger;
   scenarioCount: number;
   activeScenarios: number;
@@ -36,25 +34,24 @@ export function ImprovementPanel({
   const list = useSimValue((s) => whatIfs(s, L, opts, finance), [L, opts, finance]);
   const cur = finance.currency;
   return (
-    <Panel
-      className={className}
-      title="Improvement scenarios"
-      subtitle="What-if estimates from this period's records, scaled to an 8-hour shift · not simulation runs · not additive"
+    <Block
+      title="Improvement estimates"
+      subtitle="What-if arithmetic on this period's records, scaled to an 8-hour shift · not simulation runs · not additive · not savings"
       actions={
         <div className="prod-actions">
           <EstTag />
           {scenarioCount > 0 ? (
-            <button className={`btn sm ${comparing ? 'on' : ''}`} onClick={() => onCompare(!comparing)} aria-pressed={comparing} title="Compare this period with the same plant simulated without the scenarios">
+            <button type="button" className={`btn sm ${comparing ? 'on' : ''}`} onClick={() => onCompare(!comparing)} aria-pressed={comparing} title="Compare this period with the same plant simulated without the scenarios">
               <GitCompare size={12} aria-hidden /> Compare with baseline{activeScenarios ? ` · ${activeScenarios} active` : ''}
             </button>
           ) : (
-            <button className="btn sm" onClick={() => useApp.getState().setScenariosOpen(true)} title="No scenario has run in this session — start one to compare against the no-scenario baseline">
+            <button type="button" className="btn sm" onClick={() => useApp.getState().setScenariosOpen(true)} title="No scenario has run in this session — start one to compare against the no-scenario baseline">
               <GitCompare size={12} aria-hidden /> Run a scenario to compare
             </button>
           )}
         </div>
       }
-      footer={<span>Each estimate removes one loss on its own; two of them can address the same kiln minutes, so the gains must not be added up. Change the financial assumptions to revalue them.</span>}
+      note={<span>Each estimate removes one loss on its own; two of them can address the same kiln minutes, so the gains must not be added up. Change the financial assumptions to revalue them.</span>}
     >
       <ul className="prod-wi">
         {list.map((w) => (
@@ -95,7 +92,7 @@ export function ImprovementPanel({
           </li>
         ))}
       </ul>
-    </Panel>
+    </Block>
   );
 }
 
@@ -112,9 +109,8 @@ function Direction({ r }: { r: BaselineRow }) {
 }
 
 /** The period with the scenarios vs the same seed simulated without them (deterministic engine). */
-export function BaselinePanel({ className, periodKey }: { className: string; periodKey: PeriodKey }) {
+export function BaselinePanel({ periodKey }: { periodKey: PeriodKey }) {
   const baseline = useSim((s) => s.baseline);
-  const tariffs = useApp((s) => s.tariffs);
   const finance = useApp((s) => s.finance);
   useEffect(() => {
     if (baseline) return;
@@ -125,20 +121,19 @@ export function BaselinePanel({ className, periodKey }: { className: string; per
     (s) => {
       if (!baseline) return null;
       const p = resolvePeriod(periodKey, s.minute);
-      return { p, ...baselineComparison(s, baseline, p, tariffs, finance) };
+      return { p, ...baselineComparison(s, baseline, p, finance) };
     },
-    [baseline, periodKey, tariffs, finance],
+    [baseline, periodKey, finance],
   );
   const cur = finance.currency;
   return (
-    <Panel
-      className={className}
-      title="Compare with baseline"
+    <Block
+      title="Compare with the no-scenario baseline"
       subtitle={d ? `${d.p.label} · with the scenarios vs the same plant simulated without them` : 'Preparing the no-scenario baseline'}
       actions={<EstTag />}
-      footer={
+      note={
         <span>
-          The baseline is the same seed simulated without any scenario — because the engine is deterministic, every difference is caused by the scenarios. Only good output and energy are valued (each once); OEE, downtime and rejects act through good output.
+          The baseline is the same seed simulated without any scenario — because the engine is deterministic, every difference is caused by the scenarios. Only good output is valued; OEE, downtime and rejects act through good output.
         </span>
       }
       flush
@@ -187,7 +182,7 @@ export function BaselinePanel({ className, periodKey }: { className: string; per
           </table>
         </div>
       )}
-    </Panel>
+    </Block>
   );
 }
 

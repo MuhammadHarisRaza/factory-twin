@@ -1,6 +1,6 @@
 /**
  * Operational events (src/sim/events.ts) as compact rows for the twin overlays: the live
- * list and the inspector's Events tab. Each row opens THE event record (Events & Reports,
+ * list and the equipment workspace. Each row opens THE event record (Events & Reports,
  * where its report and PDF live); a secondary action shows the affected object in 3D.
  */
 import { FileText, LocateFixed } from 'lucide-react';
@@ -23,14 +23,14 @@ export function eventTarget(ev: OpEvent): { kind: 'vehicle' | 'equipment' | 'zon
   return null;
 }
 
-/** Show the event's object in the 3D factory without leaving the twin; an asset opens on its Events tab. */
+/** Show the event's object in the 3D factory without leaving the twin; an asset's workspace opens at its events. */
 export function locateEvent(ev: OpEvent) {
   const t = eventTarget(ev);
   if (!t) return;
   const tw = useTwin.getState();
   if (t.kind === 'vehicle') tw.selectVehicle(t.id, true);
   else if (t.kind === 'equipment') {
-    useTwinUi.getState().setTab(t.id, 'events');
+    useTwinUi.getState().focusSection(t.id, 'events');
     tw.select(t.id);
   } else tw.selectZone(t.id);
 }

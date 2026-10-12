@@ -1,15 +1,15 @@
 /**
- * Scenario actions shared by the Scenario Simulator workspace and the quick drawer:
- * activation (with where it was triggered from), "Show me" navigation, the demonstration
- * runs (set-up, clear, and the truck-delay watcher that adds the dock hold when the injected
- * truck docks), Reset Demo with its after-reset checks, and the parameter choices, which are
- * kept in one store so both surfaces stay in step.
+ * Scenario actions of the Scenarios panel (header → Scenarios, on every workspace): activation
+ * (with where it was triggered from), "Show me" navigation into the seven workspaces, the
+ * demonstration runs (set-up, clear, and the truck-delay watcher that adds the dock hold when the
+ * injected truck docks), Reset Demo with its after-reset checks, and the parameter choices, kept
+ * in one store so the cards, the presenter guide and the log stay in step.
  *
  * The watcher and the reset check subscribe to the simulation store at module load; this module
  * is loaded with the app shell (the Scenarios drawer imports it), so they work on every workspace.
  */
 import { create } from 'zustand';
-import { openEquipment, openEvent, openStage, openVehicle, useApp } from '../../app/store';
+import { openEquipment, openEvent, openStage, openVehicle, openView, useApp } from '../../app/store';
 import { useSim } from '../../sim/store';
 import { useTwin } from '../../store';
 import { initialValues, isClearable, sameTarget, scenarioTrucks, type ParamValue, type ScenarioDef, type ShowTarget, type Values } from './catalogue';
@@ -33,12 +33,11 @@ export const useScenarioParams = create<ParamStore>((set) => ({
 
 // ── Where a scenario was triggered ────────────────────────────────────────────
 
-export type Origin = 'simulator' | 'drawer' | 'guide' | 'demo';
+export type Origin = 'catalogue' | 'guide' | 'demo';
 export const ORIGIN_LABEL: Record<Origin, string> = {
-  simulator: 'Scenario Simulator',
-  drawer: 'Scenarios drawer',
+  catalogue: 'Scenario catalogue',
   guide: 'Presenter guide',
-  demo: 'Demonstration card',
+  demo: 'Guided demo',
 };
 
 /** Keyed by reset epoch + id: scenario ids restart after Reset Demo. */
@@ -76,12 +75,17 @@ export function showTarget(t: ShowTarget) {
     case 'copilot':
       return useApp.getState().openCopilot(t.question, { eventId: t.eventId });
     default:
-      return useApp.getState().go(t.id);
+      return openView(t.id, t.tab ?? null);
   }
 }
 
-/** Factory Twin overview with selections cleared. */
+/** The Overview workspace. */
 export function openOverview() {
+  useApp.getState().go('overview');
+}
+
+/** The Factory Twin on the whole factory, selections cleared. */
+export function openWholeTwin() {
   useApp.getState().go('twin');
   requestAnimationFrame(() => useTwin.getState().reset());
 }

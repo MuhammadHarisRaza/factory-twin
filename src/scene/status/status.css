@@ -47,6 +47,15 @@
   color: var(--warning);
 }
 
+/* The line constraint when only the modeled design constraint is behind it: neutral, not a warning
+   (amber .ops-amber only while the constraint claim says the stage is constraining output). */
+.ops-chip.ops-design {
+  border-color: #8a9bad59;
+}
+.ops-chip.ops-design svg {
+  color: var(--neutral);
+}
+
 /* Secondary value inside a chip (stage name, reject rate, health level). */
 .ops-sub {
   padding-left: 6px;
@@ -88,4 +97,13 @@
 /* Conveyor run tags (stopped · accumulating · planned), above the middle of the conveyor's run. */
 .ops-run .status-pin {
   transition: opacity var(--t-base) var(--ease);
+}
+
+/* Label of the production stage highlighted in the model (steel-teal accent, distinct from the
+   line-constraint chip and the cyan selection). */
+.ops-chip.ops-stage {
+  border-color: var(--accent-line);
+}
+.ops-chip.ops-stage svg {
+  color: var(--accent-strong);
 }

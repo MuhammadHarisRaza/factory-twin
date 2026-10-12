@@ -53,7 +53,7 @@ import type {
   StageId,
 } from '../model/types';
 import { createLogistics, stepLogistics, applyLogisticsScenario, type LogisticsState } from './logistics';
-import { CONSUMERS, stepEnergy, type EnergyBucket } from './energy';
+import { stepEnergy, type EnergyBucket } from './energy';
 import { createHealth, degradationLoad, startMaintenance, stepHealth, type HealthState } from './health';
 import { expBounded, lerpRange, noise01, streamFor, weighted, type Rng } from './rng';
 import { DEFAULT_START, MIN_PER_DAY, SHIFT_MIN, formatDate } from './time';
@@ -72,6 +72,8 @@ export type SimState = {
   buffers: Record<string, number>;
   /** Buffer id → hour → average level (fraction), for trends. */
   bufferHours: Record<string, Map<number, number>>;
+  /** Buffer id → hour → tiles held at the start of that hour (exact WIP for count reconciliation). */
+  bufferHourStart: Record<string, Map<number, number>>;
   downtime: DowntimeEvent[];
   /** Line output: first-quality tiles accepted at sorting, per hour. */
   lineGood: Map<number, number>;
@@ -171,6 +173,7 @@ export function createSim(seed = DEFAULT_SEED, startMinute = DEFAULT_START, opts
     hours: {},
     buffers: Object.fromEntries(BUFFERS.map((b) => [b.id, Math.round(b.capacity * b.initialFill)])),
     bufferHours: Object.fromEntries(BUFFERS.map((b) => [b.id, new Map()])),
+    bufferHourStart: Object.fromEntries(BUFFERS.map((b) => [b.id, new Map()])),
     downtime: [],
     lineGood: new Map(),
     quality: new Map(),
@@ -244,6 +247,7 @@ export function advance(s: SimState, toMinute: number) {
 function stepMinute(s: SimState) {
   const t = s.minute;
   try {
+    if (t % 60 === 0) for (const b of BUFFERS) s.bufferHourStart[b.id].set(t / 60, s.buffers[b.id]);
     scheduleCalendarStops(s, t);
     startDueStops(s, t);
     startFailures(s, t);
@@ -253,7 +257,6 @@ function stepMinute(s: SimState) {
     logMinute(s, t, produce(s, t));
     const active = activeScenarios(s, t);
     stepEnergy(s, t, active, degradationLoad(s, t));
-    if (t % 15 === 0) energyAlerts(s, t);
     stepHealth(s, t);
     stepLogistics(s, t);
     if (s.eventsOn) stepEvents(s, t);
@@ -602,7 +605,10 @@ function produce(s: SimState, t: number) {
     limitOf[stage.id] = limitedBy;
 
     if (inBuf) s.buffers[inBuf] -= produced;
-    if (outBuf) s.buffers[outBuf] += produced;
+    // Sorting passes on only accepted tiles: rejects leave the line at the diverters, so packing,
+    // pallets and dispatch count good output (counting boundary: accepted at sorting).
+    const passedOn = stage.id === 'SORT' ? produced - inspect(s, t, hour, produced) : produced;
+    if (outBuf) s.buffers[outBuf] += passedOn;
 
     stage.machines.forEach((id, i) => {
       const m = s.machines[id];
@@ -641,7 +647,6 @@ function produce(s: SimState, t: number) {
     });
 
     if (stage.id === LINE.designConstraint && (capTotal === 0 || (limitedBy && produced < capTotal * 0.5))) constraintStalled = true;
-    if (stage.id === 'SORT') inspect(s, t, hour, produced);
     if (stage.id === 'PAL') {
       s.internal.palletAcc += produced;
       while (s.internal.palletAcc >= TILES_PER_PALLET) {
@@ -779,8 +784,9 @@ function rejectRate(s: SimState, t: number) {
   return { rate: rate * (totalWeight / baseWeight), weights, totalWeight };
 }
 
-function inspect(s: SimState, t: number, hour: number, inspected: number) {
-  if (inspected <= 0) return;
+/** Inspects the tiles sorted this minute; returns the tiles rejected (diverted off the line). */
+function inspect(s: SimState, t: number, hour: number, inspected: number): number {
+  if (inspected <= 0) return 0;
   const { rate, weights, totalWeight } = rejectRate(s, t);
   const rejected = Math.min(inspected, inspected * rate);
   const good = inspected - rejected;
@@ -843,6 +849,7 @@ function inspect(s: SimState, t: number, hour: number, inspected: number) {
     s.internal.alertAt['quality'] = t;
     raiseAlert(s, t, 'serious', 'Reject rate above 5 %', `Sorting reject rate ${(recent * 100).toFixed(1)} % over the last hour`, { equipmentId: 'I-VIS' }, 'simulation');
   }
+  return rejected;
 }
 
 function recentRejectRate(s: SimState, t: number) {
@@ -944,27 +951,6 @@ function pushRecord(s: SimState, rec: QualityInspection) {
 export function batchAt(s: SimState, t: number): ProductionBatch {
   for (let i = s.batches.length - 1; i >= 0; i--) if (s.batches[i].start <= t) return s.batches[i];
   return s.batches[0];
-}
-
-// ── Energy alerts ─────────────────────────────────────────────────────────────
-
-/** Flags consumers whose last-hour consumption deviates > 10 % from the energy model. */
-function energyAlerts(s: SimState, t: number) {
-  const hour = Math.floor((t - 1) / 60);
-  for (const c of CONSUMERS) {
-    const b = s.energy[c.id]?.get(hour);
-    if (!b) continue;
-    const exp = b.expElec + b.expThermal;
-    const act = b.elec + b.thermal;
-    if (exp < 20) continue;
-    const dev = act / exp - 1;
-    const key = `energy:${c.id}`;
-    if (dev > 0.1 && t - (s.internal.alertAt[key] ?? -1e9) > 120) {
-      s.internal.alertAt[key] = t;
-      const scen = activeScenarios(s, t).some((sc) => sc.kind === 'energy-anomaly' && sc.equipmentId === c.id);
-      raiseAlert(s, t, 'serious', `Energy anomaly: ${c.id}`, `${c.label} consumption ${(dev * 100).toFixed(0)} % above the energy model this hour`, { equipmentId: c.id }, scen ? 'scenario' : 'simulation');
-    }
-  }
 }
 
 // ── Alerts ────────────────────────────────────────────────────────────────────

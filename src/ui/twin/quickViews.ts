@@ -3,45 +3,47 @@
  * current simulation state when clicked.
  */
 import { HeartPulse, Hourglass, type LucideIcon } from 'lucide-react';
-import { STAGE_BY_ID } from '../../model/plant';
 import { healthAssessments } from '../../intel/insights';
-import { bottleneck } from '../../sim/metrics';
 import { useSim } from '../../sim/store';
 import { useTwin } from '../../store';
+import { constraintMarker } from './constraint';
 import { worstHealth } from './derive';
 import { useTwinUi } from './uiStore';
 
-/** Select and frame the condition-monitored asset in the worst state, inspector on Health. */
+/** Select and frame the condition-monitored asset in the worst state, its workspace at the condition section. */
 export function focusWorstHealth() {
   const worst = worstHealth(healthAssessments(useSim.getState().sim));
   if (!worst) return;
-  const tw = useTwin.getState();
-  tw.select(worst.id);
-  tw.focusEquipment(worst.id);
-  useTwinUi.getState().setTab(worst.id, 'health');
+  useTwinUi.getState().focusSection(worst.id, 'condition');
+  useTwin.getState().select(worst.id);
 }
 
-/** Select the first machine of the stage currently limiting the line (last 2 h). */
-export function focusBottleneck() {
-  const bn = bottleneck(useSim.getState().sim);
-  const id = STAGE_BY_ID[bn.current.stage].machines[0];
-  useTwinUi.getState().setTab(id, 'overview');
-  useTwin.getState().select(id);
+/**
+ * Highlight the stage the constraint claim names (constraintClaim — the stage currently constraining
+ * output, or the kiln as the modeled design constraint) and select its first machine.
+ */
+export function focusConstraint() {
+  const c = constraintMarker(useSim.getState().sim);
+  const id = c.machines[0];
+  const tw = useTwin.getState();
+  tw.selectStage(c.stage, { frame: false });
+  useTwinUi.getState().focusSection(id, 'overview');
+  tw.select(id);
 }
 
 export const QUICK_VIEWS: { id: string; label: string; hint: string; icon: LucideIcon; run: () => void }[] = [
   {
     id: 'health',
-    label: 'Machine health',
-    hint: 'Frame the monitored asset in the worst condition (rule-based assessment)',
+    label: 'Worst condition',
+    hint: 'Open the condition-monitored asset in the worst state (rule-based assessment of simulated signals)',
     icon: HeartPulse,
     run: focusWorstHealth,
   },
   {
-    id: 'bottleneck',
-    label: 'Bottleneck',
-    hint: 'Locate the stage limiting the line over the last 2 h',
+    id: 'constraint',
+    label: 'Line constraint',
+    hint: 'Highlight the stage constraining output now — or the kiln, the modeled design constraint, when no other stage holds it up — and open its first machine',
     icon: Hourglass,
-    run: focusBottleneck,
+    run: focusConstraint,
   },
 ];

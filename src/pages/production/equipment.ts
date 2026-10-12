@@ -1,5 +1,5 @@
 /**
- * OEE & Loss Intelligence — equipment level: every process machine and conveyor for a period,
+ * Production — equipment level: every process machine and conveyor for a period,
  * with its own figures (asset level) and what it cost the line at the constraint (from the loss
  * ledger's attribution, so the line loss is never a sum of machine losses).
  */

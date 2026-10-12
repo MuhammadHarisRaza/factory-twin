@@ -1,0 +1,270 @@
+/* ==========================================================================
+   Production flow strip (src/ui/flow/FlowStrip.tsx). Tokens of src/styles.css only.
+   One compact row of stage cells in line order; status is icon + words, the
+   coloured top edge only repeats it. Narrower containers wrap into numbered rows.
+   ========================================================================== */
+
+.flow-wrap {
+  container-type: inline-size;
+  min-width: 0;
+}
+
+.flow {
+  --gap: 14px;
+  display: grid;
+  grid-template-columns: repeat(var(--n, 9), minmax(0, 1fr));
+  gap: var(--gap);
+  margin: 0;
+  padding: 0;
+  list-style: none;
+  min-width: 0;
+}
+/* Laptop widths: nine cells in one row would truncate names and values, so the strip wraps into rows of
+   readable cells; the flow arrows give way to step numbers so the line order stays explicit. */
+@container (max-width: 1240px) {
+  .flow {
+    grid-template-columns: repeat(auto-fill, minmax(150px, 1fr));
+    counter-reset: flow-step;
+  }
+  .flow-i:not(:last-child)::after {
+    display: none;
+  }
+  .flow-name::before {
+    counter-increment: flow-step;
+    content: counter(flow-step) ' · ';
+    color: var(--text-3);
+    font-weight: var(--fw-regular);
+  }
+}
+
+.flow-i {
+  position: relative;
+  min-width: 0;
+  display: flex;
+}
+/* Direction of flow between cells. */
+.flow-i:not(:last-child)::after {
+  content: '';
+  position: absolute;
+  top: 50%;
+  right: calc(var(--gap) / -2 - 3px);
+  width: 6px;
+  height: 6px;
+  border-top: 1.5px solid var(--text-4);
+  border-right: 1.5px solid var(--text-4);
+  transform: translateY(-50%) rotate(45deg);
+  pointer-events: none;
+}
+
+.flow-st {
+  position: relative;
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+  width: 100%;
+  min-width: 0;
+  padding: 10px 10px 9px;
+  border: 1px solid var(--line-2);
+  border-radius: var(--r-2);
+  background: var(--bg-1);
+  color: inherit;
+  text-align: left;
+  font: inherit;
+  overflow: hidden;
+  transition: border-color var(--t-fast) var(--ease), background var(--t-fast) var(--ease);
+}
+.flow-st::before {
+  content: '';
+  position: absolute;
+  left: 0;
+  right: 0;
+  top: 0;
+  height: 2px;
+  background: var(--neutral);
+  opacity: 0.55;
+}
+.flow-st.t-good::before {
+  background: var(--good);
+}
+.flow-st.t-warning::before,
+.flow-st.t-serious::before {
+  background: var(--warning);
+  opacity: 0.9;
+}
+.flow-st.t-critical::before {
+  background: var(--critical);
+  opacity: 1;
+}
+.flow-st:hover {
+  background: var(--bg-2);
+  border-color: var(--line-3);
+}
+.flow-st.on {
+  border-color: var(--accent);
+  background: var(--accent-soft);
+}
+
+.flow-h {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  min-width: 0;
+}
+.flow-name {
+  flex: 1;
+  min-width: 0;
+  font-size: var(--fs-12);
+  font-weight: var(--fw-semibold);
+  color: var(--text-1);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.flow-alert {
+  display: inline-flex;
+  align-items: center;
+  gap: 3px;
+  flex: none;
+  height: 17px;
+  padding: 0 5px;
+  border-radius: 9px;
+  border: 1px solid var(--line-2);
+  font-size: var(--fs-11);
+  color: var(--text-1);
+}
+.flow-alert.critical {
+  border-color: #e0525266;
+}
+.flow-alert.critical svg {
+  color: var(--critical);
+}
+.flow-alert.serious svg {
+  color: var(--serious);
+}
+.flow-alert.warning svg {
+  color: var(--warning);
+}
+.flow-alert.neutral svg {
+  color: var(--neutral);
+}
+
+.flow-out {
+  font-size: var(--fs-16);
+  font-weight: var(--fw-medium);
+  line-height: 1.2;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.flow-out small {
+  margin-left: 4px;
+  font-size: var(--fs-11);
+  font-weight: var(--fw-regular);
+  color: var(--text-3);
+}
+
+/* A stale counting point: badge + what the value is ("last value 10:30"). */
+/* The not-confirmed mark wraps under its badge rather than being cut: it is the reason the figure is not a fact. */
+.flow-stale {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 2px 5px;
+  min-width: 0;
+  font-size: var(--fs-11);
+  line-height: 1.3;
+  color: var(--text-2);
+}
+.flow-stale .prov {
+  flex: none;
+}
+.flow-stale-t {
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+
+.flow-status {
+  min-width: 0;
+  overflow: hidden;
+}
+.flow-status .status {
+  font-size: var(--fs-11);
+  max-width: 100%;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.flow-foot {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 3px 8px;
+  min-width: 0;
+  margin-top: 1px;
+}
+.flow-plan,
+.flow-cons {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  font-size: var(--fs-11);
+  white-space: nowrap;
+  color: var(--text-2);
+}
+.flow-plan.good svg {
+  color: var(--good);
+}
+.flow-plan.warning svg {
+  color: var(--warning);
+}
+.flow-plan.critical {
+  color: #f0b4b4;
+}
+.flow-plan.critical svg {
+  color: var(--critical);
+}
+.flow-plan.neutral svg {
+  color: var(--neutral);
+}
+.flow-cons svg {
+  color: var(--text-3);
+}
+.flow-cons.active {
+  color: var(--text-1);
+}
+.flow-cons.active svg {
+  color: var(--warning);
+}
+
+/* One-line detail of the selected stage. */
+.flow-detail {
+  display: flex;
+  align-items: center;
+  gap: var(--s-3);
+  margin-top: var(--s-3);
+  padding: 8px 10px;
+  border: 1px solid var(--accent-line);
+  border-radius: var(--r-2);
+  background: var(--accent-soft);
+  font-size: var(--fs-12);
+  color: var(--text-2);
+}
+.flow-detail-b {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 4px 14px;
+}
+.flow-detail-b b {
+  color: var(--text-1);
+}
+.flow-detail-c {
+  flex-basis: 100%;
+  color: var(--text-3);
+}
+.flow-detail-a {
+  display: flex;
+  gap: 4px;
+  flex: none;
+}

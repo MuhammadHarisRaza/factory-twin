@@ -4,8 +4,8 @@ import type { Vehicle, VehicleLeg } from '../../../model/types';
 import { activateScenario, advance, createSim } from '../../../sim/engine';
 import { poseAt } from '../../../sim/logistics';
 import { DEFAULT_START } from '../../../sim/time';
+import { constraintMarker } from '../../../ui/twin/constraint';
 import {
-  bottleneckInfo,
   createBelt,
   energyFlags,
   groupFlow,
@@ -124,12 +124,13 @@ describe('throughput', () => {
 });
 
 describe('flags', () => {
-  it('derive health, energy, quality and bottleneck from the shared state', () => {
+  it('derive health, energy, quality and the constraint marker from the shared state', () => {
     const s = createSim(undefined, DEFAULT_START);
     // Baseline: ball mill 2 bearing wear is visible as a health watch.
     expect(healthFlags(s).some((h) => h.id === 'C-BM2')).toBe(true);
     expect(energyFlags(s)).toEqual([]);
-    expect(bottleneckInfo(s)).not.toBeNull();
+    // The constraint marker always names a stage with machines to outline (the kiln by design).
+    expect(constraintMarker(s).machines.length).toBeGreaterThan(0);
 
     activateScenario(s, { kind: 'energy-anomaly', equipmentId: 'A-COMP', factor: 1.3, end: null, label: 'Compressor leak' });
     activateScenario(s, { kind: 'quality-deterioration', stage: 'KILN', factor: 4, end: null, label: 'Kiln quality' });

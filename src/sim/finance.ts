@@ -91,6 +91,6 @@ export function assumptionList(f: FinanceAssumptions): string[] {
     `${Math.round(f.soldOutShare * 100)} % of lost good output is assumed to be lost sales.`,
     `Rejects: ${Math.round((1 - f.reworkShare) * 100)} % scrapped at ${money(f, f.scrapCostPerM2)}/m² sunk cost, ${Math.round(f.reworkShare * 100)} % reworked at ${money(f, f.reworkCostPerM2)}/m².`,
     `Truck detention ${money(f, f.truckWaitCostPerHour)}/h beyond the waiting threshold.`,
-    'All values are illustrative assumptions, editable in OEE & Loss Intelligence.',
+    'All values are illustrative assumptions, editable in Production → Analysis → Assumptions & what-ifs.',
   ];
 }

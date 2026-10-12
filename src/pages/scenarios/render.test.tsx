@@ -1,7 +1,6 @@
 /**
- * Smoke test: the Scenario Simulator, the Scenarios drawer, the Command Center, Machine Health and
- * Energy Intelligence render (server-side) at start-up and while the demonstrations run, with
- * their landmarks and honesty labels.
+ * Smoke test: the Scenarios panel renders (server-side) every tab at start-up and while the guided
+ * demos run, with its landmarks and honesty labels, and links only into the seven workspaces.
  */
 import type { ReactElement } from 'react';
 import { describe, expect, it, vi } from 'vitest';
@@ -22,12 +21,9 @@ import { useApp } from '../../app/store';
 import { ScenarioDrawer } from '../../app/ScenarioDrawer';
 import { advance } from '../../sim/engine';
 import { useSim } from '../../sim/store';
-import { CommandCenterPage } from '../CommandCenterPage';
-import { EnergyPage } from '../EnergyPage';
-import { MachineHealthPage } from '../MachineHealthPage';
-import { ScenarioSimulatorPage } from '../ScenarioSimulatorPage';
 import { setupDemo, useDemoRuns, useScenarioParams } from './actions';
 import { demoKey } from './demos';
+import { SCENARIO_TABS, useScenarioDrawer, type ScenarioTab } from './drawerState';
 
 useSim.getState().pause();
 
@@ -36,42 +32,67 @@ const sync = () => {
   Object.assign(useSim.getInitialState(), useSim.getState());
   Object.assign(useDemoRuns.getInitialState(), useDemoRuns.getState());
   Object.assign(useScenarioParams.getInitialState(), useScenarioParams.getState());
+  Object.assign(useScenarioDrawer.getInitialState(), useScenarioDrawer.getState());
 };
 const render = (el: ReactElement) => {
   sync();
   return renderToStaticMarkup(el);
 };
+const renderTab = (tab: ScenarioTab) => {
+  useScenarioDrawer.setState({ tab });
+  useApp.setState({ scenariosOpen: true });
+  return render(<ScenarioDrawer />);
+};
 
-describe('scenario simulator and command center render', () => {
-  it('renders at start-up', () => {
-    const sim = render(<ScenarioSimulatorPage />);
-    for (const text of ['Demonstrations · the four use cases end to end', 'Conveyor stoppage', 'OEE loss', 'Defect deterioration', 'Truck delay', 'Reset demo…', 'Scenario catalogue', 'Presenter guide', 'Scenario log', 'Data feed loss (PLC link)', 'Restricted-zone entry'])
-      expect(sim, text).toContain(text);
-    expect(sim).not.toMatch(/>Live</);
-    const cc = render(<CommandCenterPage />);
-    for (const text of ['Production monitoring', 'OEE &amp; loss', 'AI defect monitoring', 'Vehicle monitoring', 'Active events', 'Next actions', 'Equipment requiring attention', 'Quality exceptions', 'Event timeline', 'estimate · assumptions shown'])
-      expect(cc, text).toContain(text);
-    expect(cc).not.toMatch(/>Live</);
+/** Names of retired pages, which the panel must not link to or mention. */
+const RETIRED = /Command Center|Machine Health|Energy Intelligence|Scenario Simulator|Vehicle Monitoring|AI Defect Monitoring|Production Monitoring|OEE &amp; Loss\b|Assets &amp; Data/;
+
+describe('Scenarios panel', () => {
+  it('is closed until opened', () => {
+    useApp.setState({ scenariosOpen: false });
+    expect(render(<ScenarioDrawer />)).toBe('');
   });
 
-  it('renders while every demonstration runs', () => {
+  it('renders every tab at start-up', () => {
+    const html = Object.fromEntries(SCENARIO_TABS.map((t) => [t, renderTab(t)])) as Record<ScenarioTab, string>;
+    for (const t of SCENARIO_TABS) {
+      expect(html[t], t).toContain('role="dialog"');
+      for (const label of ['Guided demos', 'Catalogue', 'Active &amp; log', 'Impact vs baseline', 'Presenter guide']) expect(html[t], `${t}: ${label}`).toContain(label);
+      expect(html[t], t).toContain('simulated inputs');
+      expect(html[t], t).not.toMatch(RETIRED);
+      expect(html[t], t).not.toMatch(/>Live</);
+      expect(html[t], t).not.toMatch(/Energy cost|kWh/);
+    }
+    for (const text of ['Conveyor stoppage', 'OEE loss', 'Defect deterioration', 'Truck delay', 'Reset demo…', 'Not set up']) expect(html.demos, text).toContain(text);
+    for (const text of ['Production bottleneck', 'Machine breakdown', 'Developing machine fault', 'Data feed loss (PLC link)', 'Quality deterioration', 'Yard congestion', 'Restricted-zone entry', 'Show me'])
+      expect(html.catalogue, text).toContain(text);
+    for (const text of ['No scenario in effect', 'Skip 15 min', 'Scenario log', 'No scenario yet']) expect(html.active, text).toContain(text);
+    for (const text of ['Good output Δ', 'Line OEE Δ', 'Unplanned downtime Δ', 'Reject rate Δ', 'Since scenario start']) expect(html.impact, text).toContain(text);
+    for (const text of ['Open Overview', 'Set up · Production', 'Set up · Quality &amp; Defects', 'Set up · Fleet &amp; Movement', 'Open Events &amp; Reports', 'Go to Reset (E)', 'Simulation speed'])
+      expect(html.guide, text).toContain(text);
+  });
+
+  it('renders while every guided demo runs: events, Clear, the log with outcomes', () => {
     const v = useScenarioParams.getState().values;
     for (const id of ['A', 'B', 'C', 'D'] as const) expect(setupDemo(id, v[demoKey(id)])).not.toBeNull();
     const s = useSim.getState().sim;
     advance(s, s.minute + 30);
     useSim.setState({ version: s.version });
-    const sim = render(<ScenarioSimulatorPage />);
-    expect(sim).toContain('Event report');
-    expect(sim).toMatch(/EV-\d{5}/);
-    expect(sim).toContain('Clear all');
-    useApp.setState({ scenariosOpen: true });
-    const drawer = render(<ScenarioDrawer />);
-    expect(drawer).toContain('Running now');
-    expect(drawer).toContain('Demonstrations · four use cases');
-    const cc = render(<CommandCenterPage />);
-    expect(cc).toContain('CV-PACK');
-    expect(cc).toContain('Acknowledge');
-    expect(render(<MachineHealthPage />)).toContain('Condition events');
-    expect(render(<EnergyPage />)).toContain('Energy anomalies');
+    const demos = renderTab('demos');
+    expect(demos).toContain('Event report');
+    expect(demos).toMatch(/EV-\d{5}/);
+    expect(demos).toContain('Running');
+    const active = renderTab('active');
+    expect(active).toMatch(/\d scenarios? in effect/);
+    expect(active).toContain('Clear all');
+    expect(active).toContain('Outcome:');
+    expect(active).toContain('Guided demo');
+    expect(active).toMatch(/Stopped \d+ min/);
+    const catalogue = renderTab('catalogue');
+    expect(catalogue).toContain('Clear all');
+    const guide = renderTab('guide');
+    expect(guide).toContain('CV-PACK');
+    expect(guide).toMatch(/Step \d, done/);
+    for (const html of [demos, active, catalogue, guide]) expect(html).not.toMatch(RETIRED);
   });
 });

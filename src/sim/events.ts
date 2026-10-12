@@ -57,7 +57,6 @@ import type {
 } from '../model/types';
 import type { SimState } from './engine';
 import { LOG_MIN, minuteAt } from './engine';
-import { CONSUMER_BY_ID, CONSUMERS } from './energy';
 import { HEALTH_ASSETS, HEALTH_BY_ID, assess, sensorHistory, type HealthLevel } from './health';
 import { formatClock, formatDuration } from './time';
 
@@ -133,7 +132,6 @@ export const EVENT_RULE_DEFS: {
   { id: 'L-ZONE', type: 'restricted-entry', category: 'logistics', label: 'Restricted-zone entry', description: 'Internal vehicle position (simulated) inside a restricted geofence.', available: true },
   { id: 'L-PROX', type: null, category: 'logistics', label: 'Vehicle–pedestrian proximity', description: 'Needs proximity sensing (e.g. UWB / RFID tags on people and vehicles).', available: false, unavailableReason: 'No proximity sensing configured' },
   { id: 'L-ROUTE', type: null, category: 'logistics', label: 'Route deviation', description: 'Needs actual vehicle location data (GPS / indoor positioning).', available: false, unavailableReason: 'No tracking integration — positions are simulated' },
-  { id: 'E-DEV', type: 'energy-deviation', category: 'energy', label: 'Energy deviation from model', description: 'Consumer energy of the last full hour vs the energy model.', threshold: 'energyDeviationMax', available: true },
 ];
 
 // ── Internal state ────────────────────────────────────────────────────────────
@@ -259,6 +257,8 @@ type Spec = {
   source: RecordSource;
   start?: number;
   consequenceOf?: string;
+  /** A discrete incident (e.g. a restricted-zone entry): a new occurrence is a new event, never a reopen. */
+  discrete?: boolean;
   /** Called once when a new event is created (capture evidence). */
   capture?: (ev: OpEvent) => void;
 };
@@ -283,7 +283,7 @@ function raise(s: SimState, t: number, spec: Spec): OpEvent {
     open.lastUpdate = t;
     return open;
   }
-  const recent = I.recent[spec.key];
+  const recent = spec.discrete ? undefined : I.recent[spec.key];
   if (recent && t - recent.at <= REOPEN_MIN) {
     const ev = eventById(s, recent.id);
     if (ev && ev.resolution?.by !== 'user') {
@@ -814,7 +814,6 @@ export function stepEvents(s: SimState, t: number) {
   if (t % 5 === 0) qualityRules(s, t);
   inspectionRecordRules(s, t);
   logisticsRules(s, t);
-  if (t % 15 === 0) energyRules(s, t);
   if (t % 30 === 0) ioRule(s, t);
   accumulate(s, t);
 }
@@ -1719,6 +1718,7 @@ function logisticsRules(s: SimState, t: number) {
       refs: { restrictedEventId: r.id },
       source: r.source,
       start: r.time,
+      discrete: true,
       capture: (e) => {
         captureVisit(s, e, v, t);
         captureCamera(s, e, gf.id, t);
@@ -1769,47 +1769,6 @@ function captureVisit(s: SimState, ev: OpEvent, v: Vehicle, t: number) {
   }
 }
 
-/** Energy of the last full hour vs the model (every 15 min). */
-function energyRules(s: SimState, t: number) {
-  const R = s.rules;
-  const hour = Math.floor((t - 1) / 60);
-  for (const c of CONSUMERS) {
-    const b = s.energy[c.id]?.get(hour);
-    const key = `energy:${c.id}`;
-    if (!b) continue;
-    const exp = b.expElec + b.expThermal;
-    const act = b.elec + b.thermal;
-    if (exp < 20) continue;
-    const dev = act / exp - 1;
-    if (dev > R.energyDeviationMax && !isOpen(s, key)) {
-      const scen = s.scenarios.find((sc) => sc.kind === 'energy-anomaly' && sc.equipmentId === c.id && sc.start <= t && (sc.end == null || sc.end > t));
-      raise(s, t, {
-        key,
-        category: 'energy',
-        type: 'energy-deviation',
-        severity: dev > R.energyDeviationMax * 2 ? 'serious' : 'warning',
-        title: `${c.label}: energy ${Math.round(dev * 100)} % above model`,
-        summary: `${c.label} used ${Math.round(act)} kWh in the hour from ${clock(hour * 60)} against ${Math.round(exp)} kWh expected by the energy model for its load.`,
-        asset: { equipmentId: c.id, stage: OPS_BY_ID[c.id]?.stage ?? undefined, zone: OPS_BY_ID[c.id]?.zone },
-        trigger: { kind: scen ? 'scenario' : 'rule', ruleId: 'E-DEV', description: 'Last full hour vs energy model (illustrative)', signalId: `${c.id}.energy_kwh`, observed: [{ label: 'Actual', value: Math.round(act), unit: 'kWh' }, { label: 'Model', value: Math.round(exp), unit: 'kWh' }, { label: 'Deviation', value: `${Math.round(dev * 100)} %` }], threshold: { label: 'Threshold', value: `${Math.round(R.energyDeviationMax * 100)} %` } },
-        facts: [`${clock(hour * 60)}–${clock(hour * 60 + 60)}: ${Math.round(act)} kWh actual vs ${Math.round(exp)} kWh model (${Math.round(dev * 100)} %).`],
-        causes: scen
-          ? [{ text: `Energy anomaly injected by a scenario (${scen.label})`, confidence: 'confirmed', basis: 'Scenario log' }]
-          : [{ text: CONSUMER_BY_ID[c.id]?.thermal ? 'Combustion settings or heat losses' : 'Mechanical friction or idle running', confidence: 'possible', basis: 'Typical causes for this consumer type' }],
-        recommendations: [CONSUMER_BY_ID[c.id]?.thermal ? 'Check burner air/gas ratio and flue-gas O₂; inspect seals and doors for heat losses.' : 'Check for idle running, compressed-air leaks or mechanical drag.'],
-        refs: { scenarioId: scen?.id },
-        source: scen ? 'scenario' : 'simulation',
-        start: hour * 60,
-        capture: (e) =>
-          captureMetrics(s, e, 'Energy of the hour', [
-            { label: 'Actual', value: Math.round(act), unit: 'kWh' },
-            { label: 'Model', value: Math.round(exp), unit: 'kWh' },
-            { label: 'Deviation', value: `${Math.round(dev * 100)} %` },
-          ], t),
-      });
-    } else if (isOpen(s, key) && dev < R.energyDeviationMax / 2) clearKey(s, t, key, `${c.label} back within ${Math.round((R.energyDeviationMax / 2) * 100)} % of the model`);
-  }
-}
 
 /** Kiln output vs tiles arriving at sorting, including the outfeed buffer change (every 30 min). */
 function ioRule(s: SimState, t: number) {

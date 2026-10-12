@@ -1,0 +1,613 @@
+/* ==========================================================================
+   Page kit (src/ui/kit/Page.tsx): page header, KPI cards, sections, tabs,
+   provenance badges, disclosure, side panel, empty / unavailable states.
+   Uses the tokens in src/styles.css only.
+   ========================================================================== */
+
+/* Workspace page frame: one column, generous rhythm, capped width. */
+.wp {
+  display: flex;
+  flex-direction: column;
+  gap: var(--s-5);
+  padding: var(--s-5) var(--s-6) var(--s-8);
+  max-width: 1600px;
+  margin: 0 auto;
+  min-width: 0;
+}
+@media (max-width: 720px) {
+  .wp {
+    padding: var(--s-4) var(--s-4) var(--s-6);
+    gap: var(--s-4);
+  }
+}
+
+/* ── Provenance ─────────────────────────────────────────────────────────── */
+
+.prov {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  height: 18px;
+  padding: 0 6px;
+  border: 1px solid var(--line-2);
+  border-radius: 9px;
+  font-size: 10px;
+  font-weight: var(--fw-semibold);
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  color: var(--text-2);
+  white-space: nowrap;
+  flex: none;
+  cursor: help;
+}
+.prov svg {
+  flex: none;
+}
+.prov-simulated,
+.prov-scenario {
+  color: #e9c46a;
+  border-color: #fab21940;
+}
+.prov-recorded,
+.prov-reference {
+  color: var(--accent-strong);
+  border-color: var(--accent-line);
+}
+.prov-connected {
+  color: #6fd37f;
+  border-color: #2fb34466;
+}
+.prov-stale {
+  color: #f0a77f;
+  border-color: #ec835a55;
+}
+.prov-unavailable {
+  color: var(--text-3);
+}
+.prov-estimate,
+.prov-illustrative {
+  color: var(--text-2);
+  border-style: dashed;
+}
+
+/* ── Page header ────────────────────────────────────────────────────────── */
+
+.pg-head {
+  display: flex;
+  align-items: flex-start;
+  gap: var(--s-4);
+  flex-wrap: wrap;
+}
+.pg-head-main {
+  flex: 1 1 420px;
+  min-width: 0;
+}
+.pg-title-row {
+  display: flex;
+  align-items: center;
+  gap: var(--s-2);
+  flex-wrap: wrap;
+}
+.pg-title {
+  margin: 0;
+  font-size: var(--fs-20);
+  font-weight: var(--fw-semibold);
+  letter-spacing: -0.01em;
+}
+.pg-context {
+  margin-top: 4px;
+  font-size: var(--fs-12);
+  color: var(--text-3);
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px 10px;
+}
+.pg-summary {
+  margin: 10px 0 0;
+  max-width: 920px;
+  font-size: var(--fs-14);
+  line-height: 1.5;
+  color: var(--text-1);
+}
+.pg-actions {
+  display: flex;
+  gap: var(--s-2);
+  align-items: center;
+  flex-wrap: wrap;
+}
+
+/* ── KPI cards ──────────────────────────────────────────────────────────── */
+
+.kc-row-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(190px, 1fr));
+  gap: var(--s-3);
+}
+.kc {
+  position: relative;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  min-width: 0;
+  padding: 14px var(--s-4) 14px;
+  background: var(--bg-1);
+  border: 1px solid var(--line);
+  border-radius: var(--r-3);
+  text-align: left;
+  color: inherit;
+  font: inherit;
+}
+.kc::before {
+  content: '';
+  position: absolute;
+  left: -1px;
+  top: 12px;
+  bottom: 12px;
+  width: 3px;
+  border-radius: 0 2px 2px 0;
+  background: transparent;
+}
+.kc-good::before {
+  background: var(--good);
+}
+.kc-warning::before,
+.kc-serious::before {
+  background: var(--warning);
+}
+.kc-critical::before {
+  background: var(--critical);
+}
+.kc-btn {
+  cursor: pointer;
+  transition: border-color var(--t-fast) var(--ease), background var(--t-fast) var(--ease);
+}
+.kc-btn:hover {
+  border-color: var(--line-3);
+  background: var(--bg-2);
+}
+.kc.on {
+  border-color: var(--accent-line);
+  background: var(--accent-soft);
+}
+.kc-top {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  min-width: 0;
+}
+.kc-label {
+  font-size: var(--fs-12);
+  color: var(--text-2);
+  font-weight: var(--fw-medium);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  min-width: 0;
+}
+.kc-value {
+  font-size: 28px;
+  font-weight: var(--fw-medium);
+  line-height: 1.15;
+  letter-spacing: -0.015em;
+  margin-top: 4px;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.kc-value small {
+  font-size: var(--fs-13);
+  color: var(--text-3);
+  font-weight: var(--fw-regular);
+  margin-left: 5px;
+  letter-spacing: 0;
+}
+.kc-value.kc-text {
+  white-space: normal;
+  overflow: visible;
+  text-overflow: clip;
+  overflow-wrap: anywhere;
+  font-size: var(--fs-20);
+  line-height: 1.25;
+  padding-top: 4px;
+}
+.kc-value.kc-na {
+  font-size: var(--fs-16);
+  color: var(--text-3);
+  padding: 7px 0 3px;
+}
+.kc-scope {
+  font-size: var(--fs-11);
+  color: var(--text-3);
+}
+.kc-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+  margin-top: 6px;
+  font-size: var(--fs-12);
+}
+.kc-target {
+  color: var(--text-3);
+  font-variant-numeric: tabular-nums;
+}
+.kc-status {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  font-weight: var(--fw-medium);
+  color: var(--text-1);
+}
+.kc-status.good svg,
+.kc-status.good .kc-dot {
+  color: var(--good);
+  background: var(--good);
+}
+.kc-status.warning svg,
+.kc-status.serious svg {
+  color: var(--warning);
+}
+.kc-status.critical svg {
+  color: var(--critical);
+}
+.kc-status.neutral svg,
+.kc-status.planned svg {
+  color: var(--neutral);
+}
+.kc-status svg {
+  background: none !important;
+}
+.kc-dot {
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  background: var(--neutral);
+}
+.kc-status.warning .kc-dot,
+.kc-status.serious .kc-dot {
+  background: var(--warning);
+}
+.kc-status.critical .kc-dot {
+  background: var(--critical);
+}
+.kc-why {
+  margin-top: 6px;
+  font-size: var(--fs-12);
+  line-height: 1.4;
+  color: var(--text-3);
+}
+
+/* ── Sections ───────────────────────────────────────────────────────────── */
+
+.sec {
+  min-width: 0;
+  background: var(--bg-1);
+  border: 1px solid var(--line);
+  border-radius: var(--r-3);
+  display: flex;
+  flex-direction: column;
+}
+.sec-h {
+  display: flex;
+  align-items: center;
+  gap: var(--s-3);
+  min-height: 44px;
+  padding: 10px var(--s-4);
+  border-bottom: 1px solid var(--line);
+  flex-wrap: wrap;
+}
+.sec-titles {
+  flex: 1 1 auto;
+  min-width: 0;
+}
+.sec-h h3 {
+  margin: 0;
+  font-size: var(--fs-14);
+  font-weight: var(--fw-semibold);
+}
+.sec-h p {
+  margin: 2px 0 0;
+  font-size: var(--fs-12);
+  color: var(--text-3);
+}
+.sec-actions {
+  display: flex;
+  align-items: center;
+  gap: var(--s-2);
+  flex-wrap: wrap;
+}
+.sec-b {
+  padding: var(--s-4);
+  min-width: 0;
+}
+.sec-b.flush {
+  padding: 0;
+}
+
+/* Two-column work area: primary visual + contextual panel. */
+.work {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) 380px;
+  gap: var(--s-4);
+  align-items: start;
+}
+@media (max-width: 1180px) {
+  .work {
+    grid-template-columns: minmax(0, 1fr);
+  }
+}
+
+/* ── Tabs ───────────────────────────────────────────────────────────────── */
+
+.tabs {
+  display: flex;
+  gap: 2px;
+  border-bottom: 1px solid var(--line);
+  overflow-x: auto;
+  scrollbar-width: none;
+}
+.tabs button {
+  position: relative;
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  height: 36px;
+  padding: 0 12px;
+  border: 0;
+  background: none;
+  color: var(--text-2);
+  font-size: var(--fs-13);
+  font-weight: var(--fw-medium);
+  white-space: nowrap;
+}
+.tabs button:hover {
+  color: var(--text-1);
+}
+.tabs button.on {
+  color: var(--text-1);
+}
+.tabs button.on::after {
+  content: '';
+  position: absolute;
+  left: 8px;
+  right: 8px;
+  bottom: -1px;
+  height: 2px;
+  border-radius: 1px;
+  background: var(--accent);
+}
+.tabs-count {
+  min-width: 18px;
+  height: 18px;
+  padding: 0 5px;
+  border-radius: 9px;
+  background: var(--bg-3);
+  color: var(--text-2);
+  font-size: var(--fs-11);
+  line-height: 18px;
+  text-align: center;
+}
+
+/* ── Disclosure ─────────────────────────────────────────────────────────── */
+
+.disc {
+  border-top: 1px solid var(--line);
+}
+.disc-h {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  width: 100%;
+  padding: 10px 0;
+  border: 0;
+  background: none;
+  color: var(--text-2);
+  font-size: var(--fs-12);
+  font-weight: var(--fw-medium);
+  text-align: left;
+}
+.disc-h:hover {
+  color: var(--text-1);
+}
+.disc-chev {
+  transition: transform var(--t-fast) var(--ease);
+  transform: rotate(-90deg);
+  flex: none;
+}
+.disc.open .disc-chev {
+  transform: none;
+}
+.disc-title {
+  flex: 1;
+}
+.disc-meta {
+  color: var(--text-3);
+  font-weight: var(--fw-regular);
+}
+.disc-b {
+  padding: 0 0 12px;
+}
+
+/* ── Side panel ─────────────────────────────────────────────────────────── */
+
+.sp {
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+  background: var(--bg-1);
+  border: 1px solid var(--line);
+  border-radius: var(--r-3);
+}
+.sp-h {
+  display: flex;
+  align-items: flex-start;
+  gap: var(--s-2);
+  padding: 12px var(--s-4) 10px;
+  border-bottom: 1px solid var(--line);
+}
+.sp-titles {
+  flex: 1;
+  min-width: 0;
+}
+.sp-h h3 {
+  margin: 0;
+  font-size: var(--fs-16);
+  font-weight: var(--fw-semibold);
+  line-height: 1.3;
+}
+.sp-sub {
+  margin-top: 4px;
+  font-size: var(--fs-12);
+  color: var(--text-3);
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px 10px;
+  align-items: center;
+}
+.sp-b {
+  padding: var(--s-4);
+  display: flex;
+  flex-direction: column;
+  gap: var(--s-4);
+  min-width: 0;
+}
+.sp-f {
+  padding: 10px var(--s-4);
+  border-top: 1px solid var(--line);
+  display: flex;
+  gap: var(--s-2);
+  flex-wrap: wrap;
+}
+
+/* ── Empty / unavailable / facts ────────────────────────────────────────── */
+
+.es {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 6px;
+  padding: var(--s-6) var(--s-4);
+  text-align: center;
+  color: var(--text-3);
+}
+.es b {
+  color: var(--text-2);
+  font-weight: var(--fw-medium);
+}
+.es-text {
+  max-width: 420px;
+  font-size: var(--fs-12);
+  line-height: 1.45;
+}
+.na {
+  color: var(--text-3);
+  font-style: italic;
+  cursor: help;
+  text-decoration: underline dotted var(--text-4);
+  text-underline-offset: 3px;
+}
+.facts {
+  margin: 0;
+  display: grid;
+  grid-template-columns: minmax(0, 1fr);
+  gap: 0;
+}
+.facts > div {
+  display: flex;
+  justify-content: space-between;
+  gap: var(--s-3);
+  padding: 6px 0;
+  border-bottom: 1px solid var(--line);
+  font-size: var(--fs-12);
+}
+.facts > div:last-child {
+  border-bottom: 0;
+}
+.facts dt {
+  color: var(--text-3);
+}
+.facts dd {
+  margin: 0;
+  text-align: right;
+  color: var(--text-1);
+  font-variant-numeric: tabular-nums;
+  min-width: 0;
+}
+
+/* Small metric tiles inside panels (3–5 context KPIs). */
+.mini-kpis {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(110px, 1fr));
+  gap: 1px;
+  background: var(--line);
+  border: 1px solid var(--line);
+  border-radius: var(--r-2);
+  overflow: hidden;
+}
+.mini-kpi {
+  background: var(--bg-1);
+  padding: 9px 10px;
+  min-width: 0;
+}
+.mini-kpi span {
+  display: block;
+  font-size: var(--fs-11);
+  color: var(--text-3);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.mini-kpi b {
+  display: block;
+  margin-top: 2px;
+  font-size: var(--fs-16);
+  font-weight: var(--fw-medium);
+  font-variant-numeric: tabular-nums;
+}
+.mini-kpi b small {
+  font-size: var(--fs-11);
+  color: var(--text-3);
+  font-weight: var(--fw-regular);
+  margin-left: 3px;
+}
+.mini-kpi em {
+  display: block;
+  font-style: normal;
+  font-size: var(--fs-11);
+  color: var(--text-3);
+  margin-top: 1px;
+}
+
+/* ── Embedded 3D factory (src/app/twinHost.tsx) ─────────────────────────── */
+
+/* The scene container follows the slot's box (top/left/width/height set every frame). */
+.twin.embedded {
+  inset: auto;
+  z-index: 1;
+  border-radius: var(--r-3);
+  overflow: hidden;
+  box-shadow: 0 0 0 1px var(--line-2);
+}
+/* The slot sits above the scene; it lets pointer events through except on its own controls. */
+.twin-slot {
+  position: relative;
+  z-index: 2;
+  pointer-events: none;
+  min-height: 360px;
+  border-radius: var(--r-3);
+}
+.twin-slot > * {
+  pointer-events: auto;
+}
+.twin-slot-loading {
+  position: absolute;
+  inset: 0;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  color: #2b3540;
+  font-size: var(--fs-13);
+  pointer-events: none;
+}

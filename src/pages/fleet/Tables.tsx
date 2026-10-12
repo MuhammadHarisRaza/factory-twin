@@ -1,9 +1,15 @@
 /**
- * Vehicle Monitoring tables: dock board (current state + period utilisation), external trucks
- * (stage, zone, gate events, dock, loading, durations), internal vehicles (zone, movement, task,
- * handling, dwell, safety) and the raw gate / dock / restricted-zone records of the period.
+ * Fleet & Movement tables (secondary tabs): dock board (current state + period utilisation),
+ * external trucks (stage, dock, loading, gate-in / out, waiting, turnaround, event), internal
+ * vehicles (zone, movement, activity, handling, time at the current stop, event) and the raw
+ * gate / dock / restricted-zone records of the period.
+ *
+ * The vehicle tables keep to ≤ 8 columns with two-line cells (value + context below) so they fit
+ * the full work width at laptop sizes without sideways scrolling; detail-level fields (arrival,
+ * dock time, zone of a truck; task, idle time, restricted entries of an internal vehicle) live in
+ * the vehicle detail, which opens as a drawer over the table (VehicleDrawer).
  */
-import { useMemo, useState } from 'react';
+import { useMemo, useState, type ReactNode } from 'react';
 import { ArrowDownToLine, ArrowUpFromLine, ShieldAlert, TriangleAlert } from 'lucide-react';
 import { openEquipment, openEvent } from '../../app/store';
 import type { OpEvent } from '../../model/types';
@@ -13,21 +19,36 @@ import { DataTable, type Column } from '../../ui/kit/DataTable';
 import { Panel, Segmented } from '../../ui/kit/Panel';
 import { SeverityBadge, SourceTag, StatusBadge } from '../../ui/kit/Status';
 import { fmtInt, fmtPct } from '../../ui/kit/format';
-import { DOCK_STATUS, MovementBadge, PositionTag, TYPE_LABEL, dur, type Clock } from './common';
+import { DOCK_STATUS, IntegrityBadge, MovementBadge, PositionTag, TYPE_LABEL, dur, sinceText, type Clock } from './common';
 import { DOCK_NAME, geofenceName, type DockRow, type LogRow, type LogType } from './derive';
 import { STAGE_BY_KEY, type InternalRow, type TruckRow } from './pipeline';
 
-/** Event badge (most severe active vehicle event) that opens the event report. */
+/**
+ * Two-line table cell: the value, and its context in smaller type below it. `wrap` lets long text
+ * wrap inside the cell instead of widening the table.
+ */
+function Cell2({ main, sub, wrap = false, title }: { main: ReactNode; sub?: ReactNode; wrap?: boolean; title?: string }) {
+  return (
+    <span className={`fv-c2${wrap ? ' wrap' : ''}`} title={title}>
+      <span className="fv-c2-m">{main}</span>
+      {sub != null && sub !== false && <span className="fv-c2-s">{sub}</span>}
+    </span>
+  );
+}
+
+/** Event badge (most severe active vehicle event) with its type below it; opens the event report. */
 function AlertCell({ alert }: { alert: OpEvent | null }) {
   if (!alert) return <span className="muted">—</span>;
   return (
     <button
-      className="row-link"
+      type="button"
+      className="row-link fv-alert"
       title={`${alert.id} · ${alert.title} — open the report`}
       onClick={(e) => {
         e.stopPropagation();
         openEvent(alert.id);
       }}
+      onKeyDown={(e) => e.stopPropagation()}
     >
       <SeverityBadge severity={alert.severity} />
       <span className="fv-alert-t">{EVENT_TYPE_LABEL[alert.type]}</span>
@@ -63,8 +84,11 @@ export function DockBoard({
   const cols: Column<DockRow>[] = [
     { key: 'dock', header: 'Dock', render: (r) => r.name, width: 70 },
     { key: 'status', header: 'Status', render: (r) => <StatusBadge {...DOCK_STATUS[r.status]} /> },
-    { key: 'truck', header: 'Truck', render: (r) => (r.truck ? <span className="mono">{r.truck.id}</span> : <span className="muted">—</span>) },
-    { key: 'carrier', header: 'Carrier', render: (r) => r.truck?.operator ?? <span className="muted">—</span> },
+    {
+      key: 'truck',
+      header: 'Truck · carrier',
+      render: (r) => (r.truck ? <Cell2 main={<span className="mono">{r.truck.id}</span>} sub={r.truck.operator} wrap /> : <span className="muted">—</span>),
+    },
     {
       key: 'since',
       header: 'Since',
@@ -94,14 +118,7 @@ export function DockBoard({
       title: `Occupied minutes and share of ${periodLabel}`,
       render: (r) => {
         const u = share.get(r.id);
-        return u ? (
-          <>
-            {fmtPct(u.share, 0)}
-            <span className="sub">{dur(u.busy)}</span>
-          </>
-        ) : (
-          '—'
-        );
+        return u ? <Cell2 main={fmtPct(u.share, 0)} sub={dur(u.busy)} /> : '—';
       },
     },
     {
@@ -113,6 +130,7 @@ export function DockBoard({
   const held = [...overstay.values()];
   return (
     <Panel
+      className="fv-tbl"
       title="Dock board"
       subtitle={`Plant time ${formatClock(now)} · outbound loading docks · occupancy share over ${periodLabel}`}
       flush
@@ -162,68 +180,92 @@ export function ExternalTable({
     {
       key: 'id',
       header: 'Vehicle',
+      title: 'Truck id and type (arrow up: outbound, arrow down: inbound)',
       render: (r) => (
-        <span className="fv-veh-cell">
-          {r.v.visit!.direction === 'outbound' ? <ArrowUpFromLine size={12} aria-label="Outbound" /> : <ArrowDownToLine size={12} aria-label="Inbound" />}
-          <span className="mono">{r.id}</span>
-          {r.source === 'scenario' && <SourceTag source="scenario" />}
-        </span>
+        <Cell2
+          main={
+            <span className="fv-veh-cell">
+              {r.v.visit!.direction === 'outbound' ? <ArrowUpFromLine size={12} aria-label="Outbound" /> : <ArrowDownToLine size={12} aria-label="Inbound" />}
+              <span className="mono">{r.id}</span>
+              {r.source === 'scenario' && <SourceTag source="scenario" />}
+            </span>
+          }
+          sub={TYPE_LABEL[r.v.type]}
+        />
       ),
       sort: (r) => r.id,
     },
     {
-      key: 'type',
-      header: 'Type · load',
-      render: (r) => (r.v.visit!.direction === 'outbound' ? `${TYPE_LABEL[r.v.type]} · ${r.v.visit!.load} pallets` : `${TYPE_LABEL[r.v.type]} · ${r.v.visit!.material ?? 'raw material'} ${r.v.visit!.load} t`),
-      sort: (r) => r.v.visit!.direction,
-    },
-    {
       key: 'stage',
       header: 'Stage',
+      title: 'Step of the movement flow (numbers match the site layout) and the status within it',
       render: (r) =>
         r.place ? (
-          <span title={r.place.status}>
-            <span className="fv-stepno">{STAGE_BY_KEY[r.place.stage].step}</span>
-            {STAGE_BY_KEY[r.place.stage].label}
-            <span className="sub">{r.place.status}</span>
-          </span>
+          <Cell2
+            wrap
+            title={r.place.status}
+            main={
+              <>
+                <span className="fv-stepno">{STAGE_BY_KEY[r.place.stage].step}</span>
+                {STAGE_BY_KEY[r.place.stage].label}
+              </>
+            }
+            sub={r.place.status}
+          />
         ) : (
           <span className="muted">Left site</span>
         ),
       sort: (r) => (r.place ? STAGE_BY_KEY[r.place.stage].step : 99),
     },
     {
-      key: 'zone',
-      header: 'Zone',
-      title: 'Simulated position, zone level',
-      render: (r) => (r.active ? geofenceName(r.zone) : <span className="muted">—</span>),
-      sort: (r) => (r.active ? geofenceName(r.zone) : '~'),
-    },
-    { key: 'arr', header: 'Arrival', numeric: true, title: 'Arrival on the gate approach road', render: (r) => at(r.v.visit!.arrival), sort: (r) => r.v.visit!.arrival },
-    { key: 'gateIn', header: 'Gate in', numeric: true, render: (r) => at(r.v.visit!.gateIn), sort: (r) => r.v.visit!.gateIn },
-    {
       key: 'dock',
       header: 'Dock',
       render: (r) => (r.v.visit!.direction === 'inbound' ? <span className="dim">Shed bay</span> : r.v.visit!.dockId ? DOCK_NAME[r.v.visit!.dockId] : '—'),
       sort: (r) => r.v.visit!.dockId ?? '',
     },
-    { key: 'load', header: 'Loading', render: (r) => <span className={r.load.done ? '' : 'dim'}>{r.load.label}</span>, sort: (r) => (r.load.done ? 1 : 0) },
+    {
+      key: 'load',
+      header: 'Loading',
+      render: (r) => <Cell2 wrap main={<span className={r.load.done ? '' : 'dim'}>{r.load.label}</span>} />,
+      sort: (r) => (r.load.done ? 1 : 0),
+    },
+    {
+      key: 'gateIn',
+      header: 'Gate in',
+      numeric: true,
+      title: 'Gate in, with the gate out below it once the truck has left',
+      render: (r) => {
+        const out = r.v.visit!.gateOut;
+        return <Cell2 main={at(r.v.visit!.gateIn)} sub={out != null && out <= now ? `out ${clock(out)}` : null} />;
+      },
+      sort: (r) => r.v.visit!.gateIn,
+    },
     { key: 'wait', header: 'Waiting', numeric: true, title: 'Holding arrival → dock assigned', render: (r) => dur(r.d.waiting), sort: (r) => r.d.waiting },
-    { key: 'dockTime', header: 'Dock time', numeric: true, render: (r) => dur(r.d.dockTime), sort: (r) => r.d.dockTime },
-    { key: 'gateOut', header: 'Departure', numeric: true, title: 'Gate out', render: (r) => at(r.v.visit!.gateOut), sort: (r) => r.v.visit!.gateOut },
     {
       key: 'turn',
       header: 'Turnaround',
       numeric: true,
       title: 'Gate in → gate out (on site: time so far)',
-      render: (r) => (r.d.turnaround != null ? dur(r.d.turnaround) : r.v.visit!.gateIn <= now ? <span className="dim">{dur(now - r.v.visit!.gateIn)} so far</span> : '—'),
-      sort: (r) => r.d.turnaround ?? (r.v.visit!.gateIn <= now ? now - r.v.visit!.gateIn : null),
+      render: (r) =>
+        r.integrity.kind === 'incomplete' ? (
+          <span title={r.integrity.note ?? undefined}>
+            <IntegrityBadge integrity={r.integrity} />
+          </span>
+        ) : r.d.turnaround != null ? (
+          dur(r.d.turnaround)
+        ) : r.v.visit!.gateIn <= now ? (
+          <Cell2 main={<span className="dim">{dur(now - r.v.visit!.gateIn)}</span>} sub="so far" />
+        ) : (
+          '—'
+        ),
+      sort: (r) => (r.integrity.kind === 'incomplete' ? null : (r.d.turnaround ?? (r.v.visit!.gateIn <= now ? now - r.v.visit!.gateIn : null))),
     },
     { key: 'ev', header: 'Event', render: (r) => <AlertCell alert={r.alert} />, sort: (r) => (r.alert ? 1 : 0) },
   ];
   const active = rows.filter((r) => r.active).length;
   return (
     <Panel
+      className="fv-tbl"
       title="External vehicles"
       subtitle={`${active} on site past gate-in · ${rows.length - active} departed in ${periodLabel} · from simulated gate and dock records`}
       actions={
@@ -258,67 +300,81 @@ export function ExternalTable({
 
 // ── Internal vehicles ─────────────────────────────────────────────────────────
 
+/** Zone-cell badge of an internal vehicle inside a restricted geofence now (the zone is named in the title). */
+const RESTRICTED_NOW = 'In restricted zone';
+const restrictedTitle = (geofenceId: string) => `Inside the restricted zone: ${geofenceName(geofenceId)} — simulated position`;
+
 export function InternalTable({ rows, clock, selected, onSelect }: { rows: InternalRow[]; clock: Clock; selected: string | null; onSelect: (id: string) => void }) {
   const cols: Column<InternalRow>[] = [
-    { key: 'id', header: 'Vehicle', render: (r) => <span className="mono">{r.id}</span>, sort: (r) => r.id },
-    { key: 'type', header: 'Type', render: (r) => TYPE_LABEL[r.v.type], sort: (r) => r.v.type },
-    { key: 'zone', header: 'Zone', title: 'Simulated position, zone level', render: (r) => geofenceName(r.zone), sort: (r) => geofenceName(r.zone) },
+    { key: 'id', header: 'Vehicle', render: (r) => <Cell2 main={<span className="mono">{r.id}</span>} sub={TYPE_LABEL[r.v.type]} />, sort: (r) => r.id },
+    {
+      key: 'zone',
+      header: 'Zone',
+      title:
+        'Simulated position, zone level · below it: a restricted-zone entry now or earlier today, otherwise since when the vehicle has worked in this zone (context, not a dwell)',
+      render: (r) => (
+        <Cell2
+          wrap
+          main={geofenceName(r.zone)}
+          sub={
+            r.insideRestricted ? (
+              // Short label that may wrap (the zone names are long and carry their own brackets, e.g.
+              // "Palletiser cell (no entry)"); the zone is named in the title and in the vehicle detail.
+              <span className="fv-zone-flag" title={restrictedTitle(r.insideRestricted)}>
+                <StatusBadge tone="warning" icon={ShieldAlert} label={RESTRICTED_NOW} />
+                <span className="sr-only">: {geofenceName(r.insideRestricted)}</span>
+              </span>
+            ) : r.restrictedToday > 0 ? (
+              <StatusBadge tone="warning" icon={TriangleAlert} label={`${r.restrictedToday} restricted-zone ${r.restrictedToday === 1 ? 'entry' : 'entries'} today`} />
+            ) : r.zoneSince != null ? (
+              `in zone since ${sinceText(r.zoneSince, clock)}`
+            ) : null
+          }
+        />
+      ),
+      sort: (r) => geofenceName(r.zone),
+    },
     {
       key: 'move',
       header: 'Movement',
-      render: (r) => (
-        <>
-          <MovementBadge state={r.movement} />
-          <span className="sub">{r.loaded ? 'loaded' : 'empty'}</span>
-        </>
-      ),
+      render: (r) => <Cell2 main={<MovementBadge state={r.movement} />} sub={r.loaded ? 'loaded' : 'empty'} />,
       sort: (r) => r.movement,
     },
-    { key: 'task', header: 'Task', render: (r) => r.v.task ?? '—', sort: (r) => r.v.task ?? '' },
-    { key: 'act', header: 'Current activity', render: (r) => r.activity ?? '—' },
+    { key: 'act', header: 'Current activity', render: (r) => <Cell2 wrap main={r.activity ?? '—'} /> },
     {
       key: 'last',
       header: 'Last pickup / drop-off',
       render: (r) =>
         r.last ? (
-          <span title={`${r.last.activity} · ${r.last.dock ?? geofenceName(r.last.zone)}`}>
-            <span className={`fv-kind ${r.last.kind}`}>{r.last.kind === 'pickup' ? 'Pickup' : 'Drop-off'}</span> {clock(r.last.time)}
-            <span className="sub">{r.last.dock ?? geofenceName(r.last.zone)}</span>
-          </span>
+          <Cell2
+            wrap
+            title={`${r.last.activity} · ${r.last.dock ?? geofenceName(r.last.zone)}`}
+            main={
+              <>
+                <span className={`fv-kind ${r.last.kind}`}>{r.last.kind === 'pickup' ? 'Pickup' : 'Drop-off'}</span> {clock(r.last.time)}
+              </>
+            }
+            sub={r.last.dock ?? geofenceName(r.last.zone)}
+          />
         ) : (
           <span className="muted">—</span>
         ),
       sort: (r) => r.last?.time ?? null,
     },
     { key: 'h60', header: 'Handling, 60 min', numeric: true, title: 'Pickups + drop-offs in the last 60 min (within the retained movement history)', render: (r) => fmtInt(r.handled60), sort: (r) => r.handled60 },
-    { key: 'dwell', header: 'Dwell in zone', numeric: true, render: (r) => dur(r.dwell), sort: (r) => r.dwell },
     {
-      key: 'idle',
-      header: 'Idle, last hour',
+      key: 'stop',
+      header: 'At current stop',
       numeric: true,
-      title: 'Stationary idle / waiting minutes in the last 60 min',
-      render: (r) => (r.idleLastHour == null ? <span className="metric-na" title="Less than one hour of movement history retained">—</span> : dur(r.idleLastHour)),
-      sort: (r) => r.idleLastHour,
-    },
-    {
-      key: 'rz',
-      header: 'Restricted today',
-      numeric: true,
-      title: 'Restricted-geofence entries today (simulated positions)',
-      render: (r) =>
-        r.insideRestricted ? (
-          <StatusBadge tone="warning" icon={ShieldAlert} label={`Inside ${geofenceName(r.insideRestricted)}`} />
-        ) : r.restrictedToday > 0 ? (
-          <StatusBadge tone="warning" icon={TriangleAlert} label={String(r.restrictedToday)} />
-        ) : (
-          '0'
-        ),
-      sort: (r) => r.restrictedToday,
+      title: 'Dwell of an internal vehicle: minutes standing at the current stop (0 while moving). Zone residency is not a dwell.',
+      render: (r) => (r.moving ? <span className="dim">moving</span> : dur(r.stationaryMin)),
+      sort: (r) => (r.moving ? 0 : r.stationaryMin),
     },
     { key: 'ev', header: 'Event', render: (r) => <AlertCell alert={r.alert} />, sort: (r) => (r.alert ? 1 : 0) },
   ];
   return (
     <Panel
+      className="fv-tbl"
       title="Internal vehicles"
       subtitle="Warehouse, dispatch and packaging forklifts, raw-material wheel loader · current state (simulated)"
       actions={<PositionTag long />}

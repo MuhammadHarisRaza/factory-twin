@@ -1,5 +1,5 @@
 /**
- * Vehicle Monitoring "Simulate …" bar during Reset Demo (review finding #20): while the seeded
+ * Fleet & Movement "Simulate …" bar during Reset Demo (review finding #20): while the seeded
  * state is being rebuilt every button is disabled, and an activation is refused instead of landing
  * on the state the reset is about to discard.
  */
@@ -46,7 +46,7 @@ const text = (b: Btn): string => {
   return flat(b.props.children);
 };
 
-describe('vehicle monitoring simulate bar', () => {
+describe('fleet & movement simulate bar', () => {
   it('disables every simulate button and refuses activations while the demo is resetting', () => {
     useSim.setState({ resetting: true });
     try {

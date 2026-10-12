@@ -36,11 +36,14 @@ export function LiveList() {
   const selected = useTwin((s) => s.selected);
   const vehicle = useTwin((s) => s.vehicle);
   const zone = useTwin((s) => s.zone);
-  // On short screens the list folds away while an inspector is open (unless opened from the list).
+  const stage = useTwin((s) => s.stage);
+  // The list folds away while a workspace (equipment, vehicle, stage) is open — and on short screens while a
+  // zone panel is open — so the panel gets the column; it stays open for a selection made from the list.
   const short = useMediaQuery('(max-height: 860px)');
-  const selKey = vehicle ? `v:${vehicle}` : selected ? `e:${selected}` : zone ? `z:${zone}` : null;
+  const selKey = vehicle ? `v:${vehicle}` : selected ? `e:${selected}` : stage ? `s:${stage}` : zone ? `z:${zone}` : null;
   const [keepFor, setKeepFor] = useState<string | null>(null);
-  const folded = short && selKey != null && keepFor !== selKey;
+  const workspaceOpen = !!(vehicle || selected || stage);
+  const folded = (workspaceOpen || (short && selKey != null)) && keepFor !== selKey;
   const isOpen = open && !folded;
 
   const data = useSimValue((s) => {

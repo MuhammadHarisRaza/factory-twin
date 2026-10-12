@@ -1,0 +1,420 @@
+/* ==========================================================================
+   Equipment workspace (src/ui/equipment) — the contextual panel of the Factory
+   Twin for a selected asset, vehicle or highlighted stage. Builds on the shared
+   .inspector / .insp-* / .tw-insp classes; tokens only.
+   ========================================================================== */
+
+.eqw .insp-h h2 {
+  font-size: var(--fs-16);
+}
+.eqw-crumb {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.eqw .tw-insp-status {
+  flex-wrap: wrap;
+  row-gap: 4px;
+}
+.eqw-reason {
+  margin-top: 5px;
+  font-size: var(--fs-11);
+  line-height: 1.4;
+  color: var(--text-2);
+}
+.eqw-b {
+  scroll-behavior: smooth;
+}
+.eqw-b > .insp-sec,
+.eqw-b > div > .insp-sec {
+  scroll-margin-top: 4px;
+}
+.eqw-video {
+  padding-top: 8px;
+}
+
+/* KPI tiles: two per row in the panel, the unavailable ones say why. */
+.eqw-kpis {
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+}
+.eqw-kpi b {
+  font-size: var(--fs-14);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.eqw-kpi em .status {
+  font-size: var(--fs-11);
+  white-space: normal;
+}
+.eqw-kpi em {
+  overflow-wrap: anywhere;
+}
+.eqw-kpi-sub {
+  color: var(--text-3) !important;
+}
+.eqw-kpi.na {
+  background: var(--bg-0);
+}
+.eqw-na {
+  font-size: var(--fs-13) !important;
+  font-weight: var(--fw-regular) !important;
+}
+.eqw-notes {
+  list-style: none;
+  margin: 8px 0 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 5px;
+}
+.eqw-notes li {
+  display: flex;
+  gap: 6px;
+  align-items: flex-start;
+  font-size: var(--fs-11);
+  line-height: 1.45;
+  color: var(--text-3);
+}
+.eqw-notes li svg {
+  flex: none;
+  margin-top: 2px;
+  color: var(--neutral);
+}
+.eqw-notes b {
+  color: var(--text-2);
+  font-weight: var(--fw-medium);
+}
+
+/* Condition */
+.eqw-read {
+  margin-top: 8px;
+  grid-template-columns: minmax(0, 1fr) auto auto auto;
+}
+.eqw .insp-sec .tw-honest {
+  margin-top: 8px;
+  padding: 6px 0 0;
+}
+.eqw-eta {
+  margin-top: 6px;
+}
+.eqw-pm {
+  margin-top: 10px;
+}
+.eqw-warn {
+  color: var(--warning);
+}
+.eqw-cbm {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px 10px;
+  margin-top: 10px;
+}
+.eqw-cbm .tw-fine {
+  margin: 0;
+}
+.eqw-feedback {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px;
+  margin: 8px 0 0;
+  padding: 6px 8px;
+  border: 1px solid var(--accent-line);
+  border-radius: var(--r-2);
+  background: var(--accent-soft);
+  font-size: var(--fs-12);
+  color: var(--text-1);
+}
+
+/* Impact */
+.eqw-impact {
+  margin-top: 8px;
+}
+.eqw-role {
+  margin-top: 8px;
+}
+.eqw-role .status {
+  margin-right: 4px;
+}
+
+/* Next steps */
+.eqw-steps {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+.eqw-steps li {
+  padding: 8px 10px;
+  border: 1px solid var(--line-2);
+  border-radius: var(--r-2);
+  background: var(--bg-1);
+}
+.eqw-step-h {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 4px 8px;
+}
+.eqw-step-h b {
+  font-size: var(--fs-12);
+  font-weight: var(--fw-semibold);
+  color: var(--text-1);
+}
+.eqw-steps p {
+  margin: 5px 0 0;
+  font-size: var(--fs-12);
+  line-height: 1.5;
+  color: var(--text-2);
+}
+.eqw-step-f {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px;
+  margin-top: 7px;
+}
+.eqw-step-f small {
+  flex: 1 1 100%;
+  font-size: var(--fs-11);
+  color: var(--text-3);
+}
+
+.eqw-flow {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+
+/* Technical details */
+.eqw-tech .disc {
+  border-top: 0;
+}
+.eqw-tech .disc-h {
+  padding: 2px 0 4px;
+  color: var(--text-1);
+}
+.eqw-sub-h {
+  margin: 12px 0 6px;
+  font-size: 10.5px;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  color: var(--text-3);
+}
+.eqw-tech .disc-b > .eqw-sub-h:first-child {
+  margin-top: 4px;
+}
+.eqw-desc {
+  margin-top: 8px;
+}
+.eqw-conn {
+  justify-content: flex-end;
+}
+.eqw-conn button {
+  height: 20px;
+  font-family: var(--mono);
+}
+.eqw-src {
+  display: inline-flex;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+  align-items: center;
+  gap: 4px 8px;
+}
+
+.eqw-sigs {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+}
+.eqw-sigs li {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  gap: 1px 10px;
+  padding: 5px 0;
+  border-bottom: 1px solid var(--line);
+  font-size: var(--fs-12);
+}
+.eqw-sigs li:last-child {
+  border-bottom: 0;
+}
+.eqw-sig-id {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  color: var(--text-2);
+  font-size: var(--fs-11);
+}
+.eqw-sig-v {
+  text-align: right;
+  color: var(--text-1);
+}
+.eqw-sig-v small {
+  color: var(--text-3);
+}
+.eqw-sig-m {
+  grid-column: 1 / -1;
+  font-size: var(--fs-11);
+  color: var(--text-3);
+}
+
+.eqw-cams {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+.eqw-cam {
+  padding: 8px 10px;
+  border: 1px solid var(--line-2);
+  border-radius: var(--r-2);
+  background: var(--bg-1);
+}
+.eqw-cam-h {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-size: var(--fs-12);
+}
+.eqw-cam-h svg {
+  color: var(--text-3);
+  flex: none;
+}
+.eqw-cam-h b {
+  font-weight: var(--fw-medium);
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.eqw-cam-h .mono {
+  margin-left: auto;
+  font-size: var(--fs-11);
+}
+.eqw-cam-m {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: 4px 8px;
+  margin-top: 4px;
+  font-size: var(--fs-11);
+  color: var(--text-3);
+}
+.eqw-cam-a {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  margin-top: 7px;
+}
+.eqw-stream {
+  margin-top: 10px;
+  padding-top: 10px;
+  border-top: 1px solid var(--line);
+}
+.eqw-stream-form {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+.eqw-stream-form .input,
+.eqw-stream-form .select {
+  width: 100%;
+}
+.eqw-stream-plan {
+  margin: 0;
+  font-size: var(--fs-11);
+  line-height: 1.45;
+  color: var(--text-2);
+}
+.eqw-stream-plan b {
+  color: var(--text-1);
+  font-weight: var(--fw-medium);
+}
+.eqw-stream-plan.warn span {
+  color: var(--warning);
+}
+.eqw-stream-plan.bad b {
+  color: #f0b4b4;
+}
+.eqw-stream-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+.eqw-stream-preview {
+  margin-top: 10px;
+}
+.eqw-stream-preview .eqw-sub-h {
+  margin-top: 0;
+}
+.eqw-fine-list {
+  margin: 8px 0 0;
+  padding-left: 16px;
+  font-size: var(--fs-11);
+  line-height: 1.45;
+  color: var(--text-3);
+}
+
+.eqw-charts {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+.eqw-chart-h {
+  display: flex;
+  justify-content: space-between;
+  gap: 8px;
+  margin-bottom: 2px;
+  font-size: var(--fs-11);
+  color: var(--text-2);
+}
+.eqw-hist {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+}
+.eqw-hist li {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr) auto;
+  gap: 2px 8px;
+  align-items: center;
+  padding: 5px 0;
+  border-bottom: 1px solid var(--line);
+  font-size: var(--fs-11);
+}
+.eqw-hist li:last-child {
+  border-bottom: 0;
+}
+.eqw-hist li > .num {
+  grid-column: 1 / 3;
+}
+.eqw-hist li > .tag {
+  grid-row: 1;
+  grid-column: 3;
+}
+.eqw-hist li > .status,
+.eqw-hist .eqw-hist-k {
+  grid-column: 1;
+  font-size: var(--fs-11);
+}
+.eqw-hist-k {
+  color: var(--text-2);
+}
+.eqw-hist-d {
+  grid-column: 2 / -1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  color: var(--text-2);
+}
+
+/* An odd last tile spans the row, so the tile grid never ends with an empty cell. */
+.eqw-kpis > :last-child:nth-child(odd) {
+  grid-column: 1 / -1;
+}

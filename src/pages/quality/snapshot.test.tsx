@@ -1,6 +1,6 @@
 /**
- * Review2 finding #10 (Quality events part): a camera snapshot grabbed from a configured stream is a
- * camera frame and must be labelled so; a digital-twin render must never be presented as a camera image.
+ * Review2 finding #10 (Quality part): a camera snapshot grabbed from a configured stream is a camera
+ * frame and must be labelled so; a digital-twin render must never be presented as a camera image.
  */
 import { describe, expect, it, vi } from 'vitest';
 import { renderToStaticMarkup } from 'react-dom/server';
@@ -9,17 +9,15 @@ vi.hoisted(() => {
   const g = globalThis as unknown as { window?: unknown };
   g.window ??= { addEventListener() {}, removeEventListener() {}, innerWidth: 1920, innerHeight: 1080 };
 });
-vi.mock('../../ui/report/EventReportView', () => ({ EventReportView: ({ eventId }: { eventId: string }) => `report ${eventId}` }));
-vi.mock('../../ui/events/EventList', () => ({ EventList: ({ events }: { events: { id: string }[] }) => events.map((e) => e.id).join(' ') }));
 
-import { useApp } from '../../app/store';
 import type { Evidence } from '../../model/types';
 import { activateScenario, advance } from '../../sim/engine';
 import { attachEvidenceImage, evidenceOf } from '../../sim/events';
 import { useSim } from '../../sim/store';
-import { putImage } from '../../twin/bridge';
+import { getImage, putImage } from '../../twin/bridge';
 import { LIVE_PROVENANCE } from '../../ui/feeds/capture';
-import { QualityEvents, SnapshotEvidence } from './QualityEvents';
+import { resolveSelection } from './investigate';
+import { SnapshotEvidence } from './SnapshotEvidence';
 
 useSim.getState().pause();
 
@@ -61,25 +59,20 @@ describe('quality event camera snapshot', () => {
     );
   });
 
-  it('shows a live-camera snapshot of a detected quality event as a camera frame in the event focus', () => {
+  it('labels the live-camera snapshot of a detected quality event as a camera frame', () => {
     const s = useSim.getState().sim;
     activateScenario(s, { kind: 'quality-deterioration', stage: 'GLAZE', factor: 5, end: null, label: 'Glaze deterioration (snapshot test)' });
     advance(s, s.minute + 90);
     const ev = s.events.find((e) => e.category === 'quality' && evidenceOf(s, e).some((x) => x.kind === 'camera-snapshot' && x.cameraId));
     expect(ev).toBeTruthy();
+    expect(resolveSelection(s, ev!.id).kind).toBe('event');
     const x = evidenceOf(s, ev!).find((y) => y.kind === 'camera-snapshot' && y.cameraId)!;
     putImage(x.id, IMG);
     attachEvidenceImage(s, x.id, { key: x.id, width: IMG.width, height: IMG.height, frameTime: s.minute }, LIVE_PROVENANCE(x.cameraId!));
-    useSim.setState({ version: s.version });
-    useApp.setState({ workspace: 'quality', period: '24h' });
-    Object.assign(useApp.getInitialState(), useApp.getState());
-    Object.assign(useSim.getInitialState(), useSim.getState());
 
-    const html = renderToStaticMarkup(
-      <QualityEvents open={[ev!]} resolved={[]} impacts={new Map()} focusId={ev!.id} focusAuto={false} periodLabel="Last 24 hours" onFocus={() => {}} onPinRecord={() => {}} />,
-    );
+    const html = renderToStaticMarkup(<SnapshotEvidence x={evidenceOf(s, ev!).find((y) => y.id === x.id)!} img={getImage(x.id)} />);
     expect(html).toContain('Camera frame · Frame from the configured camera stream');
     expect(html).toContain('alt="Camera frame of');
-    expect(html).not.toContain('Rendered from the digital twin — not a camera image');
+    expect(html).not.toContain('rendered from the digital twin — not a camera image');
   });
 });

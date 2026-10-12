@@ -1,0 +1,117 @@
+/* Copilot workspace (#/copilot): the conversation as the one work area, questions and incidents beside it. Tokens from styles.css. */
+
+.cpg-work {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) 380px;
+  gap: var(--s-4);
+  align-items: start;
+  min-width: 0;
+}
+.cpg-main {
+  min-width: 0;
+  /* The conversation scrolls inside its own frame; the question box stays in view. */
+  height: max(520px, calc(100vh - var(--header-h) - 200px));
+  max-height: 1000px;
+  position: sticky;
+  top: var(--s-4);
+}
+.cpg-side {
+  display: flex;
+  flex-direction: column;
+  gap: var(--s-4);
+  min-width: 0;
+}
+.cpg-side .sec-b {
+  min-width: 0;
+}
+
+@media (max-width: 1180px) {
+  .cpg-work {
+    grid-template-columns: minmax(0, 1fr);
+  }
+  .cpg-main {
+    position: static;
+    height: max(480px, 70vh);
+  }
+}
+
+/* Incident in context */
+.cpg-ctx {
+  border-color: var(--accent-line);
+}
+.cpg-ctx-title {
+  font-size: var(--fs-13);
+  font-weight: var(--fw-medium);
+  line-height: 1.4;
+  margin-bottom: 6px;
+}
+.cpg-badges {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px 10px;
+  margin-bottom: 10px;
+}
+.cpg-ctx .facts dd {
+  text-align: right;
+  overflow-wrap: anywhere;
+}
+.cpg-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  margin-top: 12px;
+}
+
+/* Investigate an incident */
+.cpg-events {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+}
+.cpg-events li + li {
+  border-top: 1px solid var(--line);
+}
+.cpg-ev {
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+  width: 100%;
+  padding: 9px var(--s-4);
+  border: 0;
+  background: none;
+  text-align: left;
+  color: var(--text-1);
+  font-size: var(--fs-12);
+}
+.cpg-ev:hover {
+  background: var(--bg-2);
+}
+.cpg-ev:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: -2px;
+}
+.cpg-ev.sel {
+  background: var(--accent-soft);
+  box-shadow: inset 2px 0 0 var(--accent);
+}
+.cpg-ev-top {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  width: 100%;
+  min-width: 0;
+}
+.cpg-ev-title {
+  line-height: 1.4;
+}
+.cpg-ev-sub {
+  font-size: var(--fs-11);
+  line-height: 1.35;
+}
+.cpg-more {
+  display: flex;
+  justify-content: center;
+  padding: 6px;
+  border-top: 1px solid var(--line);
+}

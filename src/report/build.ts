@@ -4,6 +4,7 @@
  *
  *   EventReport (src/intel/report.ts)  →  eventPdfModel (model.ts)  →  renderPdf (render.ts)
  *   SimState + stage                   →  stageShiftModel (stageShift.ts) → renderPdf
+ *   OpsReport (ops/*.ts, = the preview) →  opsPdfModel (ops/pdf.ts)  →  renderPdf
  */
 import type { jsPDF as JsPDF, jsPDFOptions } from 'jspdf';
 import { buildEventReport, type EventReport } from '../intel/report';
@@ -15,6 +16,8 @@ import { inspectionRecords } from './images';
 import { eventPdfModel, imageFormat, type PdfDocModel, type PdfImage } from './model';
 import { renderPdf, type AutoTableFn } from './render';
 import { stageShiftModel } from './stageShift';
+import type { OpsReport } from './ops/types';
+import { opsPdfModel } from './ops/pdf';
 
 export type PdfLib = { jsPDF: new (options?: jsPDFOptions) => JsPDF; autoTable: AutoTableFn };
 
@@ -88,4 +91,17 @@ export function buildStageShiftPdf(
 ): BuiltPdf | null {
   const model = stageShiftModel(s, stageId, opts);
   return model ? renderModel(lib, model, opts.compress ?? true) : null;
+}
+
+/**
+ * PDF of an operational report model — the exact object the in-app preview shows. Evidence images
+ * are given by evidence id (data URLs); a missing one is printed as "Not available — reason".
+ */
+export function buildOpsPdf(lib: PdfLib, report: OpsReport, input: { imageUrls?: Record<string, string | null | undefined>; compress?: boolean } = {}): BuiltPdf {
+  const doc = newDoc(lib, input.compress ?? true);
+  const images: Record<string, PdfImage | null> = {};
+  for (const [id, url] of Object.entries(input.imageUrls ?? {})) images[id] = pdfImage(doc, url);
+  const model = opsPdfModel(report, { images });
+  renderPdf(doc, lib.autoTable, model);
+  return { doc, model };
 }

@@ -1,6 +1,6 @@
 /**
- * OEE & Loss Intelligence — pure derivations for the factory view: the capacity ledger at the
- * line constraint, where its losses come from, what they are worth (estimates) and what-if gains.
+ * Production losses — pure derivations: the capacity ledger at the line constraint, where its
+ * losses come from, what they are worth (estimates) and what-if gains.
  *
  * One rule runs through everything here: a lost unit of output is counted ONCE, at the line
  * constraint (the kiln, H-KILN). Time lost elsewhere costs line output only for the minutes it
@@ -14,23 +14,17 @@ import { BASE_REJECT_RATE, CONVEYOR_BY_ID, DEFECTS, DEFECT_ORDER, M2_PER_TILE, R
 import type { DefectCategory, OpEvent } from '../../model/types';
 import { findDowntime, type SimState } from '../../sim/engine';
 import { EVENT_TYPE_LABEL } from '../../sim/events';
-import type { Tariffs } from '../../sim/energy';
 import { contributionPerM2, lostOutputValue, rejectCost, waitingCost, type FinanceAssumptions, type MoneyLine } from '../../sim/finance';
 import {
-  HELD_UP_SHARE,
-  TARGET_STATUS_LABEL,
-  bottleneck,
   capacityBreakdown,
   clippedDuration,
   downtimeIn,
   downtimePareto,
-  energyIn,
   impactVsBaseline,
   lineMetrics,
   machineMetrics,
   qualityIn,
   sumBuckets,
-  targetStatus,
   type LineMetrics,
   type ParetoRow,
   type Period,
@@ -156,7 +150,7 @@ export function constraintAttribution(s: SimState, p: Period): ConstraintAttribu
 
 // ── Loss ledger (capacity at the constraint + cost categories) ────────────────
 
-export type LossKey = 'planned' | 'downtime' | 'constraint' | 'speed' | 'quality' | 'transit' | 'energy' | 'logistics';
+export type LossKey = 'planned' | 'downtime' | 'constraint' | 'speed' | 'quality' | 'transit' | 'logistics';
 
 export type LossRow = {
   key: LossKey;
@@ -213,12 +207,11 @@ export type LossLedger = {
   outputLossM2: number;
   outputMoney: number;
   totalMoney: number;
-  energyExcessKwh: number;
   truckWaitMin: number;
   attribution: ConstraintAttribution;
   /**
    * Estimated financial impact against the plan: the shortfall of good output valued at contribution,
-   * plus the direct costs of the period (reject scrap / rework, energy above the model, truck detention).
+   * plus the direct costs of the period (reject scrap / rework, truck detention).
    * Losses vs the design rate are deliberately not in it — theoretical capacity is not revenue.
    * shortfallM2 is the gap to plan (as attainment shows it); valuedShortfallM2 is the part valued at
    * contribution — reworked rejects are recovered output, charged at rework cost only (never twice).
@@ -243,7 +236,7 @@ const total = (lines: MoneyLine[]) => lines.reduce((a, l) => a + l.amount, 0);
  * fired → good); the availability loss is split into the kiln's own downtime and the minutes it was
  * held up by other stages, and the quality step into rejects and tiles still between kiln and sorting.
  */
-export function lossLedger(s: SimState, p: Period, f: FinanceAssumptions, tariffs: Tariffs): LossLedger {
+export function lossLedger(s: SimState, p: Period, f: FinanceAssumptions): LossLedger {
   const cap = capacityBreakdown(s, p);
   const lm = lineMetrics(s, p);
   const k = lm.constraint.totals;
@@ -274,17 +267,6 @@ export function lossLedger(s: SimState, p: Period, f: FinanceAssumptions, tariff
   const qualityLines = qualityLossValue(f, lm.rejected);
 
   const topCause = att.causes[0];
-  const e = energyIn(s, p, tariffs);
-  let energyExcessKwh = 0;
-  let energyExcessCost = 0;
-  let above = 0;
-  for (const r of e.rows) {
-    const c = r.cost - r.expectedCost;
-    if (c <= 0.005) continue;
-    above++;
-    energyExcessCost += c;
-    energyExcessKwh += Math.max(0, r.total - r.expected);
-  }
 
   let truckWaitMin = 0;
   let trucks = 0;
@@ -366,17 +348,6 @@ export function lossLedger(s: SimState, p: Period, f: FinanceAssumptions, tariff
       valuation: 'Not a loss — still in process',
     },
     {
-      key: 'energy',
-      label: 'Energy above the model',
-      kind: 'cost',
-      m2: null,
-      minutes: null,
-      money: energyExcessCost,
-      lines: [{ label: 'Energy above the model', amount: energyExcessCost, basis: `${n0.format(energyExcessKwh)} kWh at the configured tariffs` }],
-      basis: `${above} of ${e.rows.length} metered consumers above the illustrative energy model: ${n0.format(energyExcessKwh)} kWh`,
-      valuation: `At the configured tariffs (electricity ${tariffs.currency} ${tariffs.electricity}/kWh, gas ${tariffs.currency} ${tariffs.gas}/kWh) — a cost, not lost output`,
-    },
-    {
       key: 'logistics',
       label: 'Truck waiting (logistics delay)',
       kind: 'cost',
@@ -411,7 +382,6 @@ export function lossLedger(s: SimState, p: Period, f: FinanceAssumptions, tariff
   const impactLines: MoneyLine[] = [
     { label: 'Shortfall vs plan (lost contribution)', amount: shortLine.amount, basis: shortBasis },
     ...rejectCost(f, lm.rejected),
-    { label: 'Energy above the model', amount: energyExcessCost, basis: `${n0.format(energyExcessKwh)} kWh above the illustrative model at the configured tariffs` },
     waitLine,
   ];
 
@@ -442,7 +412,6 @@ export function lossLedger(s: SimState, p: Period, f: FinanceAssumptions, tariff
     outputLossM2,
     outputMoney,
     totalMoney,
-    energyExcessKwh,
     truckWaitMin,
     attribution: att,
     impact: { lines: impactLines, total: total(impactLines), shortfallM2, valuedShortfallM2 },
@@ -452,13 +421,12 @@ export function lossLedger(s: SimState, p: Period, f: FinanceAssumptions, tariff
       'Every loss is measured once, at the kiln: time lost elsewhere counts only for the minutes it held the kiln up (event records), so machine losses are never added to it.',
       `Lost kiln tiles are converted into lost good tiles with the period's first-pass yield (${pctS(fpyUsed, 1)}${fpy == null ? ', baseline value — nothing sorted yet' : ''}).`,
       'One tile format (60×60 cm, 0.36 m²) for all products.',
-      'Energy and truck detention are costs, not lost output — they are not in the m² total.',
+      'Truck detention is a cost, not lost output — it is not in the m² total.',
     ],
     missing: [
       'Production orders and demand (MES / ERP not connected): the plan is the configured target rate, and the sold-out share is an assumption.',
       'Actual prices and costs per product (ERP not connected): the financial values are illustrative.',
       'Regrade / rework outcome of rejects is not measured: the rework share is an assumption.',
-      'No real energy meters or tariffs: energy figures come from an illustrative model.',
       'Truck detention terms (free time, rate) are not connected: the waiting threshold and the hourly cost are assumptions.',
     ],
   };
@@ -579,176 +547,6 @@ export function contributionParts(c: Contribution): string {
   return parts.join(' · ') || 'below 1 m²';
 }
 
-// ── Loss investigation (answer-first) ─────────────────────────────────────────
-
-export type InvestigationLink =
-  | { kind: 'equipment'; id: string; label: string }
-  | { kind: 'level'; id: 'line' | 'equipment'; label: string }
-  | { kind: 'event'; id: string; label: string };
-
-export type Answer = {
-  key: 'target' | 'equipment' | 'category' | 'constraint';
-  question: string;
-  /** Question sent to the copilot (worded for its rule-based intents). */
-  copilot: string;
-  tone: 'good' | 'warning' | 'critical' | 'neutral';
-  headline: string;
-  detail: string[];
-  links: InvestigationLink[];
-};
-
-type Bottleneck = ReturnType<typeof bottleneck>;
-
-/** Answers the four standing loss questions from the ledger, the attribution and the traced bottleneck. */
-export function investigate(L: LossLedger, contributions: Contribution[], bn: Bottleneck, f: FinanceAssumptions): Answer[] {
-  const lm = L.lm;
-  const status = targetStatus(lm.attainment);
-  const lossShare = L.theoreticalM2 > 0 ? L.capacityGapM2 / L.theoreticalM2 : null;
-  const allowShare = L.theoreticalM2 > 0 ? L.allowanceM2 / L.theoreticalM2 : null;
-  const outputRows = L.rows.filter((r) => r.kind === 'output').sort((a, b) => (b.m2 ?? 0) - (a.m2 ?? 0));
-  const topRow = outputRows[0];
-  const eqContrib = contributions.filter((c) => c.equipmentId);
-  const top = contributions[0];
-  const cur = f.currency;
-  const share = (v: number) => (L.outputLossM2 > 0 ? v / L.outputLossM2 : null);
-  const eqLink = (id: string): InvestigationLink => ({ kind: 'equipment', id, label: `${id} drill-down` });
-  /** Report of the root event that held the kiln up longest for an asset (same record as Events & Reports). */
-  const topEventLink = (id: string | null | undefined): InvestigationLink[] => {
-    const ev = id ? L.attribution.causes.find((x) => x.equipmentId === id)?.eventIds[0] : undefined;
-    return ev ? [{ kind: 'event', id: ev, label: `${ev} report` }] : [];
-  };
-
-  // 1. Why are we below target?
-  let target: Answer;
-  const base = { key: 'target' as const, question: 'Why are we below target?', copilot: 'Why is production below target?' };
-  if (status === 'none') target = { ...base, tone: 'neutral', headline: 'No production time in this period yet', detail: [], links: [] };
-  else if (status === 'ahead' || status === 'on-track') {
-    target = {
-      ...base,
-      tone: 'good',
-      headline: `Not below target — ${TARGET_STATUS_LABEL[status].toLowerCase()} at ${pctS(lm.attainment)} of plan`,
-      detail: [
-        `Good output ${m2s(L.goodM2)} vs plan ${m2s(L.plannedM2)}${L.planGapM2 > 0.5 ? ` — ${m2s(L.planGapM2)} short, inside the 3 % band treated as on track` : ''}.`,
-        `Losses at the kiln were ${pctS(lossShare, 1)} of design capacity; the plan allows ${pctS(allowShare, 1)} for normal losses.`,
-      ],
-      links: [],
-    };
-  } else {
-    const detail = [
-      `The plan allows ${m2s(L.allowanceM2)} (${pctS(allowShare, 1)}) of design capacity for normal losses; losses at the kiln were ${m2s(L.capacityGapM2)} (${pctS(lossShare, 1)}). The excess is the shortfall.`,
-    ];
-    if (topRow && (topRow.m2 ?? 0) > 0.5) detail.push(`Largest loss: ${topRow.label.toLowerCase()} ${m2s(topRow.m2!)} (${pctS(share(topRow.m2!))} of unplanned losses).`);
-    if (top) detail.push(`Main contributor: ${top.equipmentId ? `${top.equipmentId} · ${top.label}` : top.label} — ${contributionParts(top)}.`);
-    target = {
-      ...base,
-      tone: status === 'behind' ? 'warning' : 'critical',
-      headline: `${TARGET_STATUS_LABEL[status]}: ${m2s(L.planGapM2)} short of plan (${pctS(lm.attainment)} attainment)`,
-      detail,
-      links: top?.equipmentId ? [eqLink(top.equipmentId)] : [{ kind: 'level', id: 'line', label: 'Line flow' }],
-    };
-  }
-
-  // 2. Which equipment contributes most to the capacity gap?
-  const equipment: Answer = {
-    key: 'equipment',
-    question: 'Which equipment contributes most to the capacity gap?',
-    copilot: 'Which equipment causes the largest capacity loss?',
-    tone: top ? 'warning' : 'good',
-    headline: top
-      ? `${top.equipmentId ? `${top.equipmentId} · ${top.label}` : top.label}: ${m2s(top.m2)} (${pctS(share(top.m2))} of unplanned losses)`
-      : 'No unplanned losses at the constraint in this period',
-    detail: top
-      ? [
-          `${top.equipmentId ? `${top.equipmentId}: ` : ''}${contributionParts(top)}.`,
-          ...(contributions.length > 1
-            ? [`Next: ${contributions.slice(1, 3).map((c) => `${c.equipmentId ?? c.label} ${m2s(c.m2)}`).join(', ')}.`]
-            : []),
-          'Valued once at the kiln: a stop elsewhere counts only for the minutes it held the kiln up (event records).',
-        ]
-      : [],
-    links: [...eqContrib.slice(0, 3).map((c) => eqLink(c.equipmentId!)), ...topEventLink(top?.equipmentId)],
-  };
-
-  // 3. Which loss category is largest?
-  const valued = [...L.rows].filter((r) => r.money != null && r.money > 0).sort((a, b) => b.money! - a.money!);
-  const catDetail: string[] = [];
-  if (topRow && (topRow.m2 ?? 0) > 0.5) {
-    const rest = outputRows.slice(1).filter((r) => (r.m2 ?? 0) > 0.5);
-    if (rest.length) catDetail.push(`Then: ${rest.map((r) => `${r.label.toLowerCase()} ${m2s(r.m2!)}`).join(', ')}.`);
-    if (valued[0] && valued[0].key !== topRow.key) catDetail.push(`By estimated value the largest is ${valued[0].label.toLowerCase()} (≈ ${fmtMoney(valued[0].money, cur)}, estimate).`);
-    if (L.plannedStopM2 > 0.5) catDetail.push(`Planned stops (${m2s(L.plannedStopM2)}) are part of the plan and not counted as a loss.`);
-  }
-  const category: Answer = {
-    key: 'category',
-    question: 'Which loss category is largest?',
-    copilot: 'What prevents us from reaching theoretical output?',
-    tone: topRow && (topRow.m2 ?? 0) > 0.5 ? 'warning' : 'good',
-    headline:
-      topRow && (topRow.m2 ?? 0) > 0.5
-        ? `${topRow.label}: ${m2s(topRow.m2!)} (${pctS(share(topRow.m2!))}) · ≈ ${fmtMoney(topRow.money, cur)} estimate`
-        : 'No unplanned output loss at the constraint in this period',
-    detail: catDetail,
-    links: topRow?.key === 'constraint' || topRow?.key === 'downtime' ? [{ kind: 'level', id: 'line', label: 'Line flow & bottleneck' }] : [],
-  };
-
-  // 4. What is constraining good output?
-  const c = bn.current;
-  const win = bn.period.label.toLowerCase();
-  const A = lm.oee.availability.status === 'ok' ? pctS(lm.oee.availability.value, 1) : '—';
-  const P = lm.oee.performance.status === 'ok' ? pctS(lm.oee.performance.value, 1) : '—';
-  const stageLinks = (c.machines.length ? c.machines.map((m) => m.id) : []).slice(0, 3).map(eqLink);
-  const constraint: Answer =
-    bn.cause === 'constraint'
-      ? {
-          key: 'constraint',
-          question: 'What is constraining good output?',
-          copilot: 'What constraint is limiting good output?',
-          tone: 'neutral',
-          headline: `The kiln (H-KILN) limits good output, as designed`,
-          detail: [
-            `${bn.period.label}: the kiln was starved ${pctS(bn.constraint.starvedShare)} and blocked ${pctS(bn.constraint.blockedShare)} — under the ${pctS(HELD_UP_SHARE)} threshold, so output is set by its own availability (${A}) and speed (${P}) this period.`,
-            `First-pass yield ${pctS(L.fpy, 1)}: ${m2s(L.qualityM2)} rejected after firing.`,
-          ],
-          links: [eqLink(KILN), { kind: 'level', id: 'line', label: 'Bottleneck trace' }],
-        }
-      : (() => {
-          const starving = bn.cause === 'starving';
-          // The traced stage was itself held on the kiln side: the restriction sits between it and the kiln.
-          const between = starving ? c.blockedShare > HELD_UP_SHARE : c.starvedShare > HELD_UP_SHARE;
-          const root = L.attribution.causes.find((x) => x.minutes >= 1);
-          // Only a root cause active inside the trace window can explain the current bottleneck.
-          const rootOutside = !!root && root.lastActive >= bn.period.from && !c.machines.some((m) => m.id === root.equipmentId);
-          const detail = [
-            starving
-              ? `The kiln waited for tiles ${pctS(bn.constraint.starvedShare)} of the ${win}; ${c.name.toLowerCase()} is the first stage upstream that was not itself waiting (working ${pctS(c.workingShare)}, down ${pctS(c.downShare)}).`
-              : `The kiln could not discharge ${pctS(bn.constraint.blockedShare)} of the ${win}; ${c.name.toLowerCase()} is the first stage downstream that was not itself blocked (working ${pctS(c.workingShare)}, down ${pctS(c.downShare)}).`,
-          ];
-          if (between)
-            detail.push(
-              `${c.name} was itself ${starving ? 'blocked' : 'starved'} ${pctS(starving ? c.blockedShare : c.starvedShare)} of the window — the restriction sits between it and the kiln (a transfer or conveyor).`,
-            );
-          if (root)
-            detail.push(`Event records (${L.period.label}): ${root.equipmentId} · ${root.name} held the kiln up ${minS(root.minutes)}${root.reasons[0] ? ` (${root.reasons[0].label.toLowerCase()})` : ''} — the largest recorded cause.`);
-          detail.push('Every minute the kiln waits is line output lost; it cannot be recovered later.');
-          return {
-            key: 'constraint' as const,
-            question: 'What is constraining good output?',
-            copilot: 'What constraint is limiting good output?',
-            tone: 'warning' as const,
-            headline:
-              between && rootOutside
-                ? root!.lastActive >= bn.period.to
-                  ? `${root!.equipmentId} · ${root!.name} is ${starving ? 'starving' : 'blocking'} the kiln (traced past ${c.name.toLowerCase()})`
-                  : `${root!.equipmentId} · ${root!.name} ${starving ? 'starved' : 'blocked'} the kiln in the ${win} (traced past ${c.name.toLowerCase()})`
-                : `${c.name} is ${starving ? 'starving' : 'blocking'} the kiln`,
-            detail,
-            links: [...(rootOutside ? [eqLink(root!.equipmentId), ...topEventLink(root!.equipmentId)] : []), ...stageLinks, { kind: 'level' as const, id: 'line' as const, label: 'Bottleneck trace' }].slice(0, 4),
-          };
-        })();
-
-  return [target, equipment, category, constraint];
-}
-
 // ── Improvement scenarios (what-if estimates) ─────────────────────────────────
 
 export type WhatIf = {
@@ -779,8 +577,13 @@ export function whatIfs(s: SimState, L: LossLedger, opts: WhatIfOptions, f: Fina
   const ideal = L.idealPerHour / 60;
   const k = L.lm.constraint.totals;
   const perShift = L.calendarMin > 0 ? SHIFT_MIN / L.calendarMin : 0;
-  /** Kiln tiles per operating minute in the period (its realistic running rate). */
-  const runRate = k.operating > 1 ? k.count / k.operating : ideal * 0.945;
+  /**
+   * Kiln tiles per operating minute in the period (its realistic running rate). When the kiln did not
+   * run, there is no measured rate: the design rate is used and the basis says so (no invented factor).
+   */
+  const measuredRate = k.operating > 1;
+  const runRate = measuredRate ? k.count / k.operating : ideal;
+  const rateBasis = measuredRate ? `its running rate ${n0.format(runRate * 60)} tiles/h` : `its design rate ${n0.format(runRate * 60)} tiles/h (the kiln did not run in the period, so no running rate was measured)`;
   const fpy = L.fpyUsed;
   const short = L.calendarMin < 120 ? [`Based on only ${minS(L.calendarMin)} of data — indicative.`] : [];
   const make = (w: Omit<WhatIf, 'gainM2PerShift' | 'moneyPerShift'>): WhatIf => ({
@@ -804,7 +607,7 @@ export function whatIfs(s: SimState, L: LossLedger, opts: WhatIfOptions, f: Fina
     note: topC && topC.minutes >= 0.5 ? undefined : 'No unplanned downtime at the kiln and nothing held it up in this period — nothing to eliminate.',
     gainTiles: topC && topC.minutes >= 0.5 ? topTiles : 0,
     lines: topC && topC.minutes >= 0.5 ? [lostOutputValue(f, topTiles)] : [],
-    basis: `Recovered kiln minutes × its running rate ${n0.format(runRate * 60)} tiles/h × FPY ${pctS(fpy, 1)}`,
+    basis: `Recovered kiln minutes × ${rateBasis} × FPY ${pctS(fpy, 1)}`,
     assumptions: ['The kiln has input and outlet space for the recovered minutes (it is the constraint).', 'The reason does not reappear as another stop.', ...short],
   });
 
@@ -869,7 +672,7 @@ export function whatIfs(s: SimState, L: LossLedger, opts: WhatIfOptions, f: Fina
         : undefined,
     gainTiles: chgKiln >= 0.5 ? chgTiles : 0,
     lines: chgKiln >= 0.5 ? [lostOutputValue(f, chgTiles)] : [],
-    basis: `${cutS} of the kiln minutes held up during changeovers × running rate ${n0.format(runRate * 60)} tiles/h × FPY ${pctS(fpy, 1)}`,
+    basis: `${cutS} of the kiln minutes held up during changeovers × ${rateBasis} × FPY ${pctS(fpy, 1)}`,
     assumptions: ['Upper bound: other causes coinciding with a changeover are not separated.', 'Shorter changeovers keep first-batch quality unchanged.', ...short],
   });
 
@@ -891,9 +694,9 @@ export type BaselineRow = {
   basis: string;
 };
 
-/** The live period vs the same seed simulated without scenarios, with estimated money effects. */
-export function baselineComparison(s: SimState, base: SimState, p: Period, tariffs: Tariffs, f: FinanceAssumptions) {
-  const im = impactVsBaseline(s, base, p, tariffs);
+/** The live period vs the same seed simulated without scenarios, with estimated money effects (good output only). */
+export function baselineComparison(s: SimState, base: SimState, p: Period, f: FinanceAssumptions) {
+  const im = impactVsBaseline(s, base, p);
   const dir = (d: number | null, higherBetter: boolean, eps: number): BaselineRow['direction'] =>
     d == null ? null : Math.abs(d) < eps ? 0 : (d > 0) === higherBetter ? 1 : -1;
   const sign = (v: number, txt: string) => `${v > 0 ? '+' : v < 0 ? '−' : '±'}${txt}`;
@@ -939,16 +742,6 @@ export function baselineComparison(s: SimState, base: SimState, p: Period, tarif
       direction: dir(im.deltaRejectRatePts, false, 0.005),
       value: null,
       basis: 'Valued through good output',
-    },
-    {
-      key: 'energy',
-      label: 'Energy cost',
-      now: fmtMoney(im.energyCost, f.currency),
-      base: fmtMoney(im.energyCost - im.deltaEnergyCost, f.currency),
-      delta: sign(im.deltaEnergyCost, fmtMoney(Math.abs(im.deltaEnergyCost), f.currency)),
-      direction: dir(im.deltaEnergyCost, false, 0.5),
-      value: -im.deltaEnergyCost,
-      basis: 'At the configured tariffs (illustrative model)',
     },
   ];
   const net = rows.reduce((a, r) => a + (r.value ?? 0), 0);

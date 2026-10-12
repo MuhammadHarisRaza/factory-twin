@@ -1,6 +1,6 @@
-import { FastForward, Pause, Play } from 'lucide-react';
+import { FastForward } from 'lucide-react';
 import { openEvent, useApp } from '../../app/store';
-import { SPEEDS, useSim, useSimValue } from '../../sim/store';
+import { useSim, useSimValue } from '../../sim/store';
 import { formatClock } from '../../sim/time';
 import { SourceTag } from '../kit/Status';
 import { TIMELINE_LANES, shiftTimeline, type TimelineLane, type TimelineMarker } from './derive';
@@ -20,12 +20,11 @@ function activate(m: TimelineMarker) {
 /**
  * Current-shift time strip: the operational events of the shift (one lane each for production
  * & equipment, quality, vehicles and data quality; colour = severity) and the scenario inputs,
- * on an 8-hour axis with a now marker, plus the demo clock controls (play / pause, speed,
- * skip ahead 15 min). A marker opens its event record in Events & Reports.
+ * on an 8-hour axis with a now marker, the simulated clock and "skip ahead 15 min" (play / pause
+ * and speed live in the header). A marker opens its event record in Events & Reports.
  */
 export function Timeline() {
   const running = useSim((s) => s.running);
-  const speed = useSim((s) => s.speed);
   const tl = useSimValue((s) => shiftTimeline(s));
   const tip = useTip<string>();
   const span = tl.to - tl.from;
@@ -53,23 +52,13 @@ export function Timeline() {
   return (
     <div className="tw-tl overlay-panel" role="group" aria-label={`Timeline of operational events · ${tl.shift.label} (simulated)`}>
       <div className="tw-tl-ctl">
-        <button className="btn ghost sm icon" onClick={() => (running ? useSim.getState().pause() : useSim.getState().play())} title={running ? 'Pause the simulation' : 'Run the simulation'} aria-label={running ? 'Pause' : 'Play'}>
-          {running ? <Pause size={14} /> : <Play size={14} />}
-        </button>
-        <select className="select tw-speed" value={speed} onChange={(e) => useSim.getState().setSpeed(Number(e.target.value))} aria-label="Simulation speed" title="Simulation speed">
-          {SPEEDS.map((s) => (
-            <option key={s.value} value={s.value}>
-              {s.label}
-            </option>
-          ))}
-        </select>
-        <button className="btn ghost sm" onClick={() => useSim.getState().skip(15)} title="Skip ahead 15 simulated minutes">
+        <button className="btn ghost sm" onClick={() => useSim.getState().skip(15)} title="Skip ahead 15 simulated minutes (play / pause and speed are in the header)">
           <FastForward size={13} />
           +15 min
         </button>
-        <span className="tw-tl-clock" title={tl.shift.label}>
+        <span className="tw-tl-clock" title={`${tl.shift.label} · simulated plant time${running ? '' : ' · paused'}`}>
           <b className="num">{formatClock(tl.now)}</b>
-          <small>Shift {tl.shift.id}</small>
+          <small>Shift {tl.shift.id}{running ? '' : ' · paused'}</small>
         </span>
       </div>
       <div className="tw-tl-main">

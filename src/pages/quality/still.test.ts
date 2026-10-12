@@ -2,7 +2,7 @@ import { describe, expect, it } from 'vitest';
 import { createSim } from '../../sim/engine';
 import { detectionLabel } from './FrameArt';
 import { frameForRecord } from './frames';
-import { STILL_CAPTION, frameStillMarkup } from './still';
+import { GAUGE_CAPTION, STILL_CAPTION, frameStillMarkup } from './still';
 
 describe('standalone frame stills (input of the inspection-image rasteriser)', () => {
   const s = createSim(5, 1440 + 400);
@@ -14,6 +14,9 @@ describe('standalone frame stills (input of the inspection-image rasteriser)', (
     expect(detectionLabel(gauge)).toMatch(/· gauge$/);
     expect(detectionLabel(gauge)).not.toMatch(/%/);
     expect(STILL_CAPTION).toBe('Illustrative frame · simulated classification — no vision model');
+    // A gauge result is a measurement against a tolerance, not a classification.
+    expect(GAUGE_CAPTION).toMatch(/simulated gauge measurement — no vision model$/);
+    expect(GAUGE_CAPTION).not.toMatch(/classification/);
   });
 
   it('renders a self-contained SVG (namespace, pixel size, embedded styles, no CSS variables)', async () => {

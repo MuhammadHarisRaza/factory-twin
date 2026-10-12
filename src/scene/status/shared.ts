@@ -5,6 +5,7 @@ import type { OrbitControls as OrbitControlsImpl } from 'three-stdlib';
 import { useSim } from '../../sim/store';
 import { equipmentBounds } from '../../store';
 import { machineFlow } from './model';
+import { setPinOpacity } from './pins';
 
 /**
  * Animation speed of a machine's moving parts from the shared simulation (finding #37), read in a
@@ -84,17 +85,4 @@ export function useRelevanceFade(
       setPinOpacity(it.el.current, base * (extra ? extra(i, camera.position) : 1));
     });
   });
-}
-
-const lastOpacity = new WeakMap<HTMLElement, number>();
-
-/** Shows/hides a pin element by opacity without React state; hidden pins don't catch clicks. */
-export function setPinOpacity(el: HTMLElement | null, o: number) {
-  if (!el) return;
-  const v = Math.round(o * 50) / 50;
-  if (lastOpacity.get(el) === v) return;
-  lastOpacity.set(el, v);
-  el.style.opacity = String(v);
-  el.style.pointerEvents = v < 0.3 ? 'none' : '';
-  el.style.visibility = v === 0 ? 'hidden' : '';
 }

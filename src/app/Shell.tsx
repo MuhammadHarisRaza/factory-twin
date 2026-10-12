@@ -1,16 +1,13 @@
 import { useEffect, type ReactNode } from 'react';
 import {
-  Activity,
   Bot,
   Box,
   Building2,
   ClipboardList,
   ChevronsLeft,
   ChevronsRight,
-  Database,
+  Factory,
   FlaskConical,
-  Gauge,
-  HeartPulse,
   LayoutDashboard,
   LoaderCircle,
   MessageSquareText,
@@ -19,56 +16,50 @@ import {
   ScanSearch,
   SlidersHorizontal,
   Truck,
-  Zap,
   type LucideIcon,
 } from 'lucide-react';
-import { FACTORY } from '../model/plant';
+import { FACTORY, LINE } from '../model/plant';
 import type { AlertSeverity } from '../model/types';
 import { PERIOD_LABELS, type PeriodKey } from '../sim/metrics';
-import { activeEvents } from '../sim/events';
+import { attentionEvents } from '../intel/kpis';
 import { SPEEDS, useSim, useSimValue } from '../sim/store';
 import { formatClock, formatDay, shiftAt } from '../sim/time';
 import { useTwin } from '../store';
 import { SEVERITY } from '../ui/kit/Status';
-import { WORKSPACES, WORKSPACE_GROUPS, useApp, type WorkspaceId } from './store';
+import { WORKSPACES, useApp, type WorkspaceId } from './store';
 import { scenariosActive } from '../sim/engine';
 import '../ui/shell.css';
 
 const ICONS: Record<WorkspaceId, LucideIcon> = {
+  overview: LayoutDashboard,
   twin: Box,
-  monitoring: Activity,
+  production: Factory,
+  quality: ScanSearch,
+  fleet: Truck,
   events: ClipboardList,
   copilot: Bot,
-  production: Gauge,
-  quality: ScanSearch,
-  health: HeartPulse,
-  energy: Zap,
-  command: LayoutDashboard,
-  scenarios: FlaskConical,
-  fleet: Truck,
-  assets: Database,
 };
 
 const SEV_RANK: Record<AlertSeverity, number> = { info: 0, warning: 1, serious: 2, critical: 3 };
 
-/** Active conditions (events whose condition still persists) and the highest severity among them. */
+/** Issues requiring attention (the Overview's definition): unresolved root events of warning severity or above. */
 function useActiveEvents() {
   return useSimValue((s) => {
-    const list = activeEvents(s);
+    const list = attentionEvents(s);
     let worst: AlertSeverity | null = null;
     for (const e of list) if (worst == null || SEV_RANK[e.severity] > SEV_RANK[worst]) worst = e.severity;
     return { count: list.length, worst };
   });
 }
 
-/** Count of active events on the Events & Reports entry: severity icon + number, coloured by the worst severity. */
+/** Issues requiring attention on the Events & Reports entry: severity icon + number, coloured by the worst severity. */
 function EventsBadge() {
   const { count, worst } = useActiveEvents();
   if (!count || !worst) return null;
   const sev = SEVERITY[worst];
   const Icon = sev.icon;
   return (
-    <span className={`nav-badge ${sev.tone}`} title={`${count} active event${count > 1 ? 's' : ''} · highest severity ${sev.label.toLowerCase()}`} aria-label={`${count} active, highest ${sev.label}`}>
+    <span className={`nav-badge ${sev.tone}`} title={`${count} issue${count > 1 ? 's' : ''} requiring attention · highest severity ${sev.label.toLowerCase()}`} aria-label={`${count} issues requiring attention, highest ${sev.label}`}>
       <Icon size={11} strokeWidth={2.4} aria-hidden />
       <b className="num">{count}</b>
     </span>
@@ -95,30 +86,27 @@ export function Sidebar() {
           <small>AI-Powered Operational Intelligence</small>
         </div>
       </div>
-      {WORKSPACE_GROUPS.map(({ id: group, label }) => (
-        <div className="nav-items" key={group}>
-          <div className="nav-section">{label}</div>
-          {WORKSPACES.filter((w) => w.group === group).map((w) => {
-            const Icon = ICONS[w.id];
-            return (
-              <button
-                key={w.id}
-                className={`nav-item ${workspace === w.id ? 'on' : ''}`}
-                onClick={() => go(w.id)}
-                aria-current={workspace === w.id ? 'page' : undefined}
-                title={collapsed ? w.title : undefined}
-              >
-                <Icon size={17} strokeWidth={1.9} />
-                <span>{w.title}</span>
-                {w.id === 'events' && <EventsBadge />}
-              </button>
-            );
-          })}
-        </div>
-      ))}
+      <div className="nav-items">
+        {WORKSPACES.map((w) => {
+          const Icon = ICONS[w.id];
+          return (
+            <button
+              key={w.id}
+              className={`nav-item ${workspace === w.id ? 'on' : ''}`}
+              onClick={() => go(w.id)}
+              aria-current={workspace === w.id ? 'page' : undefined}
+              title={collapsed ? `${w.title} — ${w.question}` : w.question}
+            >
+              <Icon size={17} strokeWidth={1.9} />
+              <span>{w.title}</span>
+              {w.id === 'events' && <EventsBadge />}
+            </button>
+          );
+        })}
+      </div>
       <div className="nav-foot">
         <div className="nav-note">
-          Demonstration release. All operational data is simulated; no equipment, cameras or vehicles are connected.
+          Demonstration release. All operational data is simulated; no PLC, camera, vision system or vehicle tracking is connected.
         </div>
         <button className="nav-item" onClick={() => setCollapsed(!collapsed)} title={collapsed ? 'Expand navigation' : 'Collapse navigation'}>
           {collapsed ? <ChevronsRight size={17} /> : <ChevronsLeft size={17} />}
@@ -141,9 +129,9 @@ function DemoControls() {
   const shift = shiftAt(minute);
   return (
     <div className="demo" role="group" aria-label="Simulation clock">
-      <span className="demo-flag" title="Demo mode: every value in this product is generated by the simulation engine">
+      <span className="demo-flag" title="Simulated: every value in this product is generated by the demo simulation engine — nothing is connected to the plant">
         <FlaskConical size={14} />
-        Demo<span className="demo-long"> · simulated data</span>
+        Simulated<span className="demo-long"> · demo</span>
       </span>
       {resetting ? (
         <span className="demo-resetting" role="status" title="Rebuilding the seeded demo state in the background; the clock resumes when it is ready">
@@ -151,7 +139,7 @@ function DemoControls() {
           Resetting demo…
         </span>
       ) : (
-        <span className="demo-clock" title="Simulated plant time">
+        <span className="demo-clock" title={`Simulated plant time${running ? ` · running at ${SPEEDS.find((x) => x.value === speed)?.label ?? `${speed}×`}` : ' · paused'}`}>
           <small>
             {formatDay(minute)} · Shift {shift.id}
           </small>
@@ -186,16 +174,22 @@ export function PeriodSelect() {
   );
 }
 
-export function Header({ title, period = false, actions }: { title: string; period?: boolean; actions?: ReactNode }) {
+/**
+ * Global header: workspace title (shown for the immersive Factory Twin; other workspaces show their
+ * own page header, so the title here is kept for assistive technology only), facility and line,
+ * the reporting period where it applies, Ask, Scenarios and the simulation clock.
+ */
+export function Header({ title, period = false, actions, showTitle = true }: { title: string; period?: boolean; actions?: ReactNode; showTitle?: boolean }) {
   const setScenariosOpen = useApp((s) => s.setScenariosOpen);
   const active = useSimValue((s) => scenariosActive(s).length);
   return (
     <header className="header">
-      <h1>{title}</h1>
-      <span className="sep" />
+      <h1 className={showTitle ? undefined : 'sr-only'}>{title}</h1>
+      {showTitle && <span className="sep" />}
       <span className="facility" title={FACTORY.reference}>
         <Building2 size={14} />
         {FACTORY.name}
+        <span className="facility-scope"> · {LINE.name}</span>
       </span>
       {period && (
         <>
@@ -205,11 +199,11 @@ export function Header({ title, period = false, actions }: { title: string; peri
       )}
       <div className="spacer" />
       {actions}
-      <button className="btn" onClick={() => useApp.getState().openCopilot()} title="Open the Factory Copilot (rule-based on the current demo state — no language model)">
+      <button className="btn" onClick={() => useApp.getState().openCopilot()} title="Ask the Copilot about what is on screen (rule-based on the current demo state — no language model)">
         <MessageSquareText size={14} />
-        <span className="btn-label">Copilot</span>
+        <span className="btn-label">Ask</span>
       </button>
-      <button className={`btn ${active ? 'on' : ''}`} onClick={() => setScenariosOpen(true)} title="Simulated scenarios">
+      <button className={`btn ${active ? 'on' : ''}`} onClick={() => setScenariosOpen(true)} title="Simulate a scenario (breakdown, slowdown, defects, delays…) or reset the demo">
         <SlidersHorizontal size={14} />
         <span className="btn-label">Scenarios</span>
         {active ? <span className="num">{active}</span> : null}

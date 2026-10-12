@@ -9,7 +9,7 @@ import { resetDemo, useResetCheck } from './actions';
 const START = formatDateTime(DEFAULT_START);
 /** Element id of the reset card (the presenter guide scrolls to it). */
 export const RESET_CARD_ID = 'scnp-reset-card';
-const EXPLAIN = `Restores the seeded starting point — ${START} with 7 days of simulated history — and removes every scenario with the events, evidence, alerts and vehicles it created. Twin selections and demonstration set-ups are cleared; clock speed, energy tariffs and financial assumptions are kept.`;
+const EXPLAIN = `Restores the seeded starting point — ${START} with 7 days of simulated history — and removes every scenario with the events, evidence, alerts and vehicles it created. Twin selections, guided-demo set-ups and the copilot conversation are cleared; clock speed and financial assumptions are kept.`;
 
 function Check({ c }: { c: CheckResult }) {
   return (
@@ -41,7 +41,7 @@ function ResetChecks() {
           {ok ? <CircleCheck size={14} aria-hidden className="scnp-ok" /> : <TriangleAlert size={14} aria-hidden className="scnp-warn" />}
           Reset to {formatDateTime(snapshot.at)}
         </b>
-        <button className="btn ghost sm icon" onClick={dismiss} title="Dismiss the checks" aria-label="Dismiss the checks">
+        <button type="button" className="btn ghost sm icon" onClick={dismiss} title="Dismiss the checks" aria-label="Dismiss the checks">
           <X size={12} />
         </button>
       </div>
@@ -60,7 +60,7 @@ function ResetChecks() {
  * and the after-reset checks follow: no active scenario, no events after the session start,
  * counters at baseline.
  */
-export function ResetDemo({ variant = 'card' }: { variant?: 'card' | 'compact' }) {
+export function ResetDemo() {
   const [confirm, setConfirm] = useState(false);
   const cancelRef = useRef<HTMLButtonElement>(null);
   const resetting = useSim((s) => s.resetting);
@@ -82,19 +82,20 @@ export function ResetDemo({ variant = 'card' }: { variant?: 'card' | 'compact' }
       </span>
     </div>
   ) : confirm ? (
-    <div className="scnp-confirm" role="alertdialog" aria-labelledby={`scnp-confirm-t-${variant}`} aria-describedby={`scnp-confirm-d-${variant}`}>
-      <b id={`scnp-confirm-t-${variant}`}>
+    <div className="scnp-confirm" role="alertdialog" aria-labelledby="scnp-confirm-t" aria-describedby="scnp-confirm-d">
+      <b id="scnp-confirm-t">
         <TriangleAlert size={14} aria-hidden />
         Reset the demo?
       </b>
-      <span id={`scnp-confirm-d-${variant}`}>
+      <span id="scnp-confirm-d">
         Discards {d.scenarios} scenario{d.scenarios === 1 ? '' : 's'}, every event and acknowledgement of this session and {formatDuration(d.elapsed)} of simulated time, and returns to {START}.
       </span>
       <div className="scnp-confirm-a">
-        <button ref={cancelRef} className="btn" onClick={() => setConfirm(false)}>
+        <button type="button" ref={cancelRef} className="btn" onClick={() => setConfirm(false)}>
           Cancel
         </button>
         <button
+          type="button"
           className="btn danger"
           onClick={() => {
             setConfirm(false);
@@ -110,7 +111,7 @@ export function ResetDemo({ variant = 'card' }: { variant?: 'card' | 'compact' }
     <>
       <p className="scnp-reset-p">{EXPLAIN}</p>
       <div className="scnp-reset-a">
-        <button className="btn" onClick={() => setConfirm(true)}>
+        <button type="button" className="btn" onClick={() => setConfirm(true)}>
           <RotateCcw size={14} aria-hidden />
           Reset demo…
         </button>
@@ -119,13 +120,6 @@ export function ResetDemo({ variant = 'card' }: { variant?: 'card' | 'compact' }
     </>
   );
 
-  if (variant === 'compact')
-    return (
-      <section className="scnp-reset compact" aria-label="Reset demo">
-        <h3>Reset demo</h3>
-        {body}
-      </section>
-    );
   return (
     <article className="scnp-card scnp-demo scnp-reset" id={RESET_CARD_ID} aria-label="Demonstration E: reset">
       <header className="scnp-card-h">

@@ -518,7 +518,6 @@ export const DEFAULT_EVENT_RULES: EventRules = {
   dockStayMax: 75,
   yardQueueMax: 4,
   turnaroundMax: 150,
-  energyDeviationMax: 0.1,
   ioImbalanceMax: 0.015,
 };
 

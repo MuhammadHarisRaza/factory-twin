@@ -77,7 +77,7 @@ describe('end-to-end demonstrations', () => {
     advance(s, s.minute + 14);
     const view = demoView(s, DEMO_BY_ID.B, { mode: 'rate', machine: 'H-KILN', factor: 0.6, duration: 30 }, run);
     expect(view.primary?.type).toBe('below-rate');
-    expect(view.steps[0].target).toEqual({ type: 'workspace', id: 'production' });
+    expect(view.steps[0].target).toEqual({ type: 'workspace', id: 'production', tab: 'oee' });
 
     const t = createSim(7, START);
     const stop = setUp(t, 'B', { mode: 'stop', machine: 'E-PRS2', factor: 0.6, duration: 15 });

@@ -1,5 +1,5 @@
 /**
- * "Events of this asset / stage / vehicle" links (finding: the equipment workspace's "All N events of
+ * "Events of this asset / stage / vehicle" links (finding: the equipment panel's "All N events of
  * this asset" opened the unfiltered list). openEventsFor lands on the Events tab with the subject's
  * filters for all recorded time, and the count a link shows is the count of the list it opens.
  */
@@ -20,7 +20,7 @@ import { useTwin } from '../../store';
 import { EventsPage } from '../../pages/EventsPage';
 import { DEFAULT_FILTERS, filterEvents } from '../../pages/events/filters';
 import { useEventsView, useReportBuilder } from '../../pages/events/state';
-import { EquipmentWorkspace } from '../equipment/EquipmentWorkspace';
+import { SelectedEquipmentPanel } from '../equipment/panel/EquipmentPanel';
 import { useTwinUi } from '../twin/uiStore';
 import { StagePanel } from '../twin/StagePanel';
 import { eventFiltersFor, eventsForSubject, openEventsFor } from './open';
@@ -66,9 +66,9 @@ describe('openEventsFor', () => {
     expect(filterEvents(sim().events, useEventsView.getState().filters, ctx()).map((e) => e.id)).toEqual(rows.map((e) => e.id));
     expect(text(html(<EventsPage />))).toContain(`${rows.length.toLocaleString('en-GB')} events · newest first`);
 
-    // The equipment workspace link promises the same count.
+    // The equipment panel's View all promises the same count.
     useApp.setState({ workspace: 'twin' });
-    expect(text(html(<EquipmentWorkspace id={id} />))).toContain(`All ${rows.length} events of this asset in Events & Reports`);
+    expect(text(html(<SelectedEquipmentPanel id={id} />))).toContain(`View all ${rows.length} events`);
   });
 
   it('keeps the selected event when the list holds it', () => {
@@ -87,9 +87,9 @@ describe('openEventsFor', () => {
     expect(useApp.getState().tabs.events).toBeUndefined();
     const stageRows = eventsForSubject(sim(), { stage: 'KILN' });
     expect(text(html(<EventsPage />))).toContain(`${stageRows.length.toLocaleString('en-GB')} event${stageRows.length === 1 ? '' : 's'} · newest first`);
-    // The stage panel's link shows that count.
+    // The stage panel's View all shows that count.
     useApp.setState({ workspace: 'twin' });
-    if (stageRows.length) expect(text(html(<StagePanel id="KILN" />))).toContain(`All ${stageRows.length} event${stageRows.length === 1 ? '' : 's'} of this stage in Events & Reports`);
+    if (stageRows.length) expect(text(html(<StagePanel id="KILN" />))).toContain(`View all ${stageRows.length} event${stageRows.length === 1 ? '' : 's'}`);
 
     const v = sim().events.find((e) => e.asset.vehicleId)?.asset.vehicleId;
     if (v) {

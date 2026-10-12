@@ -1,6 +1,6 @@
 /**
  * Right-hand contextual panel of the Factory Twin. The most specific context wins: a selected
- * vehicle, then a selected equipment item (the equipment workspace), then a highlighted production
+ * vehicle or a selected equipment item (both the one equipment intelligence panel), then a highlighted production
  * stage, then the active zone. Each closes with its button or Esc (src/useKeyboardShortcuts.ts).
  */
 import { X } from 'lucide-react';
@@ -11,8 +11,7 @@ import { MONITORED_STAGE_BY_ID } from '../model/plant';
 import { useSimValue } from '../sim/store';
 import { OperationalStatus } from './kit/Status';
 import { ProvenanceBadge } from './kit/Page';
-import { EquipmentWorkspace } from './equipment/EquipmentWorkspace';
-import { VehicleWorkspace } from './equipment/VehicleWorkspace';
+import { SelectedEquipmentPanel, SelectedVehiclePanel } from './equipment/panel/EquipmentPanel';
 import { StagePanel } from './twin/StagePanel';
 import { assetStatus } from './twin/derive';
 
@@ -68,8 +67,8 @@ export function Inspector() {
   const vehicle = useTwin((s) => s.vehicle);
   const stage = useTwin((s) => s.stage);
   const zoneId = useTwin((s) => s.zone);
-  if (vehicle) return <VehicleWorkspace id={vehicle} />;
-  if (selected && EQUIPMENT_BY_ID[selected]) return <EquipmentWorkspace id={selected} />;
+  if (vehicle) return <SelectedVehiclePanel id={vehicle} />;
+  if (selected && EQUIPMENT_BY_ID[selected]) return <SelectedEquipmentPanel id={selected} />;
   if (stage && MONITORED_STAGE_BY_ID[stage]) return <StagePanel id={stage} />;
   if (zoneId && ZONE_BY_ID[zoneId]) return <ZoneInspector id={zoneId} />;
   return null;

@@ -51,6 +51,12 @@ const SLOW_MS = 15000;
 const isYouTube = (v: VideoRef) => v.provider === 'youtube' && !!v.embedUrl;
 const isFile = (v: VideoRef) => !!v.embedUrl && /\.(mp4|webm)(\?|$)/i.test(v.embedUrl);
 
+/**
+ * True when the clip plays in a <video> element (its controls sit at the bottom only); false for
+ * provider embeds (YouTube and others draw their own title and buttons over the top of the frame).
+ */
+export const playsInVideoElement = isFile;
+
 function youTubeSrc(v: VideoRef) {
   const u = new URL(v.embedUrl!);
   u.searchParams.set('autoplay', '1');
@@ -68,8 +74,21 @@ type State = { kind: 'idle' } | { kind: 'loading'; slow: boolean } | { kind: 're
 /**
  * One player for one clip (ContextVideo mounts a fresh player per clip, keyed by the clip id).
  * `onActiveChange` reports when the embed is loaded (playing or loading) and when it is back on its poster.
+ * `bare`: the frame only — no title, provenance line or note under it (the host shows the source in
+ * its own badge and source-details control); poster first, lazy load, no autoplay and the error
+ * fallback are unchanged.
  */
-export function VideoPlayer({ video, compact = false, onActiveChange }: { video: VideoRef; compact?: boolean; onActiveChange?: (active: boolean) => void }) {
+export function VideoPlayer({
+  video,
+  compact = false,
+  bare = false,
+  onActiveChange,
+}: {
+  video: VideoRef;
+  compact?: boolean;
+  bare?: boolean;
+  onActiveChange?: (active: boolean) => void;
+}) {
   const me = useId();
   const playingId = usePlaying((s) => s.id);
   const setPlaying = usePlaying((s) => s.set);
@@ -183,7 +202,7 @@ export function VideoPlayer({ video, compact = false, onActiveChange }: { video:
   );
 
   return (
-    <figure className={`vp ${compact ? 'compact' : ''}`}>
+    <figure className={`vp ${compact || bare ? 'compact' : ''} ${bare ? 'bare' : ''}`}>
       <div className="vp-frame">
         {state.kind === 'loading' || state.kind === 'ready' ? (
           isYouTube(video) ? (
@@ -283,7 +302,7 @@ export function VideoPlayer({ video, compact = false, onActiveChange }: { video:
           </div>
         )}
       </div>
-      <figcaption>{meta}</figcaption>
+      {!bare && <figcaption>{meta}</figcaption>}
     </figure>
   );
 }

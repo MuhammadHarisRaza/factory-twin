@@ -162,23 +162,34 @@ function metricKpi(key: string, label: string, m: Metric, hint: string, sub?: st
   return { key, label, value: pct1(m.value), unit: '%', sub, hint };
 }
 
-/** Own unplanned stops of an asset in the period (starved / blocked spells and planned stops excluded). */
+/** A product changeover stop record (not a planned stop in the calendar, not a breakdown either). */
+export const isChangeover = (d: { reasonCode: string }) => REASON_BY_CODE[d.reasonCode]?.category === 'Changeover';
+
+/**
+ * Own stops of an asset in the period that count against its plan: breakdowns, process stops and
+ * changeovers (starved / blocked spells and planned stops excluded). `changeovers` says how many of
+ * `count` are product changeovers, so they are never called "unplanned stops".
+ */
 export function ownStops(s: SimState, id: string, p: Period) {
   const list = s.downtime.filter(
     (d) => d.equipmentId === id && d.category !== 'Starved' && d.category !== 'Blocked' && !REASON_BY_CODE[d.reasonCode]?.planned && d.start < p.to && (d.end ?? s.minute) > p.from,
   );
-  return { count: list.length, minutes: list.reduce((a, d) => a + clippedDuration(d, p, s.minute), 0) };
+  return { count: list.length, changeovers: list.filter(isChangeover).length, minutes: list.reduce((a, d) => a + clippedDuration(d, p, s.minute), 0) };
 }
+
+const countWords = (n: number, one: string, many = `${one}s`) => `${n} ${n === 1 ? one : many}`;
 
 function stopsKpi(s: SimState, id: string, p: Period, label = 'Stoppages'): EqKpi {
   const st = ownStops(s, id, p);
+  const unplanned = st.count - st.changeovers;
+  const sub = [unplanned ? countWords(unplanned, 'unplanned stop') : null, st.changeovers ? countWords(st.changeovers, 'changeover') : null].filter(Boolean).join(' · ');
   return {
     key: 'stops',
     label,
     value: formatDuration(st.minutes),
-    sub: st.count ? `${st.count} unplanned stop${st.count === 1 ? '' : 's'}` : undefined,
-    status: st.count ? null : { tone: 'good', label: 'No unplanned stop' },
-    hint: `Time this asset was stopped by its own unplanned stops (breakdowns, process stops, changeovers) in the period, from its ${id}.state signal. Planned stops and time starved or blocked by neighbouring stages are not counted.`,
+    sub: sub || undefined,
+    status: unplanned ? null : { tone: 'good', label: 'No unplanned stop' },
+    hint: `Time this asset was stopped by its own stops in the period — unplanned stops (breakdowns, process stops) and product changeovers, counted separately — from its ${id}.state signal. Planned stops and time starved or blocked by neighbouring stages are not counted.`,
   };
 }
 
@@ -200,7 +211,10 @@ function rateKpi(s: SimState, prof: AssetProfile, claim: ConstraintClaim, label 
   const op = operationalState(s, id);
   const ratio = ideal > 0 ? rate / ideal : null;
   const share = ratio != null ? `${pct0(ratio)} % of ideal` : null;
-  const constraining = claim.constraining && prof.monitored != null && claim.stage === prof.monitored;
+  // The process stage the trace ended at — the rule of the constraint marker, the 3D outline and the
+  // panel's facets — never the monitored stage (GLAZE covers glazing and decoration, PACK packing and
+  // palletising): one constraint statement per machine.
+  const constraining = claim.constraining && prof.stage != null && claim.processStage === prof.stage;
   const withShare = (words: string) => (share ? `${words} · ${share}` : words);
   let status: EqKpi['status'] = null;
   if (stale) status = { tone: 'neutral', label: `Last value · ${clockOf(f.since, s.minute)}` };
@@ -366,6 +380,24 @@ function bufferNeighbours(bufferId: string) {
   return { up: i > 0 ? STAGES[i - 1] : undefined, down: i >= 0 ? STAGES[i] : undefined };
 }
 
+/** Buffer level band (the share of capacity below / above which a buffer is "low" / "high"). */
+export const BUFFER_LEVEL_BAND = { low: 0.1, high: 0.9 } as const;
+
+/**
+ * What a buffer level means on its side of the kiln (the line constraint). Ahead of the kiln (the
+ * buffer feeds a stage at or before it) an empty buffer starves the next stage — a concern — while a
+ * full one is normal balancing; behind the kiln a full buffer moves the blockage towards the kiln — a
+ * concern — while a low one is normal (the stages after the kiln are faster).
+ */
+export function bufferLevelBand(bufferId: string, fill: number): { ahead: boolean; side: 'low' | 'high' | 'normal'; concern: boolean; label: string } {
+  const { down } = bufferNeighbours(bufferId);
+  const kiln = STAGES.findIndex((st) => st.id === LINE.designConstraint);
+  const ahead = down != null && STAGES.indexOf(down) <= kiln;
+  if (fill <= BUFFER_LEVEL_BAND.low) return ahead ? { ahead, side: 'low', concern: true, label: 'Nearly empty' } : { ahead, side: 'low', concern: false, label: 'Low · normal after the kiln' };
+  if (fill >= BUFFER_LEVEL_BAND.high) return ahead ? { ahead, side: 'high', concern: false, label: 'Full · normal ahead of the kiln' } : { ahead, side: 'high', concern: true, label: 'Nearly full' };
+  return { ahead, side: 'normal', concern: false, label: 'Normal band' };
+}
+
 function bufferKpis(s: SimState, prof: AssetProfile): EqKpi[] {
   const buf = BUFFERS.find((b) => b.id === prof.bufferId)!;
   const level = s.buffers[buf.id];
@@ -383,6 +415,7 @@ function bufferKpis(s: SimState, prof: AssetProfile): EqKpi[] {
   const net = inflow - outflow;
   const cover = outflow > 0 ? (level / outflow) * 60 : null;
   const coverStale = lastValue(up) ?? lastValue(down);
+  const band = bufferLevelBand(buf.id, level / buf.capacity);
   return [
     {
       key: 'level',
@@ -390,8 +423,9 @@ function bufferKpis(s: SimState, prof: AssetProfile): EqKpi[] {
       value: pct0(level / buf.capacity),
       unit: '%',
       sub: `${int(level)} of ${int(buf.capacity)} tiles`,
-      status: level / buf.capacity >= 0.9 ? { tone: 'warning', label: 'Nearly full' } : level / buf.capacity <= 0.1 ? { tone: 'warning', label: 'Nearly empty' } : null,
-      hint: `Simulated level signal of ${buf.name} (${buf.id}), in tile-equivalents.`,
+      // Read on its side of the kiln (the panel's facet, insight and signal row use the same band).
+      status: band.concern ? { tone: 'warning', label: band.label } : null,
+      hint: `Simulated level signal of ${buf.name} (${buf.id}), in tile-equivalents. ${band.ahead ? 'Ahead of the kiln a nearly empty buffer starves the next stage; a full one is normal (the stage filling it has spare capacity).' : 'Behind the kiln a nearly full buffer moves a blockage towards the kiln; a low one is normal (the stages after the kiln are faster).'}`,
     },
     {
       key: 'inflow',

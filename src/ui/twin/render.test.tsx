@@ -49,7 +49,7 @@ describe('twin overlays render', () => {
     expect(renderToStaticMarkup(<TwinSearch />)).toContain('Search the factory twin');
   });
 
-  it('renders the equipment workspace of a condition-monitored machine', () => {
+  it('renders the equipment panel of a condition-monitored machine', () => {
     const sim = useSim.getState().sim;
     activateScenario(sim, { kind: 'degradation', equipmentId: 'E-PRS2', end: null, label: 'fault' });
     advance(sim, sim.minute + 30);
@@ -63,28 +63,33 @@ describe('twin overlays render', () => {
       'Press cycle rate',
       'Good tiles pressed',
       'Press-origin rejects',
-      'Current condition',
-      'no trained model or physical sensors',
-      'Recent events',
-      'Recommended next steps · rule-based',
+      'What matters',
+      'Signals',
+      'Events',
       'Open in Production',
       'Technical details',
       'Whole factory',
+      'Focus',
+      'Ask Copilot',
     ])
       expect(html, text).toContain(text);
-    // Condition detail: score meaning and simulated sensors.
+    // Condition: a facet and the component's signals — no 0–100 score on the main view.
     expect(html).toContain('not a probability of failure');
-    expect(html).toContain('Vibration · mm/s');
+    expect(html).toContain('Vibration · hydraulic power unit');
+    expect(html).toContain('mm/s RMS');
+    expect(html).not.toMatch(/\/100|Current condition/);
     expect(html).not.toMatch(/>Live</);
   });
 
   it('labels parameters the model does not have as not modelled (kiln)', () => {
     useTwin.getState().select('H-KILN');
     const html = render();
-    expect(html).toContain('Temperature profile');
+    expect(html).toContain('Firing temperature profile');
     expect(html).toContain('Not modelled');
-    expect(html).toContain(esc(NOT_MODELLED.kilnProfile));
+    expect(html).toContain('no thermal model of the kiln');
     expect(html).toContain('Production rate');
+    // The kiln's KPI reason is the same parameter: listed once, not as a tile.
+    expect(html).not.toContain(esc(NOT_MODELLED.kilnProfile));
   });
 
   it('renders a conveyor with its metrics and the camera view', () => {
@@ -125,7 +130,9 @@ describe('twin overlays render', () => {
     useTwin.getState().select(null);
     useTwin.getState().selectStage('KILN', { frame: false });
     let html = render();
-    for (const text of ['Kiln firing &amp; cooling', 'Production stage 7', 'Open in Production', 'Clear highlight', 'Stage · Kiln firing &amp; cooling']) expect(html, text).toContain(text);
+    for (const text of ['Kiln firing &amp; cooling', 'Production stage 7', 'Open in Production', 'Frame stage', 'Clear the stage highlight', 'Stage · Kiln firing &amp; cooling']) expect(html, text).toContain(text);
+    // The header's close clears the highlight: no second "Clear highlight" action in the bar.
+    expect(html).not.toContain('>Clear highlight<');
     // Equipment is more specific than the stage: selecting it opens its workspace, the stage stays highlighted.
     useTwin.getState().select('CV-KIN');
     html = render();
@@ -151,15 +158,16 @@ describe('twin overlays render', () => {
     if (truck) {
       useTwin.getState().selectVehicle(truck, true);
       const html = render();
-      expect(html).toContain('Gate in');
-      expect(html).toContain('Visit phase');
+      expect(html).toContain('Visit');
+      expect(html).toContain('On site');
       expect(html).toContain('Open in Fleet &amp; Movement');
     }
     useTwin.getState().selectVehicle(forklift, true);
     const html = render();
     expect(html).toContain(lg.vehicles[forklift].label);
     expect(html).toContain('Location');
-    expect(html).toContain('simulated · zone level');
+    expect(html).toContain('zone level');
+    expect(html).toContain('Follow');
     expect(html).not.toMatch(/dwell/i);
     useTwin.getState().reset();
   });

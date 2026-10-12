@@ -1,0 +1,1343 @@
+/* ==========================================================================
+   Equipment intelligence panel (src/ui/equipment/panel) — one panel for every
+   asset, vehicle and (shell only) production stage of the Factory Twin.
+   Fixed header · scrolling body (overscroll contained) · persistent action bar.
+   Graphite tokens of src/styles.css only; no nested cards: sections are separated
+   by hairlines, tiles share one hairline grid, insights carry a severity rule.
+   ========================================================================== */
+
+.eqp {
+  --eqp-x: 14px;
+}
+
+/* ── Header ──────────────────────────────────────────────────────────────── */
+
+.eqp-h {
+  flex: none;
+  display: flex;
+  align-items: flex-start;
+  gap: 8px;
+  padding: 12px 8px 11px var(--eqp-x);
+  border-bottom: 1px solid var(--line);
+}
+.eqp-h-main {
+  flex: 1;
+  min-width: 0;
+}
+.eqp-h-title {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+}
+.eqp-h-title h2 {
+  margin: 0;
+  min-width: 0;
+  font-size: 15px;
+  font-weight: var(--fw-semibold);
+  line-height: 1.3;
+  letter-spacing: -0.005em;
+  color: var(--text-1);
+  overflow-wrap: anywhere;
+}
+.eqp-h-sub {
+  margin-top: 2px;
+  font-size: var(--fs-12);
+  line-height: 1.35;
+  color: var(--text-3);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.eqp-h-title:has(.chip) ~ .eqp-h-sub,
+.eqp-h-title:has(.chip) ~ .eqp-h-status {
+  margin-left: 26px;
+}
+.eqp-h-status {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 5px 10px;
+  margin-top: 8px;
+}
+.eqp-state {
+  font-size: var(--fs-12);
+  font-weight: var(--fw-medium);
+  color: var(--text-1);
+  white-space: normal;
+}
+.eqp-state.critical {
+  color: #f3c0c0;
+}
+.eqp-since {
+  font-size: var(--fs-11);
+  color: var(--text-3);
+}
+.eqp-src {
+  cursor: help;
+}
+.eqp-close {
+  flex: none;
+  margin-top: -3px;
+}
+
+/* ── Body ────────────────────────────────────────────────────────────────── */
+
+.eqp-b {
+  overscroll-behavior: contain;
+  scroll-behavior: smooth;
+  scrollbar-width: thin;
+  scrollbar-color: var(--bg-4) transparent;
+}
+@media (prefers-reduced-motion: reduce) {
+  .eqp-b {
+    scroll-behavior: auto;
+  }
+}
+.eqp-top {
+  padding: 12px var(--eqp-x) 12px;
+  scroll-margin-top: 0;
+}
+.eqp-sec {
+  padding: 12px var(--eqp-x) 13px;
+  border-top: 1px solid var(--line);
+  scroll-margin-top: 0;
+}
+.eqp-sec-h {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 10px;
+  margin-bottom: 9px;
+}
+.eqp-sec-h h3 {
+  margin: 0;
+  flex: none;
+  font-size: 10.5px;
+  font-weight: var(--fw-semibold);
+  letter-spacing: 0.07em;
+  text-transform: uppercase;
+  color: var(--text-3);
+}
+.eqp-sec-meta {
+  min-width: 0;
+  font-size: var(--fs-11);
+  color: var(--text-3);
+  text-align: right;
+  font-variant-numeric: tabular-nums;
+}
+.eqp-stale {
+  color: #f0a77f;
+  cursor: help;
+}
+.eqp-note {
+  margin: 0;
+  font-size: var(--fs-12);
+  line-height: 1.5;
+  color: var(--text-2);
+}
+.eqp-fine {
+  margin: 8px 0 0;
+  font-size: var(--fs-11);
+  line-height: 1.45;
+  color: var(--text-3);
+}
+.eqp-empty {
+  margin: 0;
+  font-size: var(--fs-12);
+  color: var(--text-3);
+}
+
+/* ── Feed ────────────────────────────────────────────────────────────────── */
+
+.eqp-feed {
+  position: relative;
+}
+.eqp-feed-frame {
+  position: relative;
+  border-radius: var(--r-2);
+  overflow: hidden;
+  background: #0a0d10;
+  box-shadow: 0 0 0 1px var(--line);
+}
+/* The bare player and the compact camera feed sit flush in the frame. */
+.eqp-feed .vp-frame {
+  border: 0;
+  border-radius: 0;
+}
+.eqp-feed .feed {
+  border: 0;
+  border-radius: 0;
+  background: transparent;
+}
+/* The panel shows the feed's source once, in its own badge: the camera feed's chips, provenance label,
+   frame time and snapshot stay in the floating camera view and Technical details. The footer stays only
+   for "Stream" (back to a configured stream after "Show simulated view") — never a dead end. */
+.eqp-feed .feed-chips,
+.eqp-feed .feed-f .feed-label,
+.eqp-feed .feed-f .feed-time,
+.eqp-feed .feed-f .feed-snap {
+  display: none;
+}
+.eqp-feed .feed-f:not(:has(.feed-back)) {
+  display: none;
+}
+.eqp-feed .feed-f {
+  justify-content: flex-end;
+  min-height: 0;
+  padding: 2px 4px;
+  background: var(--bg-1);
+}
+/* A feed note is one line under the frame (its full text in the tooltip), not a block of text. */
+.eqp-feed .feed-note {
+  padding: 3px 10px 4px;
+  border-top: 1px solid var(--line);
+  background: var(--bg-1);
+  color: var(--text-3);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  cursor: help;
+}
+.eqp-feed-chrome {
+  position: absolute;
+  top: 8px;
+  left: 8px;
+  right: 8px;
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 8px;
+  pointer-events: none;
+}
+.eqp-feed-chrome > * {
+  pointer-events: auto;
+}
+.eqp-feed-dock {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  margin-top: 6px;
+}
+.eqp-feed-badge {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  height: 22px;
+  padding: 0 8px 0 7px;
+  border: 1px solid #ffffff1f;
+  border-radius: 11px;
+  background: #0b0f12d1;
+  backdrop-filter: blur(6px);
+  font-size: var(--fs-11);
+  font-weight: var(--fw-medium);
+  color: var(--text-1);
+  white-space: nowrap;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  cursor: help;
+}
+.eqp-feed-badge svg {
+  flex: none;
+}
+.eqp-feed-badge.k-twin-view svg {
+  color: #e9c46a;
+}
+.eqp-feed-badge.k-recording svg,
+.eqp-feed-badge.k-reference svg {
+  color: var(--accent-strong);
+}
+.eqp-feed-badge.k-live-stream svg {
+  color: var(--neutral);
+}
+.eqp-feed-badge.k-live-stream.good svg {
+  color: var(--good);
+}
+.eqp-feed-badge.k-live-stream.warning svg {
+  color: var(--warning);
+}
+.eqp-feed-info {
+  flex: none;
+  display: inline-grid;
+  place-items: center;
+  width: 24px;
+  height: 24px;
+  padding: 0;
+  border: 1px solid #ffffff1f;
+  border-radius: 50%;
+  background: #0b0f12d1;
+  backdrop-filter: blur(6px);
+  color: var(--text-2);
+}
+.eqp-feed-info:hover,
+.eqp-feed-info.on {
+  color: var(--text-1);
+  border-color: var(--accent-line);
+}
+.eqp-feed.docked .eqp-feed-badge,
+.eqp-feed.docked .eqp-feed-info {
+  background: var(--bg-2);
+  backdrop-filter: none;
+}
+.eqp-pop {
+  position: absolute;
+  z-index: 6;
+  top: 38px;
+  right: 8px;
+  width: min(300px, calc(100% - 16px));
+  max-height: 260px;
+  overflow: auto;
+  padding: 8px 10px 10px;
+  border: 1px solid var(--line-2);
+  border-radius: var(--r-3);
+  background: var(--bg-2);
+  box-shadow: var(--shadow-2);
+  font-size: var(--fs-11);
+  line-height: 1.45;
+}
+.eqp-pop-h {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+}
+.eqp-pop-h b {
+  font-size: var(--fs-12);
+  font-weight: var(--fw-semibold);
+  color: var(--text-1);
+}
+.eqp-pop dl {
+  margin: 4px 0 0;
+}
+.eqp-pop dl > div {
+  display: grid;
+  grid-template-columns: 78px minmax(0, 1fr);
+  gap: 8px;
+  padding: 3px 0;
+}
+.eqp-pop dt {
+  color: var(--text-2);
+}
+.eqp-pop dd {
+  margin: 0;
+  color: var(--text-1);
+  overflow-wrap: anywhere;
+}
+.eqp-pop dl > div.note {
+  grid-template-columns: minmax(0, 1fr);
+  margin-top: 4px;
+  padding-top: 7px;
+  border-top: 1px solid var(--line);
+}
+.eqp-pop dl > div.note dt {
+  display: none;
+}
+.eqp-pop dl > div.note dd {
+  color: var(--text-2);
+}
+.eqp-pop-link {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  margin-top: 6px;
+  color: var(--accent-strong);
+  text-decoration: none;
+}
+.eqp-pop-link:hover {
+  text-decoration: underline;
+}
+.eqp-pop-fine {
+  margin: 6px 0 0;
+  color: var(--text-2);
+}
+/* While a provider embed plays, the ⓘ sits in the strip under the frame: the details hang from it,
+   below the strip, off the embed's own controls. */
+.eqp-feed.docked .eqp-pop {
+  top: calc(100% + 4px);
+}
+/* Phone bottom sheet: the feed is one line until asked for. */
+.eqp-feed-show {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  width: 100%;
+  min-height: 34px;
+  padding: 5px 8px 5px 10px;
+  border: 1px solid var(--line);
+  border-radius: var(--r-2);
+  background: var(--bg-1);
+  color: var(--text-1);
+  font-size: var(--fs-12);
+  text-align: left;
+}
+.eqp-feed-show > span:first-of-type {
+  flex: 1;
+}
+.eqp-feed-show .eqp-feed-badge {
+  cursor: inherit;
+}
+.eqp-feed-show .chev {
+  flex: none;
+  color: var(--text-3);
+}
+.eqp-feed-show:hover {
+  border-color: var(--accent-line);
+}
+.eqp-feed-none {
+  display: flex;
+  align-items: flex-start;
+  gap: 8px;
+  padding: 9px 10px;
+  border: 1px dashed var(--line-2);
+  border-radius: var(--r-2);
+  font-size: var(--fs-12);
+  line-height: 1.45;
+  color: var(--text-3);
+}
+.eqp-feed-none svg {
+  flex: none;
+  margin-top: 2px;
+  color: var(--text-4);
+}
+.eqp-feed-none b {
+  margin-right: 4px;
+  font-weight: var(--fw-medium);
+  color: var(--text-2);
+}
+
+/* ── Facets ──────────────────────────────────────────────────────────────── */
+
+.eqp-facets {
+  list-style: none;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  margin: 10px 0 0;
+  padding: 0;
+}
+.eqp-facet {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  max-width: 100%;
+  min-height: 24px;
+  padding: 3px 9px 3px 8px;
+  border: 1px solid var(--line);
+  border-radius: 12px;
+  background: var(--bg-1);
+  font-size: var(--fs-11);
+  line-height: 1.3;
+  cursor: help;
+}
+.eqp-facet .l {
+  flex: none;
+  color: var(--text-3);
+}
+.eqp-facet .v {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  min-width: 0;
+  font-weight: var(--fw-medium);
+  color: var(--text-1);
+}
+.eqp-facet .v svg {
+  flex: none;
+  color: var(--neutral);
+}
+.eqp-facet.good .v svg {
+  color: var(--good);
+}
+.eqp-facet.warning {
+  border-color: #fab21940;
+}
+.eqp-facet.warning .v svg {
+  color: var(--warning);
+}
+.eqp-facet.critical {
+  border-color: #e0525259;
+}
+.eqp-facet.critical .v svg {
+  color: var(--critical);
+}
+
+/* ── Key figures ─────────────────────────────────────────────────────────── */
+
+.eqp-kpis {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 1px;
+  border: 1px solid var(--line);
+  border-radius: var(--r-2);
+  background: var(--line);
+  overflow: hidden;
+}
+.eqp-kpis > :last-child:nth-child(odd) {
+  grid-column: 1 / -1;
+}
+.eqp-kpi {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  min-width: 0;
+  padding: 9px 10px 10px;
+  background: var(--bg-1);
+}
+.eqp-kpi .l {
+  font-size: var(--fs-11);
+  color: var(--text-3);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.eqp-kpi .v {
+  font-size: 18px;
+  font-weight: var(--fw-medium);
+  line-height: 1.2;
+  color: var(--text-1);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.eqp-kpi .v small {
+  margin-left: 3px;
+  font-size: var(--fs-11);
+  font-weight: var(--fw-regular);
+  color: var(--text-3);
+}
+.eqp-kpi .v.na-v {
+  font-size: var(--fs-13);
+  font-weight: var(--fw-regular);
+}
+.eqp-kpi .s {
+  font-size: var(--fs-11);
+  white-space: normal;
+}
+.eqp-kpi .sub {
+  font-size: var(--fs-11);
+  line-height: 1.35;
+  color: var(--text-3);
+  overflow-wrap: anywhere;
+}
+
+/* ── What matters ────────────────────────────────────────────────────────── */
+
+.eqp-ins-list {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+.eqp-ins {
+  padding: 1px 0 2px 11px;
+  border-left: 2px solid var(--line-3);
+}
+.eqp-ins.good {
+  border-left-color: var(--good);
+}
+.eqp-ins.warning {
+  border-left-color: var(--warning);
+}
+.eqp-ins.serious {
+  border-left-color: var(--serious);
+}
+.eqp-ins.critical {
+  border-left-color: var(--critical);
+}
+.eqp-ins-h {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: flex-start;
+  gap: 4px 7px;
+}
+.eqp-ins-h > .status {
+  flex: none;
+  margin-top: 1px;
+}
+/* Severity in words next to its icon (warning and serious share a shape: never colour alone). */
+.eqp-sev {
+  font-size: var(--fs-11);
+  font-weight: var(--fw-semibold);
+  letter-spacing: 0.02em;
+  color: var(--text-2);
+}
+.eqp-ins-more {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  margin-top: 6px;
+  padding: 1px 0;
+  border: 0;
+  background: none;
+  font-size: var(--fs-11);
+  color: var(--accent-strong);
+}
+.eqp-ins-more:hover {
+  text-decoration: underline;
+}
+.eqp-ins-more .chev {
+  transition: transform var(--t-fast) var(--ease);
+}
+.eqp-ins-more[aria-expanded='true'] .chev {
+  transform: rotate(180deg);
+}
+.eqp-ins-d .obs {
+  color: var(--text-2);
+}
+.eqp-ins-h h4 {
+  flex: 1 1 150px;
+  min-width: 0;
+  margin: 0;
+  font-size: var(--fs-13);
+  font-weight: var(--fw-semibold);
+  line-height: 1.3;
+  color: var(--text-1);
+}
+.eqp-basis {
+  flex: none;
+  max-width: 100%;
+  margin: 1px 0 0 auto;
+  padding: 1px 6px;
+  border: 1px solid var(--line-2);
+  border-radius: 9px;
+  font-size: 10px;
+  line-height: 1.4;
+  color: var(--text-3);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  cursor: help;
+}
+.eqp-ins .obs {
+  margin: 5px 0 0;
+  font-size: var(--fs-12);
+  line-height: 1.5;
+  color: var(--text-1);
+}
+.eqp-ins .why {
+  margin: 4px 0 0;
+  font-size: var(--fs-12);
+  line-height: 1.5;
+  color: var(--text-2);
+}
+.eqp-chips {
+  list-style: none;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px;
+  margin: 7px 0 0;
+  padding: 0;
+}
+.eqp-chips li {
+  max-width: 100%;
+}
+.eqp-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  max-width: 100%;
+  height: 20px;
+  padding: 0 7px;
+  border: 1px solid var(--line);
+  border-radius: var(--r-1);
+  background: var(--bg-1);
+  font-size: var(--fs-11);
+  font-variant-numeric: tabular-nums;
+  color: var(--text-2);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.eqp-chip svg {
+  flex: none;
+  color: var(--text-3);
+}
+button.eqp-chip {
+  cursor: pointer;
+  color: var(--accent-strong);
+}
+button.eqp-chip svg {
+  color: var(--accent);
+}
+button.eqp-chip:hover {
+  border-color: var(--accent-line);
+  background: var(--accent-soft);
+}
+.eqp-ins .next {
+  display: flex;
+  align-items: flex-start;
+  gap: 6px;
+  margin: 8px 0 0;
+  font-size: var(--fs-12);
+  line-height: 1.5;
+  color: var(--text-1);
+}
+.eqp-ins .next svg {
+  flex: none;
+  margin-top: 3px;
+  color: var(--accent);
+}
+.eqp-ins .next b {
+  margin-right: 3px;
+  font-weight: var(--fw-semibold);
+  color: var(--text-2);
+}
+
+/* ── Analytics ───────────────────────────────────────────────────────────── */
+
+.eqp-an {
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+}
+.eqp-tl-bar {
+  position: relative;
+  height: 12px;
+  border-radius: 3px;
+  background: var(--bg-3);
+  overflow: hidden;
+}
+.eqp-seg {
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  min-width: 1px;
+}
+.eqp-tl-axis {
+  display: flex;
+  justify-content: space-between;
+  margin-top: 3px;
+  font-size: 10.5px;
+  color: var(--text-3);
+}
+.eqp-tl-legend {
+  list-style: none;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 3px 14px;
+  margin: 6px 0 0;
+  padding: 0;
+  font-size: var(--fs-11);
+  color: var(--text-2);
+}
+.eqp-tl-legend li {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+}
+.eqp-tl-legend b {
+  font-weight: var(--fw-medium);
+  color: var(--text-1);
+}
+.eqp-sw {
+  display: inline-block;
+  flex: none;
+  width: 8px;
+  height: 8px;
+  border-radius: 2px;
+}
+/* State colours: the product's status scheme; texture tells starved / blocked / idle apart. */
+.eqp-m-running {
+  background: var(--good);
+}
+.eqp-m-reduced {
+  background: #fab219a6;
+}
+.eqp-m-starved {
+  background: var(--warning);
+}
+.eqp-m-blocked {
+  background: repeating-linear-gradient(135deg, var(--warning) 0 3px, #fab21959 3px 6px);
+}
+.eqp-m-idle {
+  background: repeating-linear-gradient(45deg, #fab219a6 0 3px, #fab21933 3px 6px);
+}
+.eqp-m-stopped,
+.eqp-m-fault {
+  background: var(--critical);
+}
+.eqp-m-planned {
+  background: var(--neutral);
+}
+.eqp-m-disconnected,
+.eqp-m-unknown,
+.eqp-v-unknown {
+  background: repeating-linear-gradient(135deg, var(--text-4) 0 3px, transparent 3px 6px);
+}
+.eqp-v-running {
+  background: var(--accent);
+}
+.eqp-v-idle {
+  background: #8a9bad80;
+}
+
+.eqp-rate-h {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 10px;
+  font-size: var(--fs-11);
+  color: var(--text-3);
+}
+.eqp-rate-h b {
+  margin-right: 4px;
+  font-size: var(--fs-12);
+  font-weight: var(--fw-semibold);
+  color: var(--text-1);
+}
+.eqp-rate-h .ideal-key {
+  display: inline-block;
+  width: 12px;
+  margin: 0 4px 0 4px;
+  border-top: 1.5px dashed var(--text-3);
+  vertical-align: middle;
+}
+.eqp-rate-svg {
+  display: block;
+  width: 100%;
+  height: 46px;
+  margin-top: 5px;
+  overflow: visible;
+}
+.eqp-rate-svg .line {
+  fill: none;
+  stroke: var(--accent);
+  stroke-width: 1.75;
+  stroke-linejoin: round;
+  stroke-linecap: round;
+}
+.eqp-rate-svg .ideal {
+  stroke: var(--text-3);
+  stroke-width: 1;
+  stroke-dasharray: 4 3;
+}
+.eqp-rate-svg .base {
+  stroke: var(--line-2);
+  stroke-width: 1;
+}
+.eqp-rate-svg .hit {
+  fill: transparent;
+}
+.eqp-rate-svg .hit:hover {
+  fill: #ffffff0f;
+}
+
+.eqp-stats {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 1px;
+  border: 1px solid var(--line);
+  border-radius: var(--r-2);
+  background: var(--line);
+  overflow: hidden;
+}
+.eqp-stats .cell {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  min-width: 0;
+  padding: 8px 10px 9px;
+  background: var(--bg-1);
+  cursor: help;
+}
+/* A lone cell on its row spans it (no empty grid cell beside it). */
+.eqp-stats .cell.wide,
+.eqp-stats .cell:first-child:has(+ .cell.wide),
+.eqp-stats .cell:only-child {
+  grid-column: 1 / -1;
+}
+.eqp-nc {
+  display: inline-flex;
+  align-items: center;
+  gap: 3px;
+  margin-left: 8px;
+  font-size: var(--fs-11);
+  font-weight: var(--fw-regular);
+  color: #f0a77f;
+  cursor: help;
+}
+.eqp-stats .l {
+  font-size: var(--fs-11);
+  color: var(--text-3);
+}
+.eqp-stats b {
+  font-size: var(--fs-13);
+  font-weight: var(--fw-medium);
+  color: var(--text-1);
+  overflow-wrap: anywhere;
+}
+.eqp-stats small {
+  font-size: var(--fs-11);
+  color: var(--text-3);
+}
+.eqp-stats .reach {
+  margin-left: 8px;
+  font-weight: var(--fw-regular);
+}
+.eqp-stats .reach.yes {
+  color: var(--warning);
+}
+.eqp-loss-bar {
+  display: flex;
+  gap: 2px;
+  height: 4px;
+  margin-top: 6px;
+  border-radius: 2px;
+  overflow: hidden;
+}
+.eqp-loss-bar i {
+  display: block;
+  min-width: 3px;
+}
+.eqp-p-stops {
+  background: var(--critical);
+}
+.eqp-p-waiting {
+  background: var(--warning);
+}
+.eqp-p-pace {
+  background: var(--neutral);
+}
+.eqp-loss-parts {
+  list-style: none;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 2px 12px;
+  margin: 5px 0 0;
+  padding: 0;
+  font-size: var(--fs-11);
+  color: var(--text-3);
+}
+.eqp-loss-parts li {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+}
+.eqp-loss-parts b {
+  font-size: var(--fs-11);
+  color: var(--text-2);
+}
+.eqp-loss-parts .eqp-sw {
+  width: 7px;
+  height: 7px;
+}
+.eqp-facts {
+  margin: 0;
+}
+.eqp-facts > div {
+  display: flex;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 5px 0;
+  border-bottom: 1px solid var(--line);
+  font-size: var(--fs-12);
+  cursor: help;
+}
+.eqp-facts > div:last-child {
+  border-bottom: 0;
+}
+.eqp-facts dt {
+  color: var(--text-3);
+}
+.eqp-facts dd {
+  margin: 0;
+  color: var(--text-1);
+  text-align: right;
+}
+
+/* ── Signals ─────────────────────────────────────────────────────────────── */
+
+.eqp-sigs {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+}
+.eqp-sig {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto 56px;
+  grid-template-areas:
+    'lab val spk'
+    'int int spk';
+  align-items: center;
+  column-gap: 10px;
+  row-gap: 1px;
+  padding: 6px 0;
+  border-bottom: 1px solid var(--line);
+  transition: background var(--t-base) var(--ease);
+  scroll-margin: 40px;
+}
+.eqp-sig:last-child {
+  border-bottom: 0;
+}
+.eqp-sig:focus {
+  outline: none;
+}
+.eqp-sig:focus-visible {
+  box-shadow: inset 2px 0 0 var(--accent);
+}
+.eqp-sig.on {
+  background: var(--accent-soft);
+  box-shadow:
+    calc(-1 * var(--eqp-x)) 0 0 var(--accent-soft),
+    var(--eqp-x) 0 0 var(--accent-soft);
+}
+.eqp-sig .lab {
+  grid-area: lab;
+  min-width: 0;
+  font-size: var(--fs-12);
+  line-height: 1.35;
+  color: var(--text-2);
+}
+.eqp-sig .val {
+  grid-area: val;
+  font-size: var(--fs-13);
+  font-weight: var(--fw-medium);
+  color: var(--text-1);
+  text-align: right;
+  white-space: nowrap;
+}
+.eqp-sig .val small {
+  margin-left: 3px;
+  font-size: var(--fs-11);
+  font-weight: var(--fw-regular);
+  color: var(--text-3);
+}
+.eqp-sig.stale .val {
+  color: var(--text-2);
+}
+.eqp-sig .int {
+  grid-area: int;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 1px 8px;
+  min-width: 0;
+  font-size: var(--fs-11);
+  color: var(--text-3);
+}
+.eqp-sig .int .status {
+  font-size: var(--fs-11);
+  white-space: normal;
+}
+.eqp-sig .spk {
+  grid-area: spk;
+  justify-self: end;
+}
+.eqp-nm {
+  margin-top: 8px;
+}
+.eqp-sigs + .eqp-nm {
+  padding-top: 8px;
+  border-top: 1px solid var(--line);
+}
+.eqp-nm-b {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 8px;
+  width: 100%;
+  padding: 0;
+  border: 0;
+  background: none;
+  font-size: var(--fs-11);
+  line-height: 1.45;
+  text-align: left;
+  color: var(--text-3);
+}
+.eqp-nm-b b {
+  margin-right: 4px;
+  font-weight: var(--fw-medium);
+  color: var(--text-2);
+}
+.eqp-nm-b .chev {
+  flex: none;
+  margin-top: 2px;
+  transition: transform var(--t-fast) var(--ease);
+}
+.eqp-nm-b[aria-expanded='true'] .chev {
+  transform: rotate(180deg);
+}
+.eqp-nm-b:hover {
+  color: var(--text-2);
+}
+.eqp-nm ul {
+  margin: 6px 0 0;
+  padding-left: 14px;
+  font-size: var(--fs-11);
+  line-height: 1.45;
+  color: var(--text-3);
+}
+.eqp-nm li + li {
+  margin-top: 2px;
+}
+.eqp-nm li b {
+  font-weight: var(--fw-medium);
+  color: var(--text-2);
+}
+
+/* ── Events ──────────────────────────────────────────────────────────────── */
+
+.eqp-evs {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+}
+.eqp-ev {
+  border-bottom: 1px solid var(--line);
+  scroll-margin: 40px;
+}
+.eqp-ev:last-child {
+  border-bottom: 0;
+}
+.eqp-ev-h {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr) auto;
+  align-items: start;
+  gap: 8px;
+  width: 100%;
+  padding: 7px 0;
+  border: 0;
+  background: none;
+  color: inherit;
+  text-align: left;
+  cursor: pointer;
+}
+.eqp-ev-h .sev {
+  margin-top: 2px;
+}
+.eqp-ev-h .m {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  min-width: 0;
+}
+.eqp-ev-h .t {
+  font-size: var(--fs-12);
+  font-weight: var(--fw-medium);
+  line-height: 1.35;
+  color: var(--text-1);
+}
+.eqp-ev.done .eqp-ev-h .t {
+  font-weight: var(--fw-regular);
+  color: var(--text-2);
+}
+.eqp-ev-h:hover .t {
+  color: var(--accent-strong);
+}
+.eqp-ev-h .w {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 1px 8px;
+  font-size: var(--fs-11);
+  color: var(--text-3);
+}
+.eqp-ev-h .w .status {
+  font-size: var(--fs-11);
+}
+.eqp-ev-h .more {
+  color: var(--text-3);
+}
+.eqp-ev-h .sevw {
+  font-weight: var(--fw-semibold);
+  color: var(--text-2);
+}
+.eqp-ev-h .imp {
+  font-size: var(--fs-11);
+  line-height: 1.4;
+  color: var(--text-2);
+}
+.eqp-ev-h .chev {
+  margin-top: 2px;
+  color: var(--text-3);
+  transition: transform var(--t-fast) var(--ease);
+}
+.eqp-ev.open .eqp-ev-h .chev {
+  transform: rotate(180deg);
+}
+.eqp-evd {
+  padding: 0 0 10px 21px;
+  font-size: var(--fs-12);
+  line-height: 1.5;
+  color: var(--text-2);
+}
+.eqp-evd-facts {
+  margin: 0 0 6px;
+  padding-left: 14px;
+}
+.eqp-evd p {
+  margin: 4px 0 0;
+}
+.eqp-evd b {
+  margin-right: 4px;
+  font-weight: var(--fw-medium);
+  color: var(--text-1);
+}
+.eqp-evd-f {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  margin-top: 8px;
+  font-size: var(--fs-11);
+}
+.eqp-more {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  margin-top: 8px;
+  padding: 2px 0;
+  border: 0;
+  background: none;
+  font-size: var(--fs-12);
+  color: var(--accent-strong);
+}
+.eqp-more:hover {
+  text-decoration: underline;
+}
+
+/* ── Stage panel: equipment list ─────────────────────────────────────────── */
+
+.eqp-assets {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+}
+.eqp-assets button {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  width: 100%;
+  padding: 6px 0;
+  border: 0;
+  border-bottom: 1px solid var(--line);
+  background: none;
+  color: var(--text-1);
+  font-size: var(--fs-12);
+  text-align: left;
+}
+.eqp-assets li:last-child button {
+  border-bottom: 0;
+}
+.eqp-assets .n {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.eqp-assets button:hover .n {
+  color: var(--accent-strong);
+}
+
+/* ── Continue in · technical details ─────────────────────────────────────── */
+
+.eqp-links {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: 4px 12px;
+  padding: 10px var(--eqp-x);
+  border-top: 1px solid var(--line);
+  font-size: var(--fs-12);
+}
+.eqp-links > span {
+  color: var(--text-3);
+}
+.eqp-links .tw-link {
+  color: var(--accent-strong);
+}
+.eqp-links .tw-link:hover {
+  text-decoration: underline;
+}
+.eqp-tech {
+  padding: 0 var(--eqp-x) 4px;
+  border-top: 1px solid var(--line);
+}
+.eqp-tech .disc {
+  border-top: 0;
+}
+.eqp-tech .disc-h {
+  padding: 11px 0;
+}
+.eqp-tech .disc-title {
+  flex: none;
+  white-space: nowrap;
+}
+/* The summary of what is inside gives way (ellipsis) before the title wraps. */
+.eqp-tech .disc-meta {
+  font-size: var(--fs-11);
+  flex: 1 1 auto;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  text-align: right;
+}
+
+/* ── Action bar ──────────────────────────────────────────────────────────── */
+
+.eqp-bar {
+  flex: none;
+  display: grid;
+  grid-auto-flow: column;
+  grid-auto-columns: minmax(0, 1fr);
+  gap: 6px;
+  padding: 8px 10px 10px;
+  border-top: 1px solid var(--line-2);
+  background: #12171c;
+  border-radius: 0 0 var(--r-3) var(--r-3);
+}
+.eqp-act {
+  min-width: 0;
+  height: 30px;
+  font-size: var(--fs-12);
+}
+.eqp-act span {
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.eqp-act[aria-disabled='true'] {
+  opacity: 0.45;
+  cursor: not-allowed;
+}
+.eqp-act[aria-disabled='true']:hover {
+  background: var(--bg-2);
+  border-color: var(--line-2);
+}
+
+/* ── Narrow panels and small screens ─────────────────────────────────────── */
+
+@container (max-width: 320px) {
+  .eqp-h,
+  .eqp-b {
+    --eqp-x: 12px;
+  }
+  .eqp-kpi .v {
+    font-size: 16px;
+  }
+  .eqp-act svg {
+    display: none;
+  }
+}
+/* A bottom sheet on phones: while a subject panel is open the sheet may take a little more of the
+   height (the factory stays visible above it); the feed is one "Show camera" line until asked for. */
+@media (max-width: 760px) {
+  .tw-right:has(> .eqp) {
+    max-height: 56vh;
+  }
+}
+/* Short windows: a wider, shorter feed keeps the figures in view. */
+@media (max-width: 760px), (max-height: 680px) {
+  .eqp-feed .vp-frame,
+  .eqp-feed .feed-media {
+    aspect-ratio: 2.2 / 1 !important;
+  }
+  .eqp-h {
+    padding-top: 10px;
+    padding-bottom: 9px;
+  }
+  .eqp-h-status {
+    margin-top: 6px;
+  }
+}

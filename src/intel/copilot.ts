@@ -34,6 +34,7 @@ import {
   DEFECTS,
   DEFECT_ORDER,
   DOCKS,
+  GEOFENCES,
   INSPECTION_STATIONS,
   LINE,
   M2_PER_TILE,
@@ -63,6 +64,7 @@ import {
   downtimePareto,
   externalVehicles,
   fleetMetrics,
+  internalActivity,
   lineMetrics,
   machineMetrics,
   operationalState,
@@ -132,6 +134,8 @@ export type CopilotIntent =
   | 'event-action'
   | 'event-evidence'
   | 'event-missing'
+  /** One vehicle named in the question (or selected in the twin): where it is, what it does, its limits. */
+  | 'vehicle'
   | 'help';
 
 /** The labelled parts of an answer, in display order. */
@@ -160,6 +164,8 @@ export type CopilotContext = {
   equipmentId?: string | null;
   /** Stage open in Production ("this stage"). */
   stageId?: MonitoredStageId | null;
+  /** Vehicle selected in the Factory Twin ("this vehicle / truck / forklift"). */
+  vehicleId?: string | null;
 };
 
 export type CopilotAnswer = {
@@ -573,6 +579,7 @@ type Ctx = {
   eventId: string | null;
   equipmentId: string | null;
   stageId: MonitoredStageId | null;
+  vehicleId: string | null;
 };
 
 // ── Question understanding ────────────────────────────────────────────────────
@@ -657,6 +664,21 @@ function findMachine(q: string) {
   return null;
 }
 
+/** A vehicle named by its id or label in the question ("fl-02", "trk-1042"), if any. */
+function findVehicle(s: SimState, q: string): string | null {
+  for (const v of Object.values(s.logistics.vehicles)) {
+    for (const name of [v.id, v.label]) {
+      const n = name.toLowerCase();
+      const i = q.indexOf(n);
+      if (i >= 0 && !/[a-z0-9]/.test(q.charAt(i + n.length)) && (i === 0 || !/[a-z0-9]/.test(q.charAt(i - 1)))) return v.id;
+    }
+  }
+  return null;
+}
+
+/** Phrases that refer to the vehicle in context. */
+const REFERS_VEHICLE = /\b(this|that|the selected) (vehicle|truck|lorry|tipper|forklift|loader)\b/;
+
 /** Monitored stage named in a "… stage" question, if any. */
 function findStage(q: string): MonitoredStageId | null {
   if (!/\bstage\b/.test(q)) return null;
@@ -705,6 +727,7 @@ export function ask(s: SimState, question: string, tariffs: Tariffs = DEFAULT_TA
     eventId: ctx.eventId ?? null,
     equipmentId: ctx.equipmentId && EQUIPMENT_BY_ID[ctx.equipmentId] ? ctx.equipmentId : null,
     stageId: ctx.stageId && MONITORED_STAGE_BY_ID[ctx.stageId] ? ctx.stageId : null,
+    vehicleId: ctx.vehicleId && s.logistics.vehicles[ctx.vehicleId] ? ctx.vehicleId : null,
   };
   const p = resolvePeriod(periodFor(q, ctx.period ?? 'shift'), s.minute);
 
@@ -720,6 +743,10 @@ export function ask(s: SimState, question: string, tariffs: Tariffs = DEFAULT_TA
     const namesOther = machine != null && machine !== ctxEv.asset.equipmentId;
     if (!FACTORY_WIDE.test(q) && !namesOther && (base === 'help' || base === 'event-missing' || sub != null || REFERS.test(q))) return eventAnswer(c, ctxEv.id, sub ?? 'what');
   }
+
+  // One vehicle: named by its id, or "this vehicle / truck" while one is selected in the twin.
+  const vehicle = findVehicle(s, q) ?? (c.vehicleId && (REFERS_VEHICLE.test(q) || (base === 'help' && /\b(it|this)\b/.test(q))) ? c.vehicleId : null);
+  if (vehicle && !machine && (base === 'help' || base === 'logistics' || base === 'delayed-vehicles' || base === 'turnaround')) return vehicleAnswer(c, vehicle);
 
   // "This machine" / "this stage": the equipment selected in the twin, the stage open in Production.
   if (!machine && c.equipmentId && (REFERS_ASSET.test(q) || (base === 'help' && /\b(it|this)\b/.test(q))))
@@ -2069,6 +2096,87 @@ function logisticsAnswer(c: Ctx, p: Period): CopilotAnswer {
       ],
       links: [...open.slice(0, 2).map((e) => eventLink(e)), wsLink('fleet')],
       followUps: ['Which vehicles are delayed?', 'Which trucks exceeded their turnaround threshold?'],
+      records: open.slice(0, 4),
+    },
+  );
+}
+
+/**
+ * One vehicle: where it is (the geofence of its current simulated route leg, at zone level), whether it
+ * moves or stands and for how long, its task or visit phase, its visit times against the waiting, dock
+ * and turnaround limits (trucks) or its idle share of the last hour (internal vehicles), and its open
+ * events. Read from the same route legs and visit records as Fleet & Movement and the twin's panel.
+ */
+function vehicleAnswer(c: Ctx, id: string): CopilotAnswer {
+  const { s } = c;
+  const now = s.minute;
+  const v = s.logistics.vehicles[id];
+  const legs = v.legs.filter((l) => l.start <= now);
+  const leg = legs[legs.length - 1] ?? null;
+  const zone = leg ? (GEOFENCES.find((g) => g.id === leg.zone)?.name ?? leg.zone) : null;
+  const truck = v.class === 'external' ? (v as TruckRuntime) : null;
+  const vis = truck?.visit ?? null;
+  const gone = (v.despawned != null && v.despawned <= now) || !s.logistics.active.includes(v.id);
+  const open = s.events.filter((e) => e.asset.vehicleId === id && e.status !== 'resolved').sort((a, b) => b.start - a.start);
+  const kind = truck ? (vis?.direction === 'inbound' ? 'inbound tipper' : 'outbound truck') : v.type === 'forklift' ? 'forklift' : 'wheel loader';
+  const confirmed: Lines = [];
+  const actions: Lines = [];
+  const facts: CopilotAnswer['facts'] = [];
+  if (gone) {
+    const out = vis?.gateOut;
+    confirmed.push(`${v.label} (${kind}) is no longer on site${out != null ? `: it left through the main gate at ${when(s, out)}` : ''}${vis && out != null ? ` after a turnaround of ${int(out - vis.gateIn)} min (limit ${s.rules.turnaroundMax} min)` : ''}.`);
+    actions.push('Nothing to do on site; its record stays in Fleet & Movement.');
+  } else if (vis && vis.gateIn > now) {
+    confirmed.push(`${v.label} (${kind}) has not passed the gate yet: gate-in is due at ${when(s, vis.gateIn)}.`);
+  } else {
+    const moving = leg != null && leg.moving && leg.end > now;
+    let since = leg?.start ?? now;
+    for (let i = legs.length - 2; i >= 0 && !legs[i].moving && !moving; i--) since = legs[i].start;
+    confirmed.push(
+      `${v.label} (${kind}) is ${moving ? 'moving' : `stationary for ${int(now - since)} min`}${zone ? ` in ${zone}` : ''}${leg ? ` — ${low1(leg.activity)}` : ''} (simulated route, zone level).`,
+    );
+    facts.push({ label: 'Location', value: zone ?? '—' }, { label: 'Movement', value: moving ? 'Moving' : `Stationary ${int(now - since)} min` });
+    if (truck && vis) {
+      const d = visitDurations(truck, now);
+      const onSite = now - vis.gateIn;
+      confirmed.push(
+        `Visit: ${phaseLabel[truck.phase ?? 'approaching'].toLowerCase()}; on site ${int(onSite)} min of the ${s.rules.turnaroundMax} min turnaround limit${d.waiting != null ? `; waited ${int(d.waiting)} min for a dock (limit ${s.rules.truckWaitMax} min)` : ''}${d.dockTime != null ? `; ${int(d.dockTime)} min at the dock (limit ${s.rules.dockStayMax} min)` : ''}.`,
+      );
+      facts.push({ label: 'Visit phase', value: phaseLabel[truck.phase ?? 'approaching'] }, { label: 'On site', value: `${int(onSite)} min · limit ${s.rules.turnaroundMax} min` });
+      const over = [
+        d.waiting != null && truck.phase === 'waiting' && d.waiting > s.rules.truckWaitMax ? `waiting ${int(d.waiting - s.rules.truckWaitMax)} min past its limit` : null,
+        d.dockTime != null && vis.dockEnd == null && d.dockTime > s.rules.dockStayMax ? `at the dock ${int(d.dockTime - s.rules.dockStayMax)} min past its limit` : null,
+        onSite > s.rules.turnaroundMax ? `on site ${int(onSite - s.rules.turnaroundMax)} min past the turnaround limit` : null,
+      ].filter((x): x is string => !!x);
+      if (over.length) actions.push(`${v.label} is ${over.join(', ')}: ${truck.phase === 'waiting' ? 'release the dock closest to completion first, or re-sequence the queue' : 'check the loading / paperwork status with the dock supervisor'}.`);
+      else actions.push(`No visit limit is exceeded — no action needed for ${v.label}.`);
+    } else {
+      const act = internalActivity(v, now);
+      if (act.idleLastHour != null) {
+        confirmed.push(`Idle or waiting ${int(act.idleLastHour)} min of the last 60 min (utilisation ${pct(1 - act.idleLastHour / 60, 0)}).`);
+        facts.push({ label: 'Idle · last hour', value: `${int(act.idleLastHour)} min` });
+      }
+      actions.push(act.idleLastHour != null && act.idleLastHour >= 40 ? `${v.label} has spare handling capacity — it can take work from a busier vehicle.` : `No action needed for ${v.label}.`);
+    }
+  }
+  if (open.length) {
+    confirmed.push(`Open event${open.length === 1 ? '' : 's'}: ${open.slice(0, 3).map((e) => `${e.id} ${e.title}`).join('; ')}.`);
+    actions.unshift(`Ask “What should we do about ${open[0].id}?” for the event's recommended response.`);
+  } else confirmed.push('No open event on this vehicle.');
+  return compose(
+    c,
+    'vehicle',
+    'Now',
+    {
+      confirmed,
+      simulated: ['Vehicle positions, route legs and gate / dock events are simulated at zone level — no GPS, telematics or indoor positioning is connected.'],
+      actions,
+      method: ['Current simulated route leg (position at zone level, activity), the visit record against the configured waiting, dock and turnaround limits (trucks), and the activity log of the last hour (internal vehicles).'],
+    },
+    {
+      facts,
+      links: [fleetLink(s, id), ...open.slice(0, 2).map((e) => eventLink(e))],
+      followUps: ['Which vehicles are delayed?', ...(open[0] ? [`What should we do about ${open[0].id}?`] : [])],
       records: open.slice(0, 4),
     },
   );

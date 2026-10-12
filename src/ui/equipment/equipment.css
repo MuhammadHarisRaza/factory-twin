@@ -1,106 +1,17 @@
 /* ==========================================================================
-   Equipment workspace (src/ui/equipment) — the contextual panel of the Factory
-   Twin for a selected asset, vehicle or highlighted stage. Builds on the shared
-   .inspector / .insp-* / .tw-insp classes; tokens only.
+   Equipment panel — Technical details (src/ui/equipment/TechnicalDetails.tsx,
+   Condition.tsx, CameraSources.tsx): register, condition assessment, signal
+   registry, cameras and stream configuration, history and definitions. The
+   panel itself is styled in ./panel/panel.css. Tokens only.
    ========================================================================== */
 
-.eqw .insp-h h2 {
-  font-size: var(--fs-16);
+/* Condition assessment */
+.eqw-cond .facts {
+  margin-bottom: 6px;
 }
-.eqw-crumb {
-  min-width: 0;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-.eqw .tw-insp-status {
-  flex-wrap: wrap;
-  row-gap: 4px;
-}
-.eqw-reason {
-  margin-top: 5px;
-  font-size: var(--fs-11);
-  line-height: 1.4;
-  color: var(--text-2);
-}
-.eqw-b {
-  scroll-behavior: smooth;
-}
-.eqw-b > .insp-sec,
-.eqw-b > div > .insp-sec {
-  scroll-margin-top: 4px;
-}
-.eqw-video {
-  padding-top: 8px;
-}
-
-/* KPI tiles: two per row in the panel, the unavailable ones say why. */
-.eqw-kpis {
-  grid-template-columns: repeat(2, minmax(0, 1fr));
-}
-.eqw-kpi b {
-  font-size: var(--fs-14);
-  white-space: nowrap;
-  overflow: hidden;
-  text-overflow: ellipsis;
-}
-.eqw-kpi em .status {
-  font-size: var(--fs-11);
-  white-space: normal;
-}
-.eqw-kpi em {
-  overflow-wrap: anywhere;
-}
-.eqw-kpi-sub {
-  color: var(--text-3) !important;
-}
-.eqw-kpi.na {
-  background: var(--bg-0);
-}
-.eqw-na {
-  font-size: var(--fs-13) !important;
-  font-weight: var(--fw-regular) !important;
-}
-.eqw-notes {
-  list-style: none;
-  margin: 8px 0 0;
-  padding: 0;
-  display: flex;
-  flex-direction: column;
-  gap: 5px;
-}
-.eqw-notes li {
-  display: flex;
-  gap: 6px;
-  align-items: flex-start;
-  font-size: var(--fs-11);
-  line-height: 1.45;
-  color: var(--text-3);
-}
-.eqw-notes li svg {
-  flex: none;
-  margin-top: 2px;
-  color: var(--neutral);
-}
-.eqw-notes b {
-  color: var(--text-2);
-  font-weight: var(--fw-medium);
-}
-
-/* Condition */
-.eqw-read {
-  margin-top: 8px;
-  grid-template-columns: minmax(0, 1fr) auto auto auto;
-}
-.eqw .insp-sec .tw-honest {
+.eqw-cond .tw-honest {
   margin-top: 8px;
   padding: 6px 0 0;
-}
-.eqw-eta {
-  margin-top: 6px;
-}
-.eqw-pm {
-  margin-top: 10px;
 }
 .eqw-warn {
   color: var(--warning);
@@ -129,76 +40,7 @@
   color: var(--text-1);
 }
 
-/* Impact */
-.eqw-impact {
-  margin-top: 8px;
-}
-.eqw-role {
-  margin-top: 8px;
-}
-.eqw-role .status {
-  margin-right: 4px;
-}
-
-/* Next steps */
-.eqw-steps {
-  list-style: none;
-  margin: 0;
-  padding: 0;
-  display: flex;
-  flex-direction: column;
-  gap: 10px;
-}
-.eqw-steps li {
-  padding: 8px 10px;
-  border: 1px solid var(--line-2);
-  border-radius: var(--r-2);
-  background: var(--bg-1);
-}
-.eqw-step-h {
-  display: flex;
-  flex-wrap: wrap;
-  align-items: center;
-  gap: 4px 8px;
-}
-.eqw-step-h b {
-  font-size: var(--fs-12);
-  font-weight: var(--fw-semibold);
-  color: var(--text-1);
-}
-.eqw-steps p {
-  margin: 5px 0 0;
-  font-size: var(--fs-12);
-  line-height: 1.5;
-  color: var(--text-2);
-}
-.eqw-step-f {
-  display: flex;
-  flex-wrap: wrap;
-  align-items: center;
-  gap: 6px;
-  margin-top: 7px;
-}
-.eqw-step-f small {
-  flex: 1 1 100%;
-  font-size: var(--fs-11);
-  color: var(--text-3);
-}
-
-.eqw-flow {
-  display: flex;
-  flex-wrap: wrap;
-  gap: 6px;
-}
-
 /* Technical details */
-.eqw-tech .disc {
-  border-top: 0;
-}
-.eqw-tech .disc-h {
-  padding: 2px 0 4px;
-  color: var(--text-1);
-}
 .eqw-sub-h {
   margin: 12px 0 6px;
   font-size: 10.5px;
@@ -206,7 +48,7 @@
   text-transform: uppercase;
   color: var(--text-3);
 }
-.eqw-tech .disc-b > .eqw-sub-h:first-child {
+.eqp-tech .disc-b > .eqw-sub-h:first-child {
   margin-top: 4px;
 }
 .eqw-desc {
@@ -414,7 +256,28 @@
   color: var(--text-2);
 }
 
-/* An odd last tile spans the row, so the tile grid never ends with an empty cell. */
-.eqw-kpis > :last-child:nth-child(odd) {
-  grid-column: 1 / -1;
+/* Definitions of the panel's figures */
+.eqw-defs {
+  margin: 0;
+}
+.eqw-defs > div {
+  padding: 6px 0;
+  border-bottom: 1px solid var(--line);
+}
+.eqw-defs > div:last-child {
+  border-bottom: 0;
+}
+.eqw-defs dt {
+  font-size: var(--fs-12);
+  font-weight: var(--fw-medium);
+  color: var(--text-2);
+}
+.eqw-defs dd {
+  margin: 2px 0 0;
+  font-size: var(--fs-11);
+  line-height: 1.5;
+  color: var(--text-3);
+}
+.eqw-area {
+  margin-top: 8px;
 }

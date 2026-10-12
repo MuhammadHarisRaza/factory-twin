@@ -4,8 +4,11 @@ import { useApp } from './app/store';
 import { VIEW_ORDER } from './data/layout';
 import { useTwinUi } from './ui/twin/uiStore';
 
-/** Overlays that handle Esc themselves (drawers, dialogs, the twin's menus and search results). */
-const OVERLAY_SELECTOR = '[role="dialog"], [aria-modal="true"], .tw-views-pop, .tw-search-pop';
+/**
+ * Overlays that handle Esc themselves (drawers, dialogs, the twin's menus and search results, the
+ * equipment panel's source details — a disclosure, so the other shortcuts keep working while it is open).
+ */
+export const OVERLAY_SELECTOR = '[role="dialog"], [aria-modal="true"], .tw-views-pop, .tw-search-pop, .eqp-pop';
 
 const isTyping = (t: EventTarget | null) =>
   t instanceof HTMLInputElement || t instanceof HTMLSelectElement || t instanceof HTMLTextAreaElement || (t instanceof HTMLElement && t.isContentEditable);

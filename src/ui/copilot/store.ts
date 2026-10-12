@@ -10,7 +10,8 @@
  *     figures equal the KPI cards on screen;
  *   - event: `useApp.copilotEventId` (set by openCopilot(prompt, {eventId}) or the incident picker),
  *     else the event open in Events & Reports or Quality & Defects;
- *   - equipment: the item selected in the Factory Twin; stage: the stage open in Production.
+ *   - equipment: the item selected in the Factory Twin; vehicle: the vehicle selected there; stage: the
+ *     stage open in Production.
  * A context the user removed stays removed for that record (until another record is selected).
  */
 import { create } from 'zustand';
@@ -38,6 +39,8 @@ export type CopilotContextView = {
   event: { id: string; title: string; severity: AlertSeverity; active: boolean; source: ContextSource } | null;
   equipmentId: string | null;
   stageId: MonitoredStageId | null;
+  /** The vehicle selected in the Factory Twin ("this vehicle / truck"). */
+  vehicleId?: string | null;
 };
 
 export type ContextInputs = {
@@ -48,6 +51,8 @@ export type ContextInputs = {
   qualityEventId: string | null;
   productionStage: MonitoredStageId | null;
   twinSelected: string | null;
+  /** The vehicle selected in the Factory Twin. */
+  twinVehicle?: string | null;
   /** Context keys the user removed ("event:EV-00012", "equipment:H-KILN", "stage:GLAZE"). */
   dismissed: string[];
 };
@@ -77,6 +82,7 @@ export function deriveContext(sim: SimState, i: ContextInputs): CopilotContextVi
     break;
   }
   const eq = i.workspace === 'twin' && i.twinSelected && EQUIPMENT_BY_ID[i.twinSelected] && !off(`equipment:${i.twinSelected}`) ? i.twinSelected : null;
+  const vehicleId = i.workspace === 'twin' && i.twinVehicle && sim.logistics.vehicles[i.twinVehicle] ? i.twinVehicle : null;
   const st = i.workspace === 'production' && i.productionStage && MONITORED_STAGE_BY_ID[i.productionStage] && !off(`stage:${i.productionStage}`) ? i.productionStage : null;
   return {
     workspace: i.workspace,
@@ -86,6 +92,7 @@ export function deriveContext(sim: SimState, i: ContextInputs): CopilotContextVi
     event,
     equipmentId: eq,
     stageId: st,
+    vehicleId,
   };
 }
 
@@ -99,6 +106,7 @@ function inputsNow(): ContextInputs {
     qualityEventId: a.qualityEventId,
     productionStage: a.productionStage,
     twinSelected: useTwin.getState().selected,
+    twinVehicle: useTwin.getState().vehicle,
     dismissed: useCopilot.getState().dismissed,
   };
 }
@@ -115,10 +123,11 @@ export function useCopilotContext(): CopilotContextView {
   const qualityEventId = useApp((s) => s.qualityEventId);
   const productionStage = useApp((s) => s.productionStage);
   const twinSelected = useTwin((s) => s.selected);
+  const twinVehicle = useTwin((s) => s.vehicle);
   const dismissed = useCopilot((s) => s.dismissed);
   return useSimValue(
-    (sim) => deriveContext(sim, { workspace, period, copilotEventId, selectedEventId, qualityEventId, productionStage, twinSelected, dismissed }),
-    [workspace, period, copilotEventId, selectedEventId, qualityEventId, productionStage, twinSelected, dismissed],
+    (sim) => deriveContext(sim, { workspace, period, copilotEventId, selectedEventId, qualityEventId, productionStage, twinSelected, twinVehicle, dismissed }),
+    [workspace, period, copilotEventId, selectedEventId, qualityEventId, productionStage, twinSelected, twinVehicle, dismissed],
   );
 }
 
@@ -164,7 +173,7 @@ export function contextFor(explicit: string | null | undefined): string | null {
 }
 
 /** Answer for a question against the current state; never throws (the demo must not break mid-meeting). */
-function answer(question: string, ctx: { eventId: string | null; period: PeriodKey; equipmentId: string | null; stageId: MonitoredStageId | null }): { answer: CopilotAnswer; minute: number } {
+function answer(question: string, ctx: { eventId: string | null; period: PeriodKey; equipmentId: string | null; stageId: MonitoredStageId | null; vehicleId?: string | null }): { answer: CopilotAnswer; minute: number } {
   const sim = useSim.getState().sim;
   const { tariffs, finance } = useApp.getState();
   try {
@@ -196,7 +205,7 @@ export const useCopilot = create<CopilotState>((set, get) => ({
     if (!q) return;
     const ctx = currentContext();
     const contextEventId = contextFor(opts?.eventId !== undefined ? opts.eventId : (ctx.event?.id ?? null));
-    const a = answer(q, { eventId: contextEventId, period: ctx.period, equipmentId: ctx.equipmentId, stageId: ctx.stageId });
+    const a = answer(q, { eventId: contextEventId, period: ctx.period, equipmentId: ctx.equipmentId, stageId: ctx.stageId, vehicleId: ctx.vehicleId ?? null });
     set({
       turns: [...get().turns, { id: ++seq, question: q, contextEventId, context: { periodLabel: ctx.periodLabel, equipmentId: ctx.equipmentId, stageId: ctx.stageId }, ...a }].slice(-MAX_TURNS),
     });

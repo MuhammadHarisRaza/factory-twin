@@ -107,6 +107,12 @@
 .vp-poster:disabled {
   cursor: default;
 }
+/* The frame clips anything outside it (overflow: hidden): the play control's focus ring is drawn inside. */
+.vp-poster:focus-visible {
+  box-shadow:
+    inset 0 0 0 2px var(--accent),
+    inset 0 0 0 4px var(--bg-0);
+}
 .vp-blank {
   position: absolute;
   inset: 0;

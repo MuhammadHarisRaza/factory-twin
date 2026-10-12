@@ -22,7 +22,7 @@ import { useTwin } from '../../store';
 import { constraintClaim, constraintPhrase, executiveSummary } from '../../intel/summary';
 import { constraintChipTitle } from '../../scene/status/model';
 import { constraintRole } from '../equipment/context';
-import { EquipmentWorkspace } from '../equipment/EquipmentWorkspace';
+import { SelectedEquipmentPanel } from '../equipment/panel/EquipmentPanel';
 import { assetProfile } from '../equipment/profile';
 import { ACTIVE_CONSTRAINT_LABEL, DESIGN_CONSTRAINT_LABEL, constraintMarker } from './constraint';
 import { lineStatus } from './derive';
@@ -170,14 +170,16 @@ describe('constraint marker render', () => {
     expect(stopped).toMatch(/class="tw-stage\s+bn active\s+"/);
   });
 
-  it('equipment workspace: no "Line constraint now" for the kiln in a normal state', () => {
+  it('equipment panel: no "Line constraint now" for the kiln in a normal state', () => {
     useTwin.getState().reset();
-    const out = html(normal(), <EquipmentWorkspace id="H-KILN" />);
+    const out = html(normal(), <SelectedEquipmentPanel id="H-KILN" />);
     expect(out).toContain('Design constraint (modeled)');
     expect(out).toContain('Kiln firing &amp; cooling is the modeled design constraint');
     expect(out).not.toMatch(LIVE_CLAIM);
-    const stopped = html(kilnStopped(), <EquipmentWorkspace id="H-KILN" />);
-    expect(stopped).toContain('Constraining output');
-    expect(stopped).toContain('is currently constraining output');
+    const stopped = html(kilnStopped(), <SelectedEquipmentPanel id="H-KILN" />);
+    // The role facet carries the claim; the stop's insight says why it costs line output.
+    expect(stopped).toMatch(/Line role<\/span><span class="v">.*?Constraining output<\/span>/);
+    expect(stopped).toMatch(/Kiln held up \d+ min · [\d.,]+ m² line output lost so far/);
+    expect(stopped).toContain('The kiln is the line constraint: every minute it is held up is line output lost');
   });
 });

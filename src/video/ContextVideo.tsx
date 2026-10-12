@@ -37,15 +37,29 @@ export function clipsFor(ctx: VideoContext, videos: VideoRef[] = VIDEOS): { topi
  * `subject` names what the panel is about (e.g. a vehicle id). While a clip plays, a change of context
  * for the same subject (a truck moving from the queue to the dock changes the topic) does not swap the
  * clip under the viewer; selecting another subject does.
+ * `bare`: one clip only — the most specific topic's — with no topic tabs, no heading and the bare
+ * player (no caption); the host shows its source.
  */
-export function ContextVideo({ context, compact = false, title = 'Reference video', subject }: { context: VideoContext; compact?: boolean; title?: string; subject?: string }) {
+export function ContextVideo({
+  context,
+  compact = false,
+  bare = false,
+  title = 'Reference video',
+  subject,
+}: {
+  context: VideoContext;
+  compact?: boolean;
+  bare?: boolean;
+  title?: string;
+  subject?: string;
+}) {
   const clips = useMemo(() => clipsFor(context), [context]);
   const key = `${context.equipmentId ?? ''}|${context.stage ?? ''}|${context.topic ?? ''}`;
   const who = subject ?? `${context.equipmentId ?? ''}|${context.stage ?? ''}`;
   const [pick, setPick] = useState<{ key: string; topic: VideoTopic } | null>(null);
   // The clip being watched, kept while its player is loaded and the subject is the same.
   const [held, setHeld] = useState<{ who: string; clip: { topic: VideoTopic; video: VideoRef } } | null>(null);
-  const topic = pick && pick.key === key ? pick.topic : clips[0]?.topic;
+  const topic = pick && pick.key === key && !bare ? pick.topic : clips[0]?.topic;
   const chosen = clips.find((c) => c.topic === topic) ?? clips[0];
   const current = held && held.who === who ? held.clip : chosen;
   const onActiveChange = useCallback(
@@ -63,6 +77,12 @@ export function ContextVideo({ context, compact = false, title = 'Reference vide
       </div>
     );
   }
+  if (bare)
+    return (
+      <div className="cv bare">
+        <VideoPlayer key={current.video.id} video={current.video} bare onActiveChange={onActiveChange} />
+      </div>
+    );
   return (
     <div className={`cv ${compact ? 'compact' : ''}`}>
       {(clips.length > 1 || !compact) && (

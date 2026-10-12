@@ -1,16 +1,19 @@
 /**
- * Condition monitoring in the equipment workspace (consolidated from the retired Machine Health
- * page): the current rule-based assessment of a condition-monitored asset with its simulated
- * sensors, and — under Technical details — the 24-h signal charts, alarm and maintenance history.
+ * Condition monitoring of an asset, under the equipment panel's Technical details (the main view
+ * shows the condition only as a facet, its signals and — when it matters — an insight): the
+ * rule-based assessment with its condition indicator and that indicator's definition, findings,
+ * PM status and the condition-based maintenance action, then the 24-h signal charts, alarm and
+ * maintenance history. The indicator is never shown on the main view and is not a probability of failure.
  */
 import { useState, type ReactNode } from 'react';
 import { CalendarClock, FastForward, OctagonX, Repeat, Wrench, X, type LucideIcon } from 'lucide-react';
 import { REASON_BY_CODE, SCENARIO_KIND_LABELS } from '../../model/plant';
 import type { DowntimeEvent } from '../../model/types';
-import { HEALTH_BY_ID, formatH, sensorHistory, type HealthAssessment } from '../../sim/health';
+import { HEALTH_BY_ID, formatH, type HealthAssessment } from '../../sim/health';
 import { useSim, useSimValue } from '../../sim/store';
 import { formatClock, formatDateTime, formatDuration } from '../../sim/time';
-import { LineChart, Sparkline } from '../kit/charts';
+import { LineChart } from '../kit/charts';
+import { Facts } from '../kit/Page';
 import { fmt1, fmtInt } from '../kit/format';
 import { SourceTag, StatusBadge, type Tone } from '../kit/Status';
 import {
@@ -31,6 +34,9 @@ import {
 } from './monitoring';
 import type { AssetProfile } from './profile';
 
+/** The condition indicator's definition (the panel shows the indicator only with it). */
+export const INDICATOR_DEFINITION = 'Rule-based indicator from vibration vs expected and temperature vs alarm — not a probability of failure.';
+
 export function LevelBadge({ level }: { level: HealthAssessment['level'] }) {
   const m = LEVEL_META[level];
   return (
@@ -40,32 +46,14 @@ export function LevelBadge({ level }: { level: HealthAssessment['level'] }) {
   );
 }
 
-/** Confirmation of a condition-based maintenance stop scheduled from the workspace. */
+/** Confirmation of a condition-based maintenance stop scheduled from the panel. */
 type Scheduled = { id: string; at: number; until: number };
 
-/** Current condition: level, score and its meaning, findings, simulated sensors, PM status and the maintenance action. */
-export function ConditionSection({ prof, h }: { prof: AssetProfile; h: HealthAssessment | null }) {
-  if (!prof.conditionMonitored || !h)
-    return (
-      <section className="insp-sec" aria-label="Current condition">
-        <h3>Current condition</h3>
-        <p className="insp-desc">
-          No condition monitoring on this asset.
-          {prof.tracked ? ' Its operating state comes from its simulated PLC signals only; no vibration or temperature sensors are modelled.' : ''}
-        </p>
-      </section>
-    );
-  return <MonitoredCondition id={prof.id} h={h} />;
-}
-
-function MonitoredCondition({ id, h }: { id: string; h: HealthAssessment }) {
+/** Technical details › Condition: level, indicator with its definition, findings, PM status and the CBM action. */
+export function ConditionAssessment({ id, h }: { id: string; h: HealthAssessment }) {
   const a = HEALTH_BY_ID[id];
-  const d = useSimValue((s) => ({ hist: sensorHistory(s, id, 360, 10), until: maintenanceUntil(s, id), now: s.minute }), [id]);
+  const d = useSimValue((s) => ({ until: maintenanceUntil(s, id), now: s.minute }), [id]);
   const [scheduled, setScheduled] = useState<Scheduled | null>(null);
-  const vib = d.hist.map((x) => (x.running ? x.vibration : null));
-  const temp = d.hist.map((x) => x.temperature);
-  const cur = d.hist.map((x) => (x.running ? x.current : null));
-  const peak = (xs: (number | null)[], floor: number) => Math.max(floor, ...xs.filter((x): x is number => x != null));
   const gate = maintenanceGate(h, d.until);
   const fb = scheduled && scheduled.id === id ? scheduled : null;
   const eta = etaText(h, formatH);
@@ -78,64 +66,36 @@ function MonitoredCondition({ id, h }: { id: string; h: HealthAssessment }) {
   };
 
   return (
-    <section className="insp-sec" aria-label="Current condition">
-      <h3>Current condition · {a.component}</h3>
-      <div className="tw-health-top">
-        <div className="tw-score" title={SCORE_MEANING}>
-          <b className="num">{offline ? '—' : h.score}</b>
-          {!offline && <span>/100</span>}
-        </div>
-        <LevelBadge level={h.level} />
-        {h.vibrationRatio != null && !offline && <span className="muted num">vibration {h.vibrationRatio.toFixed(2)}× expected</span>}
-      </div>
-      <p className="tw-fine">{offline ? 'Not assessed: the asset has not run in the last 60 min, so there are no running samples to judge.' : SCORE_MEANING}</p>
-      {h.findings.length ? (
+    <div className="eqw-cond">
+      <Facts
+        rows={[
+          { label: 'Monitored component', value: a.component },
+          { label: 'Level', value: <LevelBadge level={h.level} /> },
+          {
+            label: 'Condition indicator',
+            value: offline ? 'Not assessed (not running)' : <span className="num">{h.score} / 100</span>,
+            hint: SCORE_MEANING,
+          },
+          ...(h.vibrationRatio != null && !offline ? [{ label: 'Vibration vs expected', value: <span className="num">{h.vibrationRatio.toFixed(2)}×</span> }] : []),
+          ...(eta ? [{ label: 'Vibration trend', value: `${eta} if it continues` }] : []),
+          { label: 'Run since last PM', value: `${fmtInt(h.runtimeSincePmH)} h of a ${fmtInt(a.pmIntervalH)} h interval` },
+          {
+            label: 'Next PM',
+            value: <span className={h.pmDueH < PM_SOON_H ? 'eqw-warn' : ''}>{h.pmDueH >= 0 ? `due in ${fmtInt(h.pmDueH)} run hours` : `overdue by ${fmtInt(-h.pmDueH)} run hours`}</span>,
+          },
+          ...(d.until != null ? [{ label: 'Maintenance', value: `In progress until ${formatClock(d.until)}` }] : []),
+        ]}
+      />
+      <p className="tw-fine">
+        <b>Condition indicator:</b> {INDICATOR_DEFINITION} {SCORE_MEANING.replace(/ It is not a probability of failure\.$/, '')}
+      </p>
+      {h.findings.length > 0 && (
         <ul className="tw-list">
           {h.findings.map((f) => (
             <li key={f}>{f}</li>
           ))}
         </ul>
-      ) : (
-        !offline && <p className="insp-desc">No abnormal pattern in the last 3 h of running.</p>
       )}
-      {eta && <p className="insp-desc eqw-eta">Vibration trend: {eta} if it continues.</p>}
-
-      <div className="tw-read eqw-read" role="group" aria-label="Simulated sensors, last 6 h">
-        <span className="h">Simulated sensor</span>
-        <span className="h n">Now</span>
-        <span className="h n">Limit</span>
-        <span className="h">6 h</span>
-
-        <span title={`Expected ${fmt1(h.expectedVibration)} mm/s at the current load`}>Vibration · mm/s</span>
-        <span className="n num">{fmt1(h.reading.vibration)}</span>
-        <span className="n num muted">{fmt1(a.vib.alarm)}</span>
-        <Sparkline values={vib} width={64} height={18} color="var(--series-1)" max={peak(vib, a.vib.alarm)} />
-
-        <span>Temperature · °C</span>
-        <span className="n num">{h.reading.temperature.toFixed(0)}</span>
-        <span className="n num muted">{a.temp.alarm}</span>
-        <Sparkline values={temp} width={64} height={18} color="var(--series-1)" max={peak(temp, a.temp.alarm)} />
-
-        <span title="Shown against the motor rating">Motor current · A</span>
-        <span className="n num">{fmtInt(h.reading.current)}</span>
-        <span className="n num muted">≤ {a.currentRated}</span>
-        <Sparkline values={cur} width={64} height={18} color="var(--series-1)" max={peak(cur, a.currentRated)} />
-      </div>
-      <dl className="dl eqw-pm">
-        <dt>Run since last PM</dt>
-        <dd>
-          {fmtInt(h.runtimeSincePmH)} h <span className="muted">of a {fmtInt(a.pmIntervalH)} h interval</span>
-        </dd>
-        <dt>Next PM</dt>
-        <dd className={h.pmDueH < PM_SOON_H ? 'eqw-warn' : ''}>{h.pmDueH >= 0 ? `due in ${fmtInt(h.pmDueH)} run hours` : `overdue by ${fmtInt(-h.pmDueH)} run hours`}</dd>
-        {d.until != null && (
-          <>
-            <dt>Maintenance</dt>
-            <dd>In progress until {formatClock(d.until)}</dd>
-          </>
-        )}
-      </dl>
-      {h.impact && <p className="insp-desc">{h.impact}</p>}
       <div className="eqw-cbm">
         <button
           type="button"
@@ -164,7 +124,7 @@ function MonitoredCondition({ id, h }: { id: string; h: HealthAssessment }) {
         </p>
       )}
       <p className="tw-honest">{HONEST_CONDITION}</p>
-    </section>
+    </div>
   );
 }
 
@@ -219,7 +179,7 @@ function ConditionCharts({ id, h }: { id: string; h: HealthAssessment }) {
           ]}
         />
       </ChartBlock>
-      <ChartBlock title="Temperature · °C · 24 h" now={`${fmtInt(h.reading.temperature)} °C`}>
+      <ChartBlock title={`Component temperature · ${a.component} · °C · 24 h`} now={`${fmtInt(h.reading.temperature)} °C`}>
         <LineChart
           labels={labels}
           height={110}

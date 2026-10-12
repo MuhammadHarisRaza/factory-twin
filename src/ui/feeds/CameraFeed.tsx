@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useRef, useState, type CSSProperties, type ReactNode, type RefObject } from 'react';
+import { useCallback, useEffect, useId, useMemo, useRef, useState, type CSSProperties, type ReactNode, type RefObject } from 'react';
 import { Camera, CirclePlay, LoaderCircle, RefreshCw, VideoOff, WifiOff, type LucideIcon } from 'lucide-react';
 import { useApp, type CameraSource } from '../../app/store';
 import { CAMERA_BY_ID, MONITORED_STAGE_BY_ID, STAGE_BY_ID } from '../../model/plant';
@@ -173,7 +173,7 @@ function FeedFrame({
         {actions}
       </div>
       {note && (
-        <div className="feed-note" role="status">
+        <div className="feed-note" role="status" title={typeof note === 'string' ? note : undefined}>
           {note}
         </div>
       )}
@@ -183,7 +183,7 @@ function FeedFrame({
 
 function SnapshotButton({ onClick, disabled, busy, compact, title }: { onClick: () => void; disabled?: boolean; busy?: boolean; compact: boolean; title: string }) {
   return (
-    <button className={`btn ghost sm ${compact ? 'icon' : ''}`} onClick={onClick} disabled={disabled || busy} title={title} aria-label="Take a snapshot">
+    <button className={`btn ghost sm feed-snap ${compact ? 'icon' : ''}`} onClick={onClick} disabled={disabled || busy} title={title} aria-label="Take a snapshot">
       {busy ? <LoaderCircle size={13} className="feed-spin" aria-hidden /> : <Camera size={13} aria-hidden />}
       {!compact && 'Snapshot'}
     </button>
@@ -285,7 +285,7 @@ function SimulatedFeed({
       actions={
         <>
           {streamConfigured && (
-            <button className="btn ghost sm" onClick={onBackToStream} title="Show the configured stream again">
+            <button className="btn ghost sm feed-back" onClick={onBackToStream} title="Show the configured stream again">
               {compact ? 'Stream' : 'Back to stream'}
             </button>
           )}
@@ -344,11 +344,14 @@ function LiveFeed({
     [go],
   );
 
+  // Each player reports under its own id: another player of the same camera (the floating camera view
+  // next to the panel's feed) mounting or closing never resets this one's state.
+  const playerId = useId();
   const report = useLiveStatus((s) => s.report);
   useEffect(() => {
-    report(cam.id, { state, at: Date.now(), detail: detail ?? undefined });
-  }, [cam.id, state, detail, report]);
-  useEffect(() => () => report(cam.id, null), [cam.id, report]);
+    report(cam.id, { state, at: Date.now(), detail: detail ?? undefined }, playerId);
+  }, [cam.id, state, detail, report, playerId]);
+  useEffect(() => () => report(cam.id, null, playerId), [cam.id, report, playerId]);
 
   // Registry of playing elements (event evidence grabs its frame from here).
   useEffect(() => {

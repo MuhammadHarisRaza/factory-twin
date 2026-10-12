@@ -28,20 +28,43 @@ export function liveElement(cameraId: string) {
 export type LiveReport = { state: LiveState; at: number; detail?: string };
 
 type LiveStatusStore = {
+  /** The camera's state: the best of what its mounted players report (absent = no player open for it). */
   byCamera: Record<string, LiveReport>;
-  report: (cameraId: string, r: LiveReport | null) => void;
+  /**
+   * What each mounted player of a camera reports, by player id — the equipment panel's feed and the
+   * floating camera view can show the same camera at once; one closing never wipes the other's state.
+   */
+  byPlayer: Record<string, Record<string, LiveReport>>;
+  /** A player's report (null: the player unmounted). `playerId` defaults to one shared slot. */
+  report: (cameraId: string, r: LiveReport | null, playerId?: string) => void;
 };
 
-/** Latest state reported by a mounted player per camera (absent = no player open for it). */
+/** Which report wins when several players show one camera: the one closest to playing, then the newest. */
+const RANK: Record<LiveState, number> = { live: 6, unverified: 5, stale: 4, loading: 3, error: 2, unavailable: 1 };
+const best = (rs: LiveReport[]) => rs.reduce<LiveReport | null>((b, r) => (!b || RANK[r.state] > RANK[b.state] || (RANK[r.state] === RANK[b.state] && r.at > b.at) ? r : b), null);
+
+/** Latest state reported by the mounted players of each camera (absent = no player open for it). */
 export const useLiveStatus = create<LiveStatusStore>((set) => ({
   byCamera: {},
-  report: (cameraId, r) =>
+  byPlayer: {},
+  report: (cameraId, r, playerId = 'default') =>
     set((s) => {
-      const cur = s.byCamera[cameraId];
+      const players = { ...(s.byPlayer[cameraId] ?? {}) };
+      const cur = players[playerId];
       if (r && cur && cur.state === r.state && cur.detail === r.detail) return s;
-      const next = { ...s.byCamera };
-      if (r) next[cameraId] = r;
-      else delete next[cameraId];
-      return { byCamera: next };
+      if (!r && !cur) return s;
+      if (r) players[playerId] = r;
+      else delete players[playerId];
+      const byPlayer = { ...s.byPlayer };
+      const byCamera = { ...s.byCamera };
+      const top = best(Object.values(players));
+      if (top) {
+        byPlayer[cameraId] = players;
+        byCamera[cameraId] = top;
+      } else {
+        delete byPlayer[cameraId];
+        delete byCamera[cameraId];
+      }
+      return { byPlayer, byCamera };
     }),
 }));

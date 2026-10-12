@@ -8,7 +8,7 @@ vi.hoisted(() => {
 });
 import { EQUIPMENT_BY_ID } from '../../data/equipment';
 import { MONITORED_STAGES } from '../../model/plant';
-import { clipsFor, topicsFor } from '../ContextVideo';
+import { ContextVideo, clipsFor, topicsFor } from '../ContextVideo';
 import { VIDEOS } from '../registry';
 import { EQUIPMENT_TOPICS, STAGE_TOPICS, TOPIC_LABEL } from '../topics';
 import type { VideoRef } from '../types';
@@ -72,6 +72,28 @@ describe('video player', () => {
     const html = renderToStaticMarkup(<VideoPlayer video={clip({ embedUrl: null, embed: 'not-allowed' })} />);
     expect(html).toContain('can only be watched on YouTube');
     expect(html).not.toContain('<iframe');
+  });
+
+  it('bare mode: the frame only — poster and play, no caption, still lazy (the host shows the source)', () => {
+    const html = renderToStaticMarkup(<VideoPlayer video={clip({})} bare />);
+    expect(html).not.toContain('<figcaption');
+    expect(html).not.toContain('Illustrative equipment footage');
+    expect(html).not.toContain('not a live view');
+    expect(html).toContain('class="vp-poster"');
+    expect(html).toContain('aria-label="Play illustrative equipment footage: Roller kiln exterior"');
+    expect(html).not.toContain('<iframe');
+    expect(html).not.toContain('<video');
+    // The fallback for a clip that cannot be embedded stays.
+    expect(renderToStaticMarkup(<VideoPlayer video={clip({ embedUrl: null, embed: 'not-allowed' })} bare />)).toContain('can only be watched on YouTube');
+  });
+
+  it('bare context video: one clip, no topic tabs, even where several topics apply (the kiln)', () => {
+    const tabs = renderToStaticMarkup(<ContextVideo context={{ equipmentId: 'H-KILN' }} compact />);
+    expect(tabs).toContain('role="tablist"');
+    const bare = renderToStaticMarkup(<ContextVideo context={{ equipmentId: 'H-KILN' }} bare />);
+    expect(bare).not.toContain('role="tablist"');
+    expect(bare).not.toContain('<figcaption');
+    expect(bare.match(/class="vp-poster"/g)).toHaveLength(1);
   });
 });
 

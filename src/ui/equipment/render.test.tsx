@@ -1,6 +1,6 @@
 /**
  * Smoke test (server-side): the camera feed in every mode and the cameras / stream editor of the
- * equipment workspace's technical details render with their honesty labels — "Live" never appears
+ * equipment panel's technical details render with their honesty labels — "Live" never appears
  * for a simulated or not-yet-playing feed — and the vehicle variant and stage panel render.
  */
 import { describe, expect, it, vi } from 'vitest';
@@ -20,7 +20,7 @@ import { CameraFeed, SIMULATED_LABEL } from '../feeds/CameraFeed';
 import { useTwinUi } from '../twin/uiStore';
 import { StagePanel } from '../twin/StagePanel';
 import { CameraSources, StreamEditor, camerasOf } from './CameraSources';
-import { flowLinks } from './EquipmentWorkspace';
+import { flowLinks } from './panel/links';
 import { assetProfile } from './profile';
 
 useSim.getState().pause();
@@ -90,10 +90,11 @@ describe('equipment cameras', () => {
 describe('workflow links and stage panel', () => {
   it('links each asset to the workflows that explain it', () => {
     const labels = (id: string) => flowLinks(assetProfile(id)).map((l) => l.key);
-    expect(labels('E-PRS2')).toEqual(['production', 'events']);
-    expect(labels('I-VIS')).toEqual(['production', 'quality', 'events']);
-    expect(labels('K-DOCK')).toEqual(['production', 'fleet', 'events']);
-    expect(labels('A-PARK')).toEqual(['events']);
+    // The subject's events are the Events section's "View all" — not repeated as a link.
+    expect(labels('E-PRS2')).toEqual(['production']);
+    expect(labels('I-VIS')).toEqual(['production', 'quality']);
+    expect(labels('K-DOCK')).toEqual(['production', 'fleet']);
+    expect(labels('A-PARK')).toEqual([]);
   });
 
   it('renders the stage panel of every production stage', () => {

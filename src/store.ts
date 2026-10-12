@@ -177,7 +177,12 @@ export const useTwin = create<TwinState>((set, get) => ({
 
   toggle: (layer) => set((s) => ({ layers: { ...s.layers, [layer]: !s.layers[layer] } })),
   selectStage: (id, opts) => {
-    set({ stage: id });
+    // The invariant of select(), the other way round: a highlighted stage never sits above a selected
+    // asset outside it (no kiln under "Stage · Packaging & palletising"), nor above a selected vehicle.
+    const cur = get();
+    const ms = id ? MONITORED_STAGE_BY_ID[id] : null;
+    const keepAsset = !ms || !cur.selected || ms.equipment.includes(cur.selected) || ms.conveyors.includes(cur.selected);
+    set({ stage: id, ...(keepAsset ? {} : { selected: null }), ...(id && cur.vehicle ? { vehicle: null, follow: false } : {}) });
     if (!id || opts?.frame === false) return;
     const st = MONITORED_STAGE_BY_ID[id];
     // Frame every asset of the stage that has a measured bounding box (the model registers them on load).
@@ -198,10 +203,17 @@ export const useTwin = create<TwinState>((set, get) => ({
     } else set({ zone: st.zone });
   },
   setAlertFilter: (alertFilter) => set({ alertFilter }),
-  selectVehicle: (id, follow = false) => set({ vehicle: id, follow: id ? follow : false, selected: id ? null : get().selected }),
+  // A vehicle belongs to no production stage: selecting one releases the stage highlight (the breadcrumb
+  // never shows "Stage · X › FL-02").
+  selectVehicle: (id, follow = false) => set({ vehicle: id, follow: id ? follow : false, selected: id ? null : get().selected, ...(id ? { stage: null } : {}) }),
   setFollow: (follow) => set({ follow }),
   select: (id) => {
-    set({ selected: id, vehicle: id ? null : get().vehicle, follow: id ? false : get().follow });
+    // The stage highlight stays only when the selected asset belongs to that stage; otherwise it is
+    // cleared, so the breadcrumb never shows the kiln selected under "Stage · Packaging & palletising".
+    const cur = get().stage;
+    const ms = cur ? MONITORED_STAGE_BY_ID[cur] : null;
+    const keepStage = !id || (ms != null && (ms.equipment.includes(id) || ms.conveyors.includes(id)));
+    set({ selected: id, vehicle: id ? null : get().vehicle, follow: id ? false : get().follow, ...(keepStage ? {} : { stage: null }) });
     if (id) {
       set({ zone: EQUIPMENT_BY_ID[id].zone });
       get().focusEquipment(id);

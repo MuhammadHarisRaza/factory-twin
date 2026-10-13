@@ -2,9 +2,12 @@
  * The shell every contextual panel of the Factory Twin shares (equipment, vehicle, stage): a fixed
  * header, a scrolling body (overscroll contained, so the model behind never scrolls with it) and a
  * persistent action bar. The header carries the one status line: state pill, since, source pill.
+ * Wide (src/ui/twin/panelWidth.ts) the header is one line and the width button sits by the close button.
  */
 import type { ReactNode, Ref } from 'react';
-import { CircleDashed, CircleHelp, Radio, X, type LucideIcon } from 'lucide-react';
+import { CircleDashed, CircleHelp, Maximize2, Minimize2, Radio, X, type LucideIcon } from 'lucide-react';
+import { useWidePanel, useWidePanelFits } from '../../twin/panelWidth';
+import { useTwinUi } from '../../twin/uiStore';
 import type { FlowLink } from './links';
 
 export function PanelShell({
@@ -55,6 +58,7 @@ export function PanelHeader({
   closeLabel: string;
   closeTitle?: string;
 }) {
+  const fits = useWidePanelFits();
   return (
     <header className="eqp-h">
       <div className="eqp-h-main">
@@ -69,10 +73,28 @@ export function PanelHeader({
         <div className="eqp-h-sub">{subtitle}</div>
         <div className="eqp-h-status">{status}</div>
       </div>
+      {fits && <WidthToggle />}
       <button type="button" className="btn ghost sm icon eqp-close" onClick={onClose} title={closeTitle} aria-label={closeLabel}>
         <X size={16} />
       </button>
     </header>
+  );
+}
+
+/** The panel's width button (wide: 70 % of the screen, two columns · compact: one column at the side); remembered. */
+function WidthToggle() {
+  const wide = useWidePanel();
+  return (
+    <button
+      type="button"
+      className="btn ghost sm icon eqp-width"
+      aria-pressed={wide}
+      aria-label="Wide panel"
+      title={wide ? 'Compact panel — one column at the side' : 'Wide panel — 70 % of the screen, the video across the top'}
+      onClick={() => useTwinUi.getState().setPanelWide(!wide)}
+    >
+      {wide ? <Minimize2 size={15} aria-hidden /> : <Maximize2 size={15} aria-hidden />}
+    </button>
   );
 }
 

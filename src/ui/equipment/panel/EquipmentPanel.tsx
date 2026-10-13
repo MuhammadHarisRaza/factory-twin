@@ -2,10 +2,15 @@
  * The equipment intelligence panel — ONE component for every selectable asset of the 3D factory and
  * every vehicle, rendering an EquipmentIntel (./../intel/types.ts) derived from the shared simulation.
  *
- *   fixed header   zone · name · stage · id · state pill + since + source pill · close
+ *   fixed header   zone · name · stage · id · state pill + since + source pill · width · close
  *   scrolling body feed (one) → facets → key figures → what matters → last 4 h → signals → events
  *                  → continue in → technical details (collapsed)
  *   action bar     Focus (follow a vehicle) · Camera (the floating camera view) · Ask Copilot
+ *
+ * Wide (the default where the window fits it, src/ui/twin/panelWidth.ts: 70 % of the screen) the feed and
+ * facets run across the panel's top; under them two columns — key figures, what matters and events on
+ * the left, the last 4 h and signals on the right — then continue in and technical details. Compact it
+ * is the one column above.
  *
  * Status and provenance are said once: the state and the source in the header, the feed's own source
  * in its badge. Links (Overview quick views, event rows) can ask for a section (useTwinUi.focusSection):
@@ -22,6 +27,7 @@ import { useCopilot } from '../../copilot/store';
 import { openEventRecord, openEventsFor } from '../../events/open';
 import { OPERATIONAL_STATE } from '../../kit/Status';
 import { useTwinUi, type WorkspaceSection } from '../../twin/uiStore';
+import { useWidePanel } from '../../twin/panelWidth';
 import { deriveEquipmentIntel, deriveVehicleIntel } from '../intel/derive';
 import type { EquipmentIntel, Facet, IntelHeader } from '../intel/types';
 import { TechnicalDetails } from '../TechnicalDetails';
@@ -234,6 +240,7 @@ export function EquipmentPanel({ intel, now }: { intel: EquipmentIntel; now: num
   const camOpen = useTwinUi((s) => s.camera);
   const focusFor = useTwinUi((s) => s.focusFor);
   const stream = useStreamState(intel.feed.kind === 'live-stream' ? intel.feed.cameraId : null);
+  const wide = useWidePanel();
 
   // Per-subject view state: the expanded event and the signal row an evidence chip pointed to.
   const [openEv, setOpenEv] = useState<{ id: string; ev: string } | null>(null);
@@ -359,65 +366,97 @@ export function EquipmentPanel({ intel, now }: { intel: EquipmentIntel; now: num
     [intel.insights, sig.headerEqual],
   );
 
-  return (
-    <PanelShell label={`${h.title} · ${vehicle ? 'vehicle' : 'equipment'} details`} header={header} actions={actions} bodyRef={body} className={vehicle ? 'eqp-vehicle' : ''}>
-      <div className="eqp-top" ref={reg('feed')}>
-        <FeedView feed={intel.feed} subject={id} />
-        <Facets facets={facets} />
+  const top = (
+    <div className="eqp-top" ref={reg('feed')}>
+      <FeedView feed={intel.feed} subject={id} />
+      <Facets facets={facets} />
+    </div>
+  );
+
+  const figures =
+    (tiles.length > 0 || intel.metrics.note) &&
+    (tiles.length > 0 ? (
+      <Section id={`eqp-kpi-${id}`} title="Key figures" meta={<MetricsScope set={metrics} own={vehicle ? undefined : id} />}>
+        <MetricTiles set={metrics} label={`${h.title} key figures`} quiet={quiet} omit={omit} />
+      </Section>
+    ) : (
+      <div className="eqp-sec">
+        <MetricTiles set={metrics} label={`${h.title} key figures`} />
       </div>
+    ));
 
-      {(tiles.length > 0 || intel.metrics.note) &&
-        (tiles.length > 0 ? (
-          <Section id={`eqp-kpi-${id}`} title="Key figures" meta={<MetricsScope set={metrics} own={vehicle ? undefined : id} />}>
-            <MetricTiles set={metrics} label={`${h.title} key figures`} quiet={quiet} omit={omit} />
-          </Section>
-        ) : (
-          <div className="eqp-sec">
-            <MetricTiles set={metrics} label={`${h.title} key figures`} />
+  const matters = insights.length > 0 && (
+    <Section id={`eqp-ins-${id}`} title="What matters" refEl={reg('insights')}>
+      <Insights key={id} insights={insights} onSignal={onSignal} onEvent={onEvent} hasSignal={hasSignal} />
+    </Section>
+  );
+
+  const analytics = a && (
+    <Section id={`eqp-an-${id}`} title={a.window.label}>
+      <Analytics a={{ ...a, facts: panelFacts(intel, facets, tiles) }} vehicle={vehicle} />
+    </Section>
+  );
+
+  const signals = showSignals && (
+    <Section
+      id={`eqp-sig-${id}`}
+      title="Signals"
+      meta={freshness && freshness !== FRESH ? <span className="eqp-sec-meta">{freshness}</span> : undefined}
+      refEl={reg('signals')}
+    >
+      <Signals signals={{ ...intel.signals, rows: sig.rows }} highlight={highlight} />
+      <NotModelled items={notModelled} />
+    </Section>
+  );
+
+  const events = showEvents && (
+    <Section
+      id={`eqp-ev-${id}`}
+      title="Events"
+      meta={intel.events.openCount > 0 ? <span className="eqp-sec-meta">{intel.events.openCount} open</span> : undefined}
+      refEl={reg('events')}
+    >
+      <EventList
+        events={intel.events}
+        now={now}
+        open={expanded}
+        onToggle={(ev) => setOpenEv(expanded === ev ? null : { id, ev })}
+        onViewAll={() => openEventsFor(vehicle ? { vehicleId: id } : { equipmentId: id })}
+        subject={id}
+        shownAbove={shownAbove}
+      />
+    </Section>
+  );
+
+  return (
+    <PanelShell
+      label={`${h.title} · ${vehicle ? 'vehicle' : 'equipment'} details`}
+      header={header}
+      actions={actions}
+      bodyRef={body}
+      className={`${vehicle ? 'eqp-vehicle' : ''} ${wide ? 'eqp-wide' : ''}`}
+    >
+      {top}
+      {wide ? (
+        <div className="eqp-cols">
+          <div className="eqp-col eqp-col-a">
+            {figures}
+            {matters}
+            {events}
           </div>
-        ))}
-
-      {insights.length > 0 && (
-        <Section id={`eqp-ins-${id}`} title="What matters" refEl={reg('insights')}>
-          <Insights key={id} insights={insights} onSignal={onSignal} onEvent={onEvent} hasSignal={hasSignal} />
-        </Section>
-      )}
-
-      {a && (
-        <Section id={`eqp-an-${id}`} title={a.window.label}>
-          <Analytics a={{ ...a, facts: panelFacts(intel, facets, tiles) }} vehicle={vehicle} />
-        </Section>
-      )}
-
-      {showSignals && (
-        <Section
-          id={`eqp-sig-${id}`}
-          title="Signals"
-          meta={freshness && freshness !== FRESH ? <span className="eqp-sec-meta">{freshness}</span> : undefined}
-          refEl={reg('signals')}
-        >
-          <Signals signals={{ ...intel.signals, rows: sig.rows }} highlight={highlight} />
-          <NotModelled items={notModelled} />
-        </Section>
-      )}
-
-      {showEvents && (
-        <Section
-          id={`eqp-ev-${id}`}
-          title="Events"
-          meta={intel.events.openCount > 0 ? <span className="eqp-sec-meta">{intel.events.openCount} open</span> : undefined}
-          refEl={reg('events')}
-        >
-          <EventList
-            events={intel.events}
-            now={now}
-            open={expanded}
-            onToggle={(ev) => setOpenEv(expanded === ev ? null : { id, ev })}
-            onViewAll={() => openEventsFor(vehicle ? { vehicleId: id } : { equipmentId: id })}
-            subject={id}
-            shownAbove={shownAbove}
-          />
-        </Section>
+          <div className="eqp-col eqp-col-b">
+            {analytics}
+            {signals}
+          </div>
+        </div>
+      ) : (
+        <>
+          {figures}
+          {matters}
+          {analytics}
+          {signals}
+          {events}
+        </>
       )}
 
       <ContinueIn links={links} />

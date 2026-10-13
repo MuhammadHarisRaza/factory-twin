@@ -260,6 +260,8 @@
 }
 .eqp-feed-info {
   flex: none;
+  /* Right-aligned also when it is alone (a recording or reference clip has no badge). */
+  margin-left: auto;
   display: inline-grid;
   place-items: center;
   width: 24px;
@@ -1320,6 +1322,73 @@ button.eqp-chip:hover {
     display: none;
   }
 }
+/* ── Wide panel (src/ui/twin/panelWidth.ts) ───────────────────────────────
+   70 % of the screen: a one-line header, the feed (video or camera view) across the whole panel, the
+   facets under it, then two columns of sections; continue-in and technical details run under both.
+   The body is a size container, so the feed is capped at a share of the visible body (the facets and
+   the first section heads stay in view; the picture is letterboxed, never cropped) and still scrolls. */
+.eqp.eqp-wide {
+  --eqp-x: 18px;
+}
+.eqp-width {
+  flex: none;
+  margin-top: -3px;
+}
+.eqp-width[aria-pressed='true'] {
+  color: var(--text-1);
+}
+.eqp-wide .eqp-h {
+  align-items: center;
+  padding: 10px 8px 10px var(--eqp-x);
+}
+.eqp-wide .eqp-h-main {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 4px 14px;
+}
+.eqp-wide .eqp-h-title h2 {
+  font-size: 16px;
+  white-space: nowrap;
+}
+.eqp-wide .eqp-h-title ~ .eqp-h-sub,
+.eqp-wide .eqp-h-title ~ .eqp-h-status {
+  margin: 0;
+}
+.eqp-wide .eqp-h-sub {
+  flex: 0 1 auto;
+  min-width: 0;
+}
+.eqp-wide .eqp-h-status {
+  flex: none;
+}
+.eqp-wide .eqp-width,
+.eqp-wide .eqp-close {
+  margin-top: 0;
+}
+.eqp-wide .eqp-b {
+  container-type: size;
+}
+.eqp-wide .eqp-top {
+  padding-top: 14px;
+}
+.eqp-wide .eqp-feed .vp-frame,
+.eqp-wide .eqp-feed .feed-media {
+  max-height: 80cqh;
+}
+.eqp-cols {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
+  align-items: start;
+}
+.eqp-col {
+  min-width: 0;
+}
+.eqp-col-b {
+  align-self: stretch;
+  border-left: 1px solid var(--line);
+}
+
 /* A bottom sheet on phones: while a subject panel is open the sheet may take a little more of the
    height (the factory stays visible above it); the feed is one "Show camera" line until asked for. */
 @media (max-width: 760px) {

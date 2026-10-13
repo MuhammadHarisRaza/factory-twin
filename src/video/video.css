@@ -148,6 +148,30 @@
   background: var(--accent);
   border-color: var(--accent-strong);
 }
+/* The picture has no playback controls: a click pauses / resumes it. */
+.vp-frame video.vp-media {
+  cursor: pointer;
+}
+/* Drawn inside the frame (it clips overflow); an outline paints over the picture, an inset shadow would not. */
+.vp-frame video.vp-media:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: -3px;
+}
+.vp-held {
+  position: absolute;
+  left: 8px;
+  bottom: 8px;
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  height: 22px;
+  padding: 0 8px;
+  border-radius: 11px;
+  background: #0b0f12d1;
+  color: var(--text-1);
+  font-size: var(--fs-11);
+  pointer-events: none;
+}
 .vp-overlay {
   position: absolute;
   inset: 0;

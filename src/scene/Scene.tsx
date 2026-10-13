@@ -2,10 +2,11 @@ import { Suspense, useEffect, useMemo, useRef, useState } from 'react';
 import { Canvas, useFrame, useThree } from '@react-three/fiber';
 import { Html, OrbitControls, PerformanceMonitor } from '@react-three/drei';
 import { EffectComposer, N8AO } from '@react-three/postprocessing';
-import { ACESFilmicToneMapping, DirectionalLight, MathUtils, PMREMGenerator, Vector3 } from 'three';
+import { ACESFilmicToneMapping, DirectionalLight, MathUtils, PMREMGenerator, PerspectiveCamera, Vector3 } from 'three';
 import { RoomEnvironment } from 'three/examples/jsm/environments/RoomEnvironment.js';
 import type { OrbitControls as OrbitControlsImpl } from 'three-stdlib';
 import { CAMERA_FOV, minimapCamera, useTwin } from '../store';
+import { useTwinUi } from '../ui/twin/uiStore';
 import { SITE, VIEWS, ZONES } from '../data/layout';
 import { Ground } from './Ground';
 import { Buildings } from './Buildings';
@@ -70,6 +71,36 @@ function ResponsiveFov() {
 }
 
 /**
+ * While the wide subject panel covers the right of the view (useTwinUi().insetRight px), the view's
+ * centre moves into the strip left beside it: a projection offset, so the focused asset, a flight's
+ * target and the orbit pivot are seen there instead of behind the panel. Picking and labels use the
+ * same projection, so they stay aligned. The offset eases in and out (at once with reduced motion).
+ */
+function ViewInset() {
+  const shown = useRef(0);
+  useFrame((state, dt) => {
+    const camera = state.camera;
+    if (!(camera instanceof PerspectiveCamera)) return;
+    const { width, height } = state.size;
+    const want = Math.min(useTwinUi.getState().insetRight, width * 0.9) / 2;
+    let x = shown.current;
+    if (x !== want) {
+      const reduce = typeof window.matchMedia === 'function' && window.matchMedia('(prefers-reduced-motion: reduce)').matches;
+      x = reduce || Math.abs(want - x) < 0.5 ? want : x + (want - x) * (1 - Math.exp(-Math.min(dt, 0.05) * 9));
+    }
+    shown.current = x;
+    const v = camera.view;
+    if (x === 0) {
+      if (v?.enabled) camera.clearViewOffset();
+      return;
+    }
+    if (v?.enabled && v.offsetX === x && v.fullWidth === width && v.fullHeight === height && v.width === width && v.height === height) return;
+    camera.setViewOffset(width, height, x, 0, width, height);
+  }, -3);
+  return null;
+}
+
+/**
  * Flies the camera to the latest store request (view preset, zone, equipment focus,
  * minimap click or "fit") along an eased path, keeps the orbit target inside the
  * site, and publishes the camera position for the minimap. A user drag cancels a flight.
@@ -109,7 +140,9 @@ function CameraRig() {
     // Distance at which the site's bounding circle fills the narrower field of view.
     const radius = Math.hypot(SITE.x[1] - SITE.x[0], SITE.z[1] - SITE.z[0]) / 2;
     const vFov = (camera.fov * Math.PI) / 180;
-    const hFov = 2 * Math.atan(Math.tan(vFov / 2) * (size.width / size.height));
+    // Fitted into the part of the view a wide panel leaves uncovered (ViewInset centres it there).
+    const visibleW = Math.max(size.width * 0.1, size.width - useTwinUi.getState().insetRight);
+    const hFov = 2 * Math.atan(Math.tan(vFov / 2) * (visibleW / size.height));
     const distance = (radius / Math.sin(Math.min(vFov, hFov) / 2)) * 0.82;
     const dir = new Vector3(...VIEWS.full.pos).sub(new Vector3(...VIEWS.full.target)).normalize();
     startFlight(SITE_CENTER.clone().add(dir.multiplyScalar(distance)), SITE_CENTER.clone());
@@ -457,6 +490,7 @@ export default function Scene({ active = true }: { active?: boolean }) {
       />
       <EmbeddedWheelZoom embedded={embedded} />
       <ResponsiveFov />
+      <ViewInset />
       <CameraRig />
       <ReadySignal />
       <DevHandles />

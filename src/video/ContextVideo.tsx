@@ -1,6 +1,6 @@
 /**
  * Contextual reference video: picks the registry clips for an equipment item, a stage or a topic
- * and shows one in the shared player (poster first; nothing loads until play). When several
+ * and shows one in the shared player (it starts muted once on screen, see VideoPlayer). When several
  * topics apply (the kiln: infeed, firing, exterior, discharge) the user switches between them;
  * each keeps its own label, so an exterior clip is never presented as the firing zone.
  */
@@ -34,9 +34,9 @@ export function clipsFor(ctx: VideoContext, videos: VideoRef[] = VIDEOS): { topi
 }
 
 /**
- * `subject` names what the panel is about (e.g. a vehicle id). While a clip plays, a change of context
- * for the same subject (a truck moving from the queue to the dock changes the topic) does not swap the
- * clip under the viewer; selecting another subject does.
+ * `subject` names what the panel is about (e.g. a vehicle id). While the viewer watches a clip (started
+ * it with sound or unmuted it), a change of context for the same subject (a truck moving from the queue
+ * to the dock changes the topic) does not swap the clip under them; selecting another subject does.
  * `bare`: one clip only — the most specific topic's — with no topic tabs, no heading and the bare
  * player (no caption); the host shows its source.
  */
@@ -57,13 +57,13 @@ export function ContextVideo({
   const key = `${context.equipmentId ?? ''}|${context.stage ?? ''}|${context.topic ?? ''}`;
   const who = subject ?? `${context.equipmentId ?? ''}|${context.stage ?? ''}`;
   const [pick, setPick] = useState<{ key: string; topic: VideoTopic } | null>(null);
-  // The clip being watched, kept while its player is loaded and the subject is the same.
+  // The clip being watched, kept while the viewer engages with it and the subject is the same.
   const [held, setHeld] = useState<{ who: string; clip: { topic: VideoTopic; video: VideoRef } } | null>(null);
   const topic = pick && pick.key === key && !bare ? pick.topic : clips[0]?.topic;
   const chosen = clips.find((c) => c.topic === topic) ?? clips[0];
   const current = held && held.who === who ? held.clip : chosen;
   const onActiveChange = useCallback(
-    (active: boolean) => setHeld(active && current ? { who, clip: current } : null),
+    (_loaded: boolean, engaged: boolean) => setHeld(engaged && current ? { who, clip: current } : null),
     // eslint-disable-next-line react-hooks/exhaustive-deps -- capture the clip that was playing when it started
     [who, current?.video.id],
   );

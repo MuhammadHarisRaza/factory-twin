@@ -202,9 +202,19 @@ client-provided camera recordings (`public/videos/`, sourceType `client-recordin
 yard-movement topics; they are labelled *Recorded camera footage* with their camera and recording time, and always say
 they are recordings, not live, with overlays from the recording system rather than this demo's simulation.
 `<ContextVideo context={{ equipmentId, stage, topic }}/>` picks the clips for a context (`src/video/topics.ts`)
-and shows them in one player: a poster first, the provider's embed (YouTube privacy-enhanced player) or MP4
-(Pexels) only after the user presses play, one clip at a time, no autoplay. Errors reported by the YouTube player
-(removed clip, embedding disabled) and slow loads fall back to the poster with a link to the source. Every player
+and shows them in one player (`src/video/VideoPlayer.tsx`). Nothing loads before the player is on screen; then the
+clip starts by itself, muted and looping (the provider's embed — YouTube privacy-enhanced player — or the MP4), pauses
+when scrolled out of view and resumes when it is back. The picture has no playback controls (no play bar, timeline or
+duration; the embeds are asked to hide theirs); a click or Space / Enter on it pauses and resumes it. Viewers who set
+reduced motion or data saving, and browsers that refuse autoplay, get the poster with a play button instead; sound
+only plays for a clip started from that poster, one player at a time. Errors reported by the YouTube player
+(removed clip, embedding disabled) and slow loads fall back to the poster with a link to the source. In the Factory
+Twin's subject panel (equipment, vehicle, stage) the video has no badge on the picture; its ⓘ (tooltip *Recorded
+footage — not a live feed* / *Reference footage — …*) opens the source details. Camera views keep their badge
+(*Twin view · simulated*, the stream's state). The panel is wide by default (`src/ui/twin/panelWidth.ts`): 70 % of
+the screen width (always leaving 200 px of the 3D view), the feed across its top, two columns of sections under it,
+the zone and live lists folded away, and the scene's view centred in the strip beside it (`Scene.tsx` ViewInset);
+its header button switches to the compact column, remembered per browser. Every player
 is labelled *Process reference video* or *Illustrative equipment footage* with provider, publisher and licence,
 and states that it is not this plant, not live and not evidence. Each entry records how it was verified.
 

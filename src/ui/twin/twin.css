@@ -1583,3 +1583,24 @@
     display: none;
   }
 }
+
+/* ── Wide subject panel (src/ui/twin/panelWidth.ts) ───────────────────────────
+   70 % of the screen width for the panel, always leaving 200 px of the 3D view (the same formula as
+   widePanelWidth; the class is only set where the result is wide enough). The panel fills its column's
+   height; the zone list and the live list fold away and the bottom strips run under the whole width.
+   The scene centres its view in the strip left of the panel (Scene.tsx ViewInset). */
+.tw-layout.panel-wide,
+.tw-layout.panel-wide.no-left {
+  --tw-right-w: min(70vw, calc(100% - 200px));
+  grid-template-columns: minmax(0, 1fr) var(--tw-right-w);
+  grid-template-areas:
+    'top top'
+    'mid right'
+    'bottom bottom';
+}
+.tw-layout.panel-wide .inspector {
+  flex: 1 1 auto;
+}
+.tw-layout.panel-wide .tw-live {
+  display: none;
+}

@@ -24,6 +24,7 @@ import { useCopilot } from '../../copilot/store';
 import { useLiveStatus } from '../../feeds/registry';
 import { StagePanel } from '../../twin/StagePanel';
 import { useTwinUi } from '../../twin/uiStore';
+import { SCENE_MIN_PX, WIDE_PANEL_MIN_PX, widePanelFits, widePanelWidth } from '../../twin/panelWidth';
 import { deriveEquipmentIntel, deriveVehicleIntel, type IntelContext } from '../intel/derive';
 import type { EquipmentIntel } from '../intel/types';
 import { OVERLAY_SELECTOR } from '../../../useKeyboardShortcuts';
@@ -143,15 +144,16 @@ describe('one panel for every asset and vehicle', () => {
 });
 
 describe('the one feed', () => {
-  it('kiln: the client recording in the bare player with a badge and the source-details control', () => {
+  it('kiln: the client recording in the bare player — no badge on the picture, the source-details control says what it is', () => {
     const m = deriveEquipmentIntel(normal, 'H-KILN');
     expect(m.feed.kind).toBe('recording');
     const out = panel(normal, m);
     expect(out).toContain('class="vp compact bare"');
     expect(out).toContain('class="vp-poster"');
-    expect(out).toMatch(/class="eqp-feed-badge k-recording[^"]*"[^>]*>.*?Recorded<\/span>/);
-    expect(out).toContain('aria-label="Source details" aria-expanded="false"');
-    // Nothing plays before play (the still is the file's metadata frame); the details are in the popover, not under the player.
+    expect(out).not.toContain('eqp-feed-badge');
+    expect(out).toContain('aria-label="Source details · recorded footage, not a live feed" aria-expanded="false"');
+    expect(out).toContain('title="Recorded footage — not a live feed. Source details"');
+    // Nothing plays before the frame is on screen (the still is the file's metadata frame); the details are in the popover, not under the player.
     expect(out).not.toMatch(/<video(?![^>]*vp-still)/);
     expect(out).not.toMatch(/autoplay/i);
     expect(out).not.toContain('<iframe');
@@ -164,7 +166,9 @@ describe('the one feed', () => {
     expect(p).toContain('Twin view · simulated');
     const stk = deriveEquipmentIntel(normal, 'A-STK');
     expect(stk.feed.kind).toBe('reference');
-    expect(panel(normal, stk)).toContain('>Reference</span>');
+    const ref = panel(normal, stk);
+    expect(ref).not.toContain('eqp-feed-badge');
+    expect(ref).toContain('aria-label="Source details · reference footage, not a live feed"');
   });
 
   it('a configured stream: "Live stream" and the connected source only while it actually plays', () => {
@@ -390,9 +394,10 @@ describe('review fixes: the panel says each figure once', () => {
     expect(count(visible(out), /Unknown · feed stale/g)).toBe(0);
   });
 
-  it('the feed badge tells a client recording from public reference footage; neutral and planned have their own icons', () => {
-    expect(panel(normal, deriveEquipmentIntel(normal, 'H-KILN'))).toMatch(/class="eqp-feed-badge k-recording[^"]*"[^>]*><svg[^>]*lucide-film/);
-    expect(panel(normal, deriveEquipmentIntel(normal, 'A-STK'))).toMatch(/class="eqp-feed-badge k-reference[^"]*"[^>]*><svg[^>]*lucide-globe/);
+  it('a camera view keeps its badge (twin view, simulated); the ⓘ tells a client recording from public reference footage; neutral and planned have their own icons', () => {
+    expect(panel(normal, deriveEquipmentIntel(normal, 'E-PRS2'))).toMatch(/class="eqp-feed-badge k-twin-view[^"]*"[^>]*><svg[^>]*lucide-monitor-play/);
+    expect(panel(normal, deriveEquipmentIntel(normal, 'H-KILN'))).toContain('title="Recorded footage — not a live feed. Source details"');
+    expect(panel(normal, deriveEquipmentIntel(normal, 'A-STK'))).toContain('title="Reference footage — not a live feed. Source details"');
     expect(TONE_ICON.planned).toBe(CalendarClock);
     expect(TONE_ICON.neutral).not.toBe(CircleDashed);
   });
@@ -501,5 +506,77 @@ describe('review fixes: controls and behaviour', () => {
     const out = panel(s, deriveEquipmentIntel(s, 'E-PRS2'));
     const an = out.slice(out.indexOf('class="eqp-an"'), out.indexOf('</section>', out.indexOf('class="eqp-an"')));
     expect(an).toMatch(/class="eqp-nc"[^>]*>.*?Not confirmed/);
+  });
+});
+
+describe('the wide panel: 70 % of the screen, the video across its top', () => {
+  /** Server-renders with the window 1920 px wide (the test window) and the overlay grid `viewW` wide. */
+  const at = (viewW: number, wide: boolean, el: ReactElement) => {
+    useTwinUi.setState({ viewW, panelWide: wide });
+    try {
+      return html(el);
+    } finally {
+      useTwinUi.setState({ viewW: 0, panelWide: true });
+    }
+  };
+  const sections = (h: string, from: string) => {
+    const a = h.indexOf(from);
+    const next = h.indexOf('class="eqp-col ', a + 1);
+    return [...h.slice(a, next > a ? next : undefined).matchAll(/<h3 id="[^"]+">([^<]+)<\/h3>/g)].map((m) => m[1]);
+  };
+
+  it('is 70 % of the screen, always leaving a strip of the 3D view; too narrow a window keeps the compact panel', () => {
+    expect(widePanelWidth(1600, 1360)).toBe(1120);
+    expect(widePanelWidth(1920, 1680)).toBe(1344);
+    // A 1366 px laptop with the navigation open: the strip of the view wins.
+    expect(widePanelWidth(1366, 1126)).toBe(1126 - SCENE_MIN_PX);
+    expect(widePanelFits(1600, 1360)).toBe(true);
+    expect(widePanelFits(1100, 860)).toBe(false);
+    expect(widePanelFits(1920, 0)).toBe(false);
+    expect(WIDE_PANEL_MIN_PX).toBeGreaterThanOrEqual(700);
+  });
+
+  it('wide (the default): the feed and facets run across the top, then two columns; the header offers compact', () => {
+    expect(useTwinUi.getState().panelWide).toBe(true);
+    const out = at(1680, true, <EquipmentPanel intel={deriveEquipmentIntel(normal, 'H-KILN')} now={normal.minute} />);
+    expect(out).toMatch(/class="inspector overlay-panel tw-insp eqp [^"]*eqp-wide/);
+    expect(out).toMatch(/<button type="button" class="btn ghost sm icon eqp-width" aria-pressed="true" aria-label="Wide panel"/);
+    // The feed sits before the columns, across the whole panel; no badge on the recording.
+    expect(out.indexOf('class="eqp-feed ')).toBeLessThan(out.indexOf('class="eqp-cols"'));
+    expect(out).not.toContain('eqp-feed-badge');
+    expect(sections(out, 'class="eqp-col eqp-col-a"')).toEqual(['Key figures', 'What matters', 'Events']);
+    expect(sections(out, 'class="eqp-col eqp-col-b"')).toEqual(['Last 4 h', 'Signals']);
+    // Continue in and technical details run under both columns.
+    expect(out.indexOf('class="eqp-links"')).toBeGreaterThan(out.indexOf('class="eqp-col eqp-col-b"'));
+  });
+
+  it('compact (the viewer’s choice, or no room): the one column in its order, the button offered where wide fits', () => {
+    const compact = at(1680, false, <EquipmentPanel intel={deriveEquipmentIntel(normal, 'H-KILN')} now={normal.minute} />);
+    expect(compact).not.toContain('eqp-cols');
+    expect(compact).not.toContain('eqp-wide');
+    expect(compact).toContain('aria-pressed="false" aria-label="Wide panel"');
+    expect([...compact.matchAll(/<h3 id="[^"]+">([^<]+)<\/h3>/g)].map((m) => m[1]).slice(0, 5)).toEqual(['Key figures', 'What matters', 'Last 4 h', 'Signals', 'Events']);
+    const noRoom = at(700, true, <EquipmentPanel intel={deriveEquipmentIntel(normal, 'H-KILN')} now={normal.minute} />);
+    expect(noRoom).not.toContain('eqp-cols');
+    expect(noRoom).not.toContain('eqp-width');
+  });
+
+  it('a vehicle and a production stage get the same wide layout', () => {
+    const fl = at(1680, true, <EquipmentPanel intel={deriveVehicleIntel(sv, 'FL-02')} now={sv.minute} />);
+    expect(fl).toContain('eqp-cols');
+    const st = at(1680, true, <StagePanel id="KILN" />);
+    expect(st).toMatch(/class="inspector overlay-panel tw-insp eqp eqp-stage eqp-wide"/);
+    expect(st.indexOf('class="eqp-top"')).toBeLessThan(st.indexOf('class="eqp-cols"'));
+    expect(sections(st, 'class="eqp-col eqp-col-a"')).toEqual(['Key figures', 'Equipment']);
+    expect(sections(st, 'class="eqp-col eqp-col-b"')).toEqual(['Open events']);
+  });
+
+  it('stylesheet: the twin grid gives the panel 70 % of the screen and folds the zone and live lists; the feed is capped, letterboxed', async () => {
+    const tw = await readText('../../twin/twin.css');
+    expect(tw).toMatch(/\.tw-layout\.panel-wide,\s*\.tw-layout\.panel-wide\.no-left \{\s*--tw-right-w: min\(70vw, calc\(100% - 200px\)\);/);
+    expect(tw).toMatch(/\.tw-layout\.panel-wide \.tw-live \{\s*display: none;/);
+    const p = await readText('./panel.css');
+    expect(p).toMatch(/\.eqp-wide \.eqp-b \{\s*container-type: size;/);
+    expect(p).toMatch(/\.eqp-wide \.eqp-feed \.vp-frame,\s*\.eqp-wide \.eqp-feed \.feed-media \{\s*max-height: 80cqh;/);
   });
 });

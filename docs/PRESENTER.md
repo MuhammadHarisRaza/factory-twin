@@ -10,8 +10,9 @@ of the same kind of process, not this plant.*
    it matters). The 3D factory is live: pick a stage in the flow strip and the model highlights it; click the kiln
    in the model → selection card → *Open details*.
 
-2. **Factory Twin (1 min)** — the kiln's workspace: status, the kiln reference footage (infeed, firing,
-   exterior and discharge are separate clips), the kiln KPIs, condition, recent events and next steps; the
+2. **Factory Twin (1 min)** — the kiln's panel (70 % of the screen): status, the client's kiln camera recording
+   across its top (it starts by itself, muted, with no player controls — click the picture to pause; the ⓘ says it
+   is a recording, not a live feed), then the kiln KPIs, what matters, the last 4 h, signals and events; the
    temperature profile is *not modelled* and says so. Technical details show signal ids and the data source.
 
 3. **A · Conveyor stops (2.5 min)** — *Scenarios → Guided demos → A → CV-PACK, 30 min → Set up → Show me: Factory

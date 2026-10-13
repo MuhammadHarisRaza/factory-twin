@@ -4,7 +4,8 @@
  * (state, constraint role, source), a scrolling body — the stage's one feed, its key figures, the
  * equipment and conveyors that make it up (each opens its panel), its open events and the way into
  * Production — and an action bar (Frame stage). Esc or the header's Close clears the highlight; the
- * camera stays where it is.
+ * camera stays where it is. Wide (src/ui/twin/panelWidth.ts) the feed runs across the top and the key
+ * figures and equipment sit beside the open events.
  */
 import { useMemo, useState } from 'react';
 import { Circle, Crosshair, Hourglass } from 'lucide-react';
@@ -29,6 +30,7 @@ import { BarButton, ContinueIn, PanelHeader, PanelShell, Section, SourcePill } f
 import { eventsForSubject, openEventsFor } from '../events/open';
 import { OperationalStatus, StatusBadge } from '../kit/Status';
 import { constraintMarker } from './constraint';
+import { useWidePanel } from './panelWidth';
 import { OP_RANK, assetStatus, sortEvents, worstOf } from './derive';
 import '../equipment/equipment.css';
 import '../equipment/panel/panel.css';
@@ -39,6 +41,7 @@ export function StagePanel({ id }: { id: MonitoredStageId }) {
   const finance = useApp((s) => s.finance);
   const cameraSources = useApp((s) => s.cameraSources);
   const zone = ZONE_BY_ID[ms.zone];
+  const wide = useWidePanel();
   const d = useSimValue(
     (s) => {
       const assets = [...ms.equipment, ...ms.conveyors.filter((c) => !ms.equipment.includes(c))].map((a) => ({
@@ -103,48 +106,72 @@ export function StagePanel({ id }: { id: MonitoredStageId }) {
   // The header's close button clears the highlight; the bar keeps only what the header cannot do.
   const actions = <BarButton icon={Crosshair} label="Frame stage" title="Frame the stage’s equipment and conveyors" onClick={() => useTwin.getState().selectStage(id)} />;
 
+  const figures = (
+    <Section id={`eqp-stage-kpi-${id}`} title="Key figures" meta={<MetricsScope set={d.kpis} />}>
+      <MetricTiles set={d.kpis} label={`${ms.name} key figures`} />
+      <NotModelled items={notModelledKpis(d.kpis)} />
+      {d.constraint && (
+        <p className="eqp-fine" title={d.constraint.title}>
+          {d.constraint.sentence}
+          {d.constraint.active ? ' Every minute lost here is lost line output.' : ''}
+        </p>
+      )}
+    </Section>
+  );
+
+  const equipment = (
+    <Section id={`eqp-stage-eq-${id}`} title="Equipment" meta={<span className="eqp-sec-meta">worst first</span>}>
+      <ul className="eqp-assets">
+        {[...d.assets]
+          .sort((a, b) => (b.status ? OP_RANK[b.status.op] : 0) - (a.status ? OP_RANK[a.status.op] : 0))
+          .map((a) => (
+            <li key={a.id}>
+              <button type="button" onClick={() => select(a.id)} title={`Open ${a.id}`}>
+                <span className="n">
+                  {a.name} <span className="mono muted">{a.id}</span>
+                </span>
+                {a.status ? <OperationalStatus state={a.status.op} /> : <span className="muted">—</span>}
+              </button>
+            </li>
+          ))}
+      </ul>
+    </Section>
+  );
+
+  const events = (
+    <Section id={`eqp-stage-ev-${id}`} title="Open events" meta={<span className="eqp-sec-meta">{d.events.openCount} open</span>}>
+      <EventList
+        events={d.events}
+        now={d.now}
+        open={openEv}
+        onToggle={(ev) => setOpenEv(openEv === ev ? null : ev)}
+        onViewAll={() => openEventsFor({ stage: id })}
+        subject={ms.name}
+        empty="No open event in this stage."
+      />
+    </Section>
+  );
+
   return (
-    <PanelShell label={`${ms.name} · stage details`} header={header} actions={actions} className="eqp-stage">
+    <PanelShell label={`${ms.name} · stage details`} header={header} actions={actions} className={`eqp-stage ${wide ? 'eqp-wide' : ''}`}>
       <div className="eqp-top">
         <FeedView feed={feed} subject={`stage:${id}`} />
       </div>
-      <Section id={`eqp-stage-kpi-${id}`} title="Key figures" meta={<MetricsScope set={d.kpis} />}>
-        <MetricTiles set={d.kpis} label={`${ms.name} key figures`} />
-        <NotModelled items={notModelledKpis(d.kpis)} />
-        {d.constraint && (
-          <p className="eqp-fine" title={d.constraint.title}>
-            {d.constraint.sentence}
-            {d.constraint.active ? ' Every minute lost here is lost line output.' : ''}
-          </p>
-        )}
-      </Section>
-      <Section id={`eqp-stage-eq-${id}`} title="Equipment" meta={<span className="eqp-sec-meta">worst first</span>}>
-        <ul className="eqp-assets">
-          {[...d.assets]
-            .sort((a, b) => (b.status ? OP_RANK[b.status.op] : 0) - (a.status ? OP_RANK[a.status.op] : 0))
-            .map((a) => (
-              <li key={a.id}>
-                <button type="button" onClick={() => select(a.id)} title={`Open ${a.id}`}>
-                  <span className="n">
-                    {a.name} <span className="mono muted">{a.id}</span>
-                  </span>
-                  {a.status ? <OperationalStatus state={a.status.op} /> : <span className="muted">—</span>}
-                </button>
-              </li>
-            ))}
-        </ul>
-      </Section>
-      <Section id={`eqp-stage-ev-${id}`} title="Open events" meta={<span className="eqp-sec-meta">{d.events.openCount} open</span>}>
-        <EventList
-          events={d.events}
-          now={d.now}
-          open={openEv}
-          onToggle={(ev) => setOpenEv(openEv === ev ? null : ev)}
-          onViewAll={() => openEventsFor({ stage: id })}
-          subject={ms.name}
-          empty="No open event in this stage."
-        />
-      </Section>
+      {wide ? (
+        <div className="eqp-cols">
+          <div className="eqp-col eqp-col-a">
+            {figures}
+            {equipment}
+          </div>
+          <div className="eqp-col eqp-col-b">{events}</div>
+        </div>
+      ) : (
+        <>
+          {figures}
+          {equipment}
+          {events}
+        </>
+      )}
       <ContinueIn links={stageLinks(id)} />
     </PanelShell>
   );

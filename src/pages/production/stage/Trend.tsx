@@ -7,7 +7,8 @@ import { fmtInt, fmtPct } from '../../../ui/kit/format';
 import { Empty } from '../../../ui/kit/Panel';
 import { Block } from '../common';
 import { outputStale } from '../../../ui/flow/derive';
-import { stageTrend } from './derive';
+import { MASS_DISCLOSURE } from '../units';
+import { countUnit, stageTrend } from './derive';
 import { StaleMark } from './parts';
 
 const compact = (v: number) => (v >= 10000 ? `${Math.round(v / 1000)}k` : v >= 1000 ? `${(v / 1000).toFixed(1)}k` : fmtInt(v));
@@ -24,7 +25,10 @@ export function TrendPanel({ ms, periodKey }: { ms: MonitoredStage; periodKey: P
   const tickEvery = n > 24 ? Math.ceil(n / 12) : n > 12 ? 2 : 1;
   const per = d.granularity === 'hour' ? 'hour' : 'shift';
   const isPallets = ms.unit === 'pallets';
-  const totals = d.buckets.reduce((a, b) => ({ out: a.out + b.output, exp: a.exp + (b.expected ?? 0) }), { out: 0, exp: 0 });
+  // Totals over the buckets with a measured output only (a bucket without one is not a zero).
+  const totals = d.buckets.reduce((a, b) => (b.output == null ? a : { out: a.out + b.output, exp: a.exp + (b.expected ?? 0) }), { out: 0, exp: 0 });
+  const gaps = d.buckets.filter((b) => b.output == null).length;
+  const unit = countUnit(ms, ms.unit, ms.output.signalId);
 
   return (
     <Block
@@ -40,7 +44,7 @@ export function TrendPanel({ ms, periodKey }: { ms: MonitoredStage; periodKey: P
             {d.stale && <StaleMark mark={d.stale} />}
             {totals.exp > 0 && (
               <span className="stg-chip-num" title="Period total, actual vs expected">
-                {fmtInt(totals.out)} / {fmtInt(totals.exp)} {ms.unit} · {fmtPct(totals.out / totals.exp, 0)}
+                {fmtInt(totals.out)} / {fmtInt(totals.exp)} {unit} · {fmtPct(totals.out / totals.exp, 0)}
               </span>
             )}
           </>
@@ -50,7 +54,9 @@ export function TrendPanel({ ms, periodKey }: { ms: MonitoredStage; periodKey: P
         <span>
           {isPallets
             ? 'Received = palletised tiles ÷ tiles per pallet; dispatched = pallets on trucks at loading-complete.'
-            : 'Dashed step = expected output: ideal rate × planned running time of the stage’s last machines (planned stops excluded). Faded bars are partial buckets.'}
+            : `Dashed step = expected output: ideal rate × planned running time of the stage’s last machines (planned stops excluded). Faded bars are partial buckets.${
+                gaps ? ` ${gaps} bucket${gaps === 1 ? '' : 's'} without a measured output ${gaps === 1 ? 'is' : 'are'} left empty — not a zero.` : ''
+              }${unit === 'tile-eq' ? ` Slip / powder counted in tile-equivalents (${MASS_DISCLOSURE} for t).` : ''}`}
         </span>
       }
     >
@@ -72,7 +78,7 @@ export function TrendPanel({ ms, periodKey }: { ms: MonitoredStage; periodKey: P
           height={210}
           tickEvery={tickEvery}
           format={compact}
-          data={d.buckets.map((b) => ({ key: b.key, label: b.label, value: b.output, target: b.expected ?? undefined, muted: b.partial }))}
+          data={d.buckets.map((b) => ({ key: b.key, label: b.label, value: b.output ?? 0, target: b.expected ?? undefined, muted: b.partial || b.output == null }))}
           tip={(c) => {
             const b = d.buckets.find((x) => x.key === c.key)!;
             return (
@@ -81,10 +87,10 @@ export function TrendPanel({ ms, periodKey }: { ms: MonitoredStage; periodKey: P
                   {b.tip}
                   {b.partial ? ' (partial)' : ''}
                 </b>
-                <TipRow k="Output" v={`${fmtInt(b.output)} ${ms.unit}`} swatch="var(--series-1)" />
-                <TipRow k="Expected" v={b.expected != null ? `${fmtInt(b.expected)} ${ms.unit}` : '—'} />
-                {b.expected != null && b.expected > 0 && <TipRow k="Actual vs expected" v={fmtPct(b.output / b.expected, 0)} />}
-                {b.input != null && <TipRow k="Input" v={`${fmtInt(b.input)} ${ms.unit}`} />}
+                <TipRow k="Output" v={b.output != null ? `${fmtInt(b.output)} ${unit}` : 'Not measured'} swatch="var(--series-1)" />
+                <TipRow k="Expected" v={b.expected != null ? `${fmtInt(b.expected)} ${unit}` : '—'} />
+                {b.expected != null && b.expected > 0 && b.output != null && <TipRow k="Actual vs expected" v={fmtPct(b.output / b.expected, 0)} />}
+                {b.input != null && <TipRow k="Input" v={`${fmtInt(b.input)} ${unit}`} />}
               </>
             );
           }}

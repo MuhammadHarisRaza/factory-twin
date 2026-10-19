@@ -1,9 +1,26 @@
-import { Activity, CircleDashed, ClipboardList, FastForward, Hourglass, Play, RefreshCw, X } from 'lucide-react';
+import {
+  Activity,
+  CircleAlert,
+  CircleCheck,
+  CircleDashed,
+  CircleDot,
+  CircleHelp,
+  CircleMinus,
+  ClipboardList,
+  FastForward,
+  Hourglass,
+  ListChecks,
+  Play,
+  RefreshCw,
+  X,
+  type LucideIcon,
+} from 'lucide-react';
+import { CLASSIFICATION_LABEL } from '../../intel/rules';
 import { useSim, useSimValue } from '../../sim/store';
 import { formatClock } from '../../sim/time';
 import { EventStatusBadge, SeverityBadge } from '../../ui/kit/Status';
-import { paramOptions, resolveValues, targetKey } from './catalogue';
-import { DEMO_BY_ID, USE_CASE_LABEL, demoKey, demoView, type DemoId } from './demos';
+import { paramOptions, resolveValues, targetKey, when } from './catalogue';
+import { DEMO_BY_ID, FINDING_ROW_LABEL, USE_CASE_LABEL, demoKey, demoView, type DemoFindingRow, type DemoId } from './demos';
 import { clearDemo, currentRun, setupDemo, useDemoRuns, useScenarioParams } from './actions';
 import { ParamSelect, ScenarioState, ShowButton } from './ui';
 import './scenarios.css';
@@ -92,7 +109,9 @@ export function DemoCard({ id, onNavigate }: { id: DemoId; onNavigate?: () => vo
             <CircleDashed size={13} aria-hidden />
             <span>{view.status}</span>
           </p>
-          {ev ? (
+          {def.findings ? (
+            <FindingBlock view={view} now={d.now} resetting={resetting} />
+          ) : ev ? (
             <div className="scnp-demo-ev">
               <ClipboardList size={13} aria-hidden />
               <span className="mono">{ev.id}</span>
@@ -141,3 +160,67 @@ export function DemoCard({ id, onNavigate }: { id: DemoId; onNavigate?: () => vo
     </article>
   );
 }
+
+const ROW_ICON: Record<DemoFindingRow['state'], LucideIcon> = {
+  detected: CircleAlert,
+  cleared: CircleDot,
+  clear: CircleCheck,
+  'not-evaluated': CircleHelp,
+  none: CircleMinus,
+};
+
+/** The rule findings of a finding-based demonstration (E–H): the detected primary finding, or what it waits for, and each watched rule with its status (icon + words). */
+function FindingBlock({ view, now, resetting }: { view: ReturnType<typeof demoView>; now: number; resetting: boolean }) {
+  const f = view.complete ? view.finding : null;
+  return (
+    <>
+      {f ? (
+        <div className="scnp-demo-ev">
+          <ListChecks size={13} aria-hidden />
+          <span className="mono">{f.ruleId}</span>
+          <SeverityBadge severity={f.severity} />
+          <span className="tag" title="How the finding is decided (thresholds or a significance test), on simulated data">
+            {CLASSIFICATION_LABEL[f.classification]}
+          </span>
+          <span className="scnp-demo-evt" title={f.title}>
+            {f.title}
+          </span>
+          {f.firstSeen != null && <span className="muted">since {when(f.firstSeen, now)}</span>}
+        </div>
+      ) : (
+        <p className="scnp-demo-l wait">
+          <Hourglass size={13} aria-hidden />
+          <span>{view.eventLine}</span>
+          {view.skip != null && (
+            <button
+              className="btn sm"
+              disabled={resetting}
+              onClick={() => useSim.getState().skip(view.skip!)}
+              title={`Simulate the next ${view.skip} min at once (the clock jumps; nothing else changes)`}
+            >
+              <FastForward size={12} aria-hidden />
+              Skip {formatSkip(view.skip)}
+            </button>
+          )}
+        </p>
+      )}
+      {view.detail && <p className="scnp-demo-l">{view.detail}</p>}
+      <ul className="scnp-demo-fl" aria-label="Rule findings of this demonstration (simulated data)">
+        {view.rows.map((r) => {
+          const Icon = ROW_ICON[r.state];
+          return (
+            <li key={r.key} className={`scnp-demo-f ${r.state}`} title={r.finding?.explanation ?? 'This rule has no finding for this item.'}>
+              <Icon size={12} aria-hidden />
+              <span className="scnp-demo-fs">{FINDING_ROW_LABEL[r.state]}</span>
+              <span className="scnp-demo-fn">{r.label}</span>
+              {r.at != null && <span className="muted num">{r.state === 'cleared' ? 'cleared ' : 'since '}{when(r.at, now)}</span>}
+            </li>
+          );
+        })}
+      </ul>
+    </>
+  );
+}
+
+/** "Skip 45 min", "Skip 14 h 20 min". */
+const formatSkip = (min: number) => (min < 60 ? `${min} min` : `${Math.floor(min / 60)} h${min % 60 ? ` ${min % 60} min` : ''}`);

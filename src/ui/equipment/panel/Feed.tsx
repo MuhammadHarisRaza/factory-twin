@@ -3,7 +3,8 @@
  * a client recording or a public reference clip in the bare video player, or an explicit unavailable
  * state. No topic tabs, no title or description under it. A camera view (the twin view, a configured
  * stream) carries a small source badge on the frame (top-left) — "Twin view · simulated" / the
- * stream's state; a recording or reference clip carries none, the picture stays clear. An ⓘ button
+ * stream's state; a recording or reference clip carries one small honest chip instead ("Recorded
+ * footage · not live" / "Reference footage · not this plant, not live"). An ⓘ button
  * (top-right; its tooltip names the kind of footage) discloses the compact source details — title,
  * camera, recorded at, provider, licence and the honesty note (a recording, not a live feed). While a
  * provider embed (YouTube) is loaded, whose own title covers the top of the frame, the chrome moves to
@@ -12,7 +13,9 @@
  * On a phone the inspector is a short bottom sheet: the feed starts as one "Show camera" line, so the
  * state and the key figures stay in view; it opens on demand.
  */
-import { useCallback, useEffect, useId, useRef, useState, type RefObject } from 'react';
+import { memo, useCallback, useEffect, useId, useRef, useState, type RefObject } from 'react';
+import { sameProps } from '../../kit/equal';
+
 import { ChevronDown, ExternalLink, Film, Globe, Info, MonitorPlay, Radio, Video, VideoOff, X, type LucideIcon } from 'lucide-react';
 import { CameraFeed } from '../../feeds/CameraFeed';
 import { useLiveStatus } from '../../feeds/registry';
@@ -98,11 +101,12 @@ function SourceDetails({ feed, onClose, id, closeRef }: { feed: Exclude<FeedChoi
 }
 
 /**
- * `subject` identifies what the panel shows (an asset or vehicle id): while the viewer watches a clip
- * (started it with sound or unmuted it), a new feed choice for the same subject (a truck changing visit
- * phase) does not swap the clip under them; a clip that only plays by itself (muted) follows the choice.
+ * `subject` identifies what the panel shows (an asset or vehicle id): while the viewer holds a clip
+ * (started it with sound, unmuted it or paused it), a new feed choice for the same subject (a truck
+ * changing visit phase) does not swap the clip under them; a clip that only plays by itself (muted)
+ * follows the choice.
  */
-export function FeedView({ feed, subject }: { feed: FeedChoice; subject: string }) {
+export const FeedView = memo(function FeedView({ feed, subject }: { feed: FeedChoice; subject: string }) {
   const [held, setHeld] = useState<{ subject: string; feed: FeedChoice } | null>(null);
   const current = held && held.subject === subject ? held.feed : feed;
   const [active, setActive] = useState(false);
@@ -184,10 +188,20 @@ export function FeedView({ feed, subject }: { feed: FeedChoice; subject: string 
   const video = current.kind === 'recording' || current.kind === 'reference' ? current.video : null;
   // A provider embed draws its own title over the top of the frame while it is loaded.
   const docked = active && video != null && !playsInVideoElement(video);
-  // A recording or reference clip has no badge on the picture: the ⓘ's tooltip names the footage.
-  const infoTitle = video ? `${badge.label} footage — not a live feed. Source details` : 'Source details';
+  // A recording or reference clip has no badge on the picture: the ⓘ's tooltip names the footage (a public
+  // reference clip is also not this plant).
+  const disclosure = current.kind === 'reference' ? 'not this plant, not a live feed' : 'not a live feed';
+  const infoTitle = video ? `${badge.label} footage — ${disclosure}. Source details` : 'Source details';
+  // The footage's one honest chip on the picture (the approved card): recorded / reference footage is never called live.
+  const tag = video ? (current.kind === 'reference' ? 'Reference footage · not this plant, not live' : 'Recorded footage · not live') : null;
   const chrome = (
     <>
+      {tag && (
+        <span className={`eqp-feed-tag k-${current.kind}`}>
+          <Icon size={12} aria-hidden />
+          {tag}
+        </span>
+      )}
       {!video && (
         <span className={`eqp-feed-badge k-${current.kind} ${badge.tone}`} title={current.details.find((d) => d.label === 'Note')?.value}>
           <Icon size={12} aria-hidden />
@@ -198,7 +212,7 @@ export function FeedView({ feed, subject }: { feed: FeedChoice; subject: string 
         type="button"
         ref={info}
         className={`eqp-feed-info ${open ? 'on' : ''}`}
-        aria-label={video ? `Source details · ${badge.label.toLowerCase()} footage, not a live feed` : 'Source details'}
+        aria-label={video ? `Source details · ${badge.label.toLowerCase()} footage, ${disclosure}` : 'Source details'}
         aria-expanded={open}
         aria-controls={open ? popId : undefined}
         title={infoTitle}
@@ -230,4 +244,4 @@ export function FeedView({ feed, subject }: { feed: FeedChoice; subject: string 
       {open && <SourceDetails feed={current} onClose={() => close(true)} id={popId} closeRef={closeBtn} />}
     </div>
   );
-}
+}, sameProps);

@@ -63,6 +63,7 @@ function SelectionCard({ card }: { card: SelectionCardModel }) {
           </div>
         ))}
       </dl>
+      {card.note && <p className="ov-sel-note">{card.note}</p>}
       <div className="ov-sel-a">
         {card.kind === 'stage' && card.stageId ? (
           <button type="button" className="btn sm primary" onClick={() => openStage(card.stageId!)} title="Open this stage in Production (the highlight stays in the model)">

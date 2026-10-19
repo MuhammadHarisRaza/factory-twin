@@ -67,12 +67,15 @@ equipment → *Technical details* → *Cameras* → *Configure a stream*); it is
 
 The contextual videos (`src/video/registry.ts`) are not cameras of this demo. Public reference footage is played in the
 provider's own embedded player (YouTube, privacy-enhanced domain) or streamed from the provider (Pexels), loaded only
-when the user presses play, and labelled as reference material. Three camera recordings provided by the client
+once its player is on screen, where it starts by itself muted and looping (no sound unless the viewer starts it;
+reduced motion, data saving or a browser that refuses autoplay get the poster with a play button instead), and
+labelled as reference material. Three camera recordings provided by the client
 (a tile-counting camera at a kiln roller line, a counting camera over the packaging line, a site-entrance camera with
 vehicle detection) are served from `public/videos/` and lead the kiln, packaging and yard topics. They are labelled
-*Recorded camera footage* with the camera and time shown in the recording, say on every player that they are recordings
-(not live feeds) and that their boxes and counts come from the system that recorded them, not from this demo's
-simulation. None of these videos is used as evidence of an event. A real
+*Recorded camera footage* with the camera and time shown in the recording, say that they are recordings, not live feeds
+(on the workspace pages under the player; in the Factory Twin panel, which shows no badge on the picture, in the
+source button's tooltip and label and in its source details) and that their boxes and counts come from the system
+that recorded them, not from this demo's simulation. None of these videos is used as evidence of an event. A real
 integration adds `sourceType: 'connected'` entries backed by an NVR / VMS (recorded segments by camera and time)
 through a gateway; RTSP cannot be played by a browser directly.
 

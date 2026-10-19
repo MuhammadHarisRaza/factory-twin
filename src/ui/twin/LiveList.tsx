@@ -8,7 +8,10 @@ import { formatClock } from '../../sim/time';
 import { OperationalStatus, StatusBadge } from '../kit/Status';
 import { fmtInt } from '../kit/format';
 import { assetStatus, liveEvents, vehicleActivity, type PhaseTone } from './derive';
-import { LiveEventRow, eventTarget, locateEvent } from './EventRows';
+import type { OpEvent } from '../../model/types';
+import { useEvent } from '../kit/useEvent';
+import { LiveEventRow, eventTarget, liveRowShown, locateEvent } from './EventRows';
+
 import { useMediaQuery } from './useMedia';
 import { useTwinUi, type LiveTab } from './uiStore';
 
@@ -39,6 +42,7 @@ export function LiveList() {
   const stage = useTwin((s) => s.stage);
   // The list folds away while a workspace (equipment, vehicle, stage) is open — and on short screens while a
   // zone panel is open — so the panel gets the column; it stays open for a selection made from the list.
+  // Beside the wide panel (src/ui/twin/panelWidth.ts) it is hidden altogether, also for such a selection.
   const short = useMediaQuery('(max-height: 860px)');
   const selKey = vehicle ? `v:${vehicle}` : selected ? `e:${selected}` : stage ? `s:${stage}` : zone ? `z:${zone}` : null;
   const [keepFor, setKeepFor] = useState<string | null>(null);
@@ -81,6 +85,12 @@ export function LiveList() {
     setKeepFor(key);
     run();
   };
+  /** The locate action of an event row (one identity, so unchanged rows skip their render). */
+  const locate = useEvent((ev: OpEvent) => {
+    const t = eventTarget(ev);
+    const key = t ? `${t.kind === 'vehicle' ? 'v' : t.kind === 'zone' ? 'z' : 'e'}:${t.id}` : null;
+    if (key) pick(key, () => locateEvent(ev));
+  });
   const toggle = () => {
     if (folded) {
       setKeepFor(selKey);
@@ -124,7 +134,7 @@ export function LiveList() {
               data.events.map((ev) => {
                 const t = eventTarget(ev);
                 const key = t ? `${t.kind === 'vehicle' ? 'v' : t.kind === 'zone' ? 'z' : 'e'}:${t.id}` : null;
-                return <LiveEventRow key={ev.id} ev={ev} now={data.now} on={key != null && key === selKey} onLocate={() => key && pick(key, () => locateEvent(ev))} />;
+                return <LiveEventRow key={ev.id} ev={ev} now={data.now} shown={liveRowShown(ev, data.now)} on={key != null && key === selKey} onLocate={locate} />;
               })
             ) : (
               <div className="tw-live-empty">No active or open events, and none cleared in the last 4 h.</div>

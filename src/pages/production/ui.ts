@@ -3,6 +3,8 @@
  * browser only (a convenience); the page works the same when storage is unavailable.
  */
 import { create } from 'zustand';
+import { openView } from '../../app/store';
+import type { RangeKey } from '../../model/telemetry';
 
 export type AnalysisView = 'equipment' | 'capacity' | 'downtime' | 'shifts' | 'finance';
 export const ANALYSIS_VIEWS: { value: AnalysisView; label: string }[] = [
@@ -23,8 +25,20 @@ const load = (): AnalysisView => {
   }
 };
 
-export const useProductionUi = create<{ analysis: AnalysisView; setAnalysis: (v: AnalysisView) => void }>((set) => ({
+export const useProductionUi = create<{
+  analysis: AnalysisView;
+  setAnalysis: (v: AnalysisView) => void;
+  /** Material flow: the buffer the chart area shows (null = the view's own focus) and the chart range. */
+  materialBuffer: string | null;
+  materialRange: RangeKey;
+  setMaterialBuffer: (id: string | null) => void;
+  setMaterialRange: (r: RangeKey) => void;
+}>((set) => ({
   analysis: load(),
+  materialBuffer: null,
+  materialRange: '8h',
+  setMaterialBuffer: (materialBuffer) => set({ materialBuffer }),
+  setMaterialRange: (materialRange) => set({ materialRange }),
   setAnalysis: (analysis) => {
     set({ analysis });
     try {
@@ -34,3 +48,9 @@ export const useProductionUi = create<{ analysis: AnalysisView; setAnalysis: (v:
     }
   },
 }));
+
+/** Open Production › Material flow (#/production?tab=material), optionally on one buffer's charts. */
+export function openMaterialFlow(bufferId?: string | null) {
+  if (bufferId) useProductionUi.getState().setMaterialBuffer(bufferId);
+  openView('production', 'material');
+}

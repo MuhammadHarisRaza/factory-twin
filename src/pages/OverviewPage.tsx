@@ -3,8 +3,10 @@
  * for the current shift in one screen:
  *   header (factory · line · shift · plant time, SIMULATED) → a data-driven executive summary →
  *   five KPIs → the live 3D factory (the one shared scene) with the issues requiring attention beside
- *   it → the production flow strip across the page under both.
- * Every figure comes from the shared simulation through the shared metric / KPI / event layers.
+ *   it → the production flow strip across the page under both, with the equipment-state counts now →
+ *   the operational insights (rule findings) beside the data freshness & coverage card.
+ * Every figure comes from the shared simulation through the shared metric / KPI / event / rule layers.
+ * Events (records) and insights (rule evaluations) stay separate blocks.
  */
 import { CircleCheck, Info, TriangleAlert } from 'lucide-react';
 import { executiveSummary } from '../intel/summary';
@@ -13,9 +15,12 @@ import { useSimValue } from '../sim/store';
 import { formatClock, formatDay, shiftAt } from '../sim/time';
 import { FlowStrip } from '../ui/flow/FlowStrip';
 import { PageHeader, Section } from '../ui/kit/Page';
+import { DataCoveragePanel } from './overview/DataCoverage';
+import { InsightsPanel } from './overview/Insights';
 import { IssuesPanel } from './overview/Issues';
 import { OverviewKpis } from './overview/Kpis';
 import { OverviewTwin } from './overview/OverviewTwin';
+import { StateMix } from './overview/StateMix';
 import './overview/overview.css';
 
 function Context() {
@@ -59,7 +64,13 @@ export function OverviewPage() {
         <IssuesPanel />
         <Section title="Production flow" subtitle="Current shift · status now, output so far · select a stage to highlight it in the model" className="ov-flow">
           <FlowStrip detail={false} />
+          <StateMix />
         </Section>
+      </div>
+      {/* Rule findings beside the data basis (from 1280 px); stacked below. */}
+      <div className="ov-intel">
+        <InsightsPanel />
+        <DataCoveragePanel />
       </div>
     </div>
   );

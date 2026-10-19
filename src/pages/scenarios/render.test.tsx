@@ -63,9 +63,13 @@ describe('Scenarios panel', () => {
       expect(html[t], t).not.toMatch(/>Live</);
       expect(html[t], t).not.toMatch(/Energy cost|kWh/);
     }
-    for (const text of ['Conveyor stoppage', 'OEE loss', 'Defect deterioration', 'Truck delay', 'Reset demo…', 'Not set up']) expect(html.demos, text).toContain(text);
+    for (const text of ['Conveyor stoppage', 'OEE loss', 'Defect deterioration', 'Truck delay', 'Powder shortage', 'Downstream constraint', 'Process deviation → batch → rejects', 'Data quality', 'Reset demo…', 'Not set up'])
+      expect(html.demos, text).toContain(text);
     for (const text of ['Production bottleneck', 'Machine breakdown', 'Developing machine fault', 'Data feed loss (PLC link)', 'Quality deterioration', 'Yard congestion', 'Restricted-zone entry', 'Show me'])
       expect(html.catalogue, text).toContain(text);
+    for (const text of ['Kiln zone 3 temperature high', 'Press 2 pressing pressure low', 'Frozen counter · E-PRS2', 'Command without running feedback · E-PRS1', 'Simulated scenario', 'Detected by', 'QL-PROCESS-ASSOCIATION', 'Events &amp; Reports › Data &amp; connectivity', 'Quality &amp; Defects › Compare'])
+      expect(html.catalogue, text).toContain(text);
+    expect(html.catalogue).not.toMatch(/(powder|slip|silo)[^.<]{0,60}tiles\/h|\bAI\b|Ghani/i);
     for (const text of ['No scenario in effect', 'Skip 15 min', 'Scenario log', 'No scenario yet']) expect(html.active, text).toContain(text);
     for (const text of ['Good output Δ', 'Line OEE Δ', 'Unplanned downtime Δ', 'Reject rate Δ', 'Since scenario start']) expect(html.impact, text).toContain(text);
     for (const text of ['Open Overview', 'Set up · Production', 'Set up · Quality &amp; Defects', 'Set up · Fleet &amp; Movement', 'Open Events &amp; Reports', 'Go to Reset (E)', 'Simulation speed'])
@@ -74,7 +78,7 @@ describe('Scenarios panel', () => {
 
   it('renders while every guided demo runs: events, Clear, the log with outcomes', () => {
     const v = useScenarioParams.getState().values;
-    for (const id of ['A', 'B', 'C', 'D'] as const) expect(setupDemo(id, v[demoKey(id)])).not.toBeNull();
+    for (const id of ['A', 'B', 'C', 'D', 'F', 'G', 'H'] as const) expect(setupDemo(id, v[demoKey(id)])).not.toBeNull();
     const s = useSim.getState().sim;
     advance(s, s.minute + 30);
     useSim.setState({ version: s.version });
@@ -82,6 +86,12 @@ describe('Scenarios panel', () => {
     expect(demos).toContain('Event report');
     expect(demos).toMatch(/EV-\d{5}/);
     expect(demos).toContain('Running');
+    // Finding-based demos: the watched rules with their status in words (F, G, H detect within 30 min).
+    expect(demos).toContain('F-DOWNSTREAM-CONSTRAINT');
+    expect(demos).toContain('Detected');
+    expect(demos).toContain('Not evaluated');
+    expect(demos).toMatch(/Association to investigate/);
+    expect(demos).not.toMatch(/(powder|slip|silo)[^.<]{0,60}tiles\/h|\bAI\b|Ghani/i);
     const active = renderTab('active');
     expect(active).toMatch(/\d scenarios? in effect/);
     expect(active).toContain('Clear all');

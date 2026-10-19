@@ -128,10 +128,10 @@ function pneumaticDemand(s: SimState) {
   return users.reduce((a, id) => a + utilisation(s, id).u, 0) / users.length;
 }
 
-/** Instantaneous power (kW) per consumer for the current minute, from the model (actual). */
-export function powerNow(s: SimState, id: string) {
+/** Instantaneous power (kW) per consumer for the current minute, from the model (actual); null when the model has no bucket for it. */
+export function powerNow(s: SimState, id: string): { elec: number; thermal: number } | null {
   const b = s.energy[id]?.get(Math.floor((s.minute - 1) / 60));
-  if (!b) return { elec: 0, thermal: 0 };
+  if (!b) return null;
   // Average power so far in the current hour.
   const minutes = ((s.minute - 1) % 60) + 1;
   return { elec: (b.elec * 60) / minutes, thermal: (b.thermal * 60) / minutes };

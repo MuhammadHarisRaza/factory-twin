@@ -15,6 +15,7 @@
  */
 import { EQUIPMENT_BY_ID } from '../data/equipment';
 import { DEFECT_ACTIONS, REASON_ACTIONS } from '../model/actions';
+import { PROCESS_SIGNAL_BY_ID } from '../model/catalog/process';
 import {
   BUFFERS,
   CAMERA_BY_ID,
@@ -58,6 +59,7 @@ import type {
 import type { SimState } from './engine';
 import { LOG_MIN, minuteAt } from './engine';
 import { HEALTH_ASSETS, HEALTH_BY_ID, assess, sensorHistory, type HealthLevel } from './health';
+import { processValue } from './process';
 import { formatClock, formatDuration } from './time';
 
 // ── Labels ────────────────────────────────────────────────────────────────────
@@ -1388,6 +1390,21 @@ function qualityCauses(s: SimState, t: number, d: DefectCategory, scen: ReturnTy
   const out: EventCause[] = [];
   if (scen && (!scen.stage || scen.stage === origin))
     out.push({ text: `Quality deterioration at ${STAGE_BY_ID[origin].name.toLowerCase()} injected by a scenario`, confidence: 'confirmed', basis: 'Scenario log' });
+  // A simulated process deviation at the origin stage: the deviation is a scenario input, its link to the
+  // defect a correlation in time (the batch ids on the records allow a batch comparison).
+  for (const sc of s.scenarios) {
+    if (sc.kind !== 'process-deviation' || !sc.signalId || sc.start > t || (sc.end != null && sc.end <= t)) continue;
+    const spec = PROCESS_SIGNAL_BY_ID[sc.signalId];
+    if (!spec || OPS_BY_ID[spec.equipmentId]?.stage !== origin) continue;
+    // The last simulated minute (the rules run inside minute t, before it counts as simulated).
+    const pv = processValue(s, sc.signalId, Math.min(t, s.minute - 1));
+    const dev = typeof pv === 'number' && spec.nominal != null ? pv - spec.nominal : null;
+    out.push({
+      text: `Process deviation at ${STAGE_BY_ID[origin].name.toLowerCase()}: ${spec.name.toLowerCase()} on ${spec.equipmentId}${dev != null ? ` ${dev >= 0 ? '+' : '−'}${Math.abs(dev).toFixed(spec.digits)} ${spec.unit ?? ''} from its setpoint` : ''} (simulated scenario input)`,
+      confidence: 'possible',
+      basis: 'Correlation in time with a process deviation at the stage where the defect originates — not proof of causation',
+    });
+  }
   out.push({
     text: `Process condition at ${STAGE_BY_ID[origin].name.toLowerCase()} (where ${DEFECTS[d].label.toLowerCase()} usually originates)`,
     confidence: 'possible',

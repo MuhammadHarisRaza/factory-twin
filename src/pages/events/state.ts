@@ -1,6 +1,7 @@
 /**
- * View state of Events & Reports that outlives a tab switch: the event-list filters and page, and
- * the report builder's choices (type, period, scope, incident event). Plain UI state — the records
+ * View state of Events & Reports that outlives a tab switch: the event-list filters and page, the
+ * Reliability and Data & connectivity choices, the insight-threshold editor filters, and the report
+ * builder's choices (type, period, scope, incident event). Plain UI state — the records
  * themselves always come from the shared simulation store. A completed Reset Demo clears the
  * incident choice (event ids restart after a reset).
  *
@@ -11,7 +12,10 @@ import { create } from 'zustand';
 import { PERIOD_WORKSPACES, useApp } from '../../app/store';
 import { useSim } from '../../sim/store';
 import { REPORT_PERIODS, type ReportEventQuery, type ReportPeriodKey, type ReportScope, type ReportType } from '../../report/ops/types';
+import { DEFAULT_GAP_FILTERS, type ClassFilter, type GapFilters, type StageFilter } from './coverage';
 import { DEFAULT_FILTERS, reportFilters, type EventFilters } from './filters';
+import { DEFAULT_INSIGHT_FILTERS, type InsightFilters } from './insightThresholds';
+import type { LaneGroup, ParetoBy, ReliabilityWindowKey, StopClass } from './reliability';
 
 type EventsViewState = {
   filters: EventFilters;
@@ -28,6 +32,39 @@ export const useEventsView = create<EventsViewState>((set) => ({
   resetFilters: () => set({ filters: DEFAULT_FILTERS, page: 0 }),
   setPage: (page) => set({ page }),
 }));
+
+/** Reliability tab choices: the window, the stop class of the Pareto / longest stops, the grouping and the timeline lanes. */
+type ReliabilityViewState = {
+  window: ReliabilityWindowKey;
+  cls: StopClass;
+  by: ParetoBy;
+  lanes: LaneGroup;
+  set: (p: Partial<Omit<ReliabilityViewState, 'set'>>) => void;
+};
+
+export const useReliabilityView = create<ReliabilityViewState>((set) => ({ window: '24h', cls: 'unplanned', by: 'reason', lanes: 'machines', set: (p) => set(p) }));
+
+/** Data & connectivity tab choices: the coverage matrix class, the equipment table filters and the gap-signal filters. */
+type DataViewState = {
+  cls: ClassFilter;
+  equipmentQuery: string;
+  equipmentStage: StageFilter;
+  gaps: GapFilters;
+  set: (p: Partial<Omit<DataViewState, 'set' | 'setGaps'>>) => void;
+  setGaps: (p: Partial<GapFilters>) => void;
+};
+
+export const useDataView = create<DataViewState>((set) => ({
+  cls: 'all',
+  equipmentQuery: '',
+  equipmentStage: 'all',
+  gaps: DEFAULT_GAP_FILTERS,
+  set: (p) => set(p),
+  setGaps: (p) => set((s) => ({ gaps: { ...s.gaps, ...p } })),
+}));
+
+/** Filters of the insight-rule thresholds editor (Detection rules tab). */
+export const useInsightFilters = create<InsightFilters & { set: (p: Partial<InsightFilters>) => void }>((set) => ({ ...DEFAULT_INSIGHT_FILTERS, set: (p) => set(p) }));
 
 type ReportBuilderState = {
   type: ReportType;

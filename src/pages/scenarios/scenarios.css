@@ -710,3 +710,62 @@
   padding-top: var(--s-3);
   border-top: 1px solid var(--line);
 }
+
+/* Detected-by rules of a catalogue scenario */
+.scnp-rules {
+  flex-wrap: wrap;
+  align-items: center;
+}
+.scnp-rules .tag {
+  font-size: var(--fs-11);
+}
+
+/* Rule findings of a finding-based demonstration (E–H): icon + words per watched rule */
+.scnp-demo-fl {
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+.scnp-demo-f {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  min-width: 0;
+  color: var(--text-3);
+}
+.scnp-demo-f svg {
+  flex: none;
+}
+.scnp-demo-f.detected {
+  color: var(--text-1);
+}
+.scnp-demo-f.detected svg {
+  color: var(--warning);
+}
+.scnp-demo-f.clear svg,
+.scnp-demo-f.cleared svg {
+  color: var(--good);
+}
+.scnp-demo-fs {
+  flex: none;
+  min-width: 92px;
+  font-size: var(--fs-11);
+}
+.scnp-demo-fn {
+  flex: 1 1 auto;
+  min-width: 0;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+@media (max-width: 480px) {
+  .scnp-demo-f {
+    flex-wrap: wrap;
+  }
+  .scnp-demo-fn {
+    white-space: normal;
+  }
+}

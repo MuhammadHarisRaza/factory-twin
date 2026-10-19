@@ -1450,3 +1450,193 @@ p.prod-loss-basis {
 .prod-block .sec-b > .disc {
   margin-top: var(--s-3);
 }
+
+/* ── Material flow (?tab=material) ─────────────────────────────────────────── */
+.mf-summary {
+  margin: var(--s-3) 0;
+  font-size: var(--fs-13);
+  color: var(--text-2);
+}
+.mf-table-wrap {
+  overflow-x: auto;
+}
+.mf-table td {
+  vertical-align: top;
+}
+.mf-table .sub,
+.mf-rank .sub,
+.mf-map .sub {
+  display: block;
+}
+.mf-name {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  font-weight: var(--fw-medium);
+  color: var(--text-1);
+}
+.mf-stage td {
+  background: var(--bg-2);
+}
+.mf-buffer.on td {
+  background: var(--accent-soft);
+}
+.mf-absent td {
+  border-style: dashed;
+}
+.mf-level,
+.mf-io {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  white-space: nowrap;
+}
+.mf-disclosure {
+  font-style: italic;
+}
+.mf-flag,
+.mf-warn {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+}
+.mf-flag svg,
+.mf-warn svg {
+  color: var(--warning);
+  flex: none;
+}
+.mf-select select {
+  height: 26px;
+  max-width: 200px;
+  border: 1px solid var(--line-2);
+  border-radius: var(--r-1);
+  background: var(--bg-2);
+  color: var(--text-1);
+  font: inherit;
+  font-size: var(--fs-12);
+}
+.mf-charts {
+  display: flex;
+  flex-direction: column;
+  gap: var(--s-3);
+}
+.mf-findings,
+.mf-ne {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+}
+.mf-findings li {
+  padding: var(--s-3) var(--s-4);
+  border-bottom: 1px solid var(--line);
+}
+.mf-findings p {
+  margin: 4px 0;
+  font-size: var(--fs-12);
+  color: var(--text-2);
+}
+.mf-f-h {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 6px;
+  font-size: var(--fs-13);
+}
+.mf-f-meta,
+.mf-ev {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px 12px;
+  font-size: var(--fs-11);
+  color: var(--text-3);
+}
+.mf-ev {
+  margin-top: 4px;
+}
+.mf-ne li {
+  padding: 4px 0;
+  font-size: var(--fs-12);
+}
+.mf-rank tr.on td {
+  background: var(--accent-soft);
+}
+.mf-rank .tag,
+.mf-map .tag {
+  margin-left: 6px;
+}
+.mf-partial td {
+  color: var(--text-2);
+}
+
+/* ── Equipment states (Plan & flow) ─────────────────────────────────────────── */
+.prod-states-now {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px 14px;
+  margin-bottom: var(--s-3);
+}
+.prod-state-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+}
+.prod-states {
+  margin-bottom: var(--s-2);
+}
+
+/* ── OEE trend, stage comparison, partial figure ───────────────────────────── */
+.prod-oee-partial {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 6px;
+  margin: 6px 0 0;
+  font-size: var(--fs-12);
+  color: var(--text-2);
+}
+.prod-oee-na {
+  margin: var(--s-2) 0 0;
+  padding-left: 18px;
+  font-size: var(--fs-12);
+  color: var(--text-2);
+}
+
+/* ── Stage signal table filters ─────────────────────────────────────────────── */
+.stg-sig-filters {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 8px 14px;
+  margin-bottom: var(--s-2);
+  font-size: var(--fs-12);
+}
+.stg-sig-search {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 0 8px;
+  height: 26px;
+  border: 1px solid var(--line-2);
+  border-radius: var(--r-1);
+  background: var(--bg-2);
+  color: var(--text-3);
+}
+.stg-sig-search input {
+  width: 180px;
+  border: 0;
+  background: none;
+  color: var(--text-1);
+  font: inherit;
+  outline: none;
+}
+.stg-sig-filters select {
+  height: 26px;
+  border: 1px solid var(--line-2);
+  border-radius: var(--r-1);
+  background: var(--bg-2);
+  color: var(--text-1);
+  font: inherit;
+}
+.stg-sig-search:focus-within {
+  box-shadow: var(--focus);
+}

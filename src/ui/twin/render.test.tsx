@@ -60,11 +60,12 @@ describe('twin overlays render', () => {
       'Pressing &amp; forming',
       'Simulated',
       'Key figures',
-      'Press cycle rate',
+      'Press output rate',
+      'Cycle time',
       'Good tiles pressed',
       'Press-origin rejects',
       'What matters',
-      'Signals',
+      'PLC signals',
       'Events',
       'Open in Production',
       'Technical details',
@@ -84,10 +85,11 @@ describe('twin overlays render', () => {
   it('labels parameters the model does not have as not modelled (kiln)', () => {
     useTwin.getState().select('H-KILN');
     const html = render();
-    expect(html).toContain('Firing temperature profile');
+    expect(html).toContain('Firing temperature profile (single value)');
     expect(html).toContain('Not modelled');
-    expect(html).toContain('no thermal model of the kiln');
-    expect(html).toContain('Production rate');
+    expect(html).toContain('five simulated zone temperatures');
+    expect(html).toContain('Firing rate');
+    expect(html).toContain('Zones within band');
     // The kiln's KPI reason is the same parameter: listed once, not as a tile.
     expect(html).not.toContain(esc(NOT_MODELLED.kilnProfile));
   });

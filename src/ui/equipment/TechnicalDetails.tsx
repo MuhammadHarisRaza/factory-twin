@@ -1,17 +1,18 @@
 /**
  * "Technical details" of the equipment panel — one disclosure at the bottom, collapsed by default:
  * register data, the condition assessment (with the condition indicator and its definition — the
- * only place the indicator appears), data source and feed, the full signal registry with ids, units
- * and how each value is produced, the cameras covering the asset (simulated view / configure a
+ * only place the indicator appears), data source and feed, the integration status and the signal catalogue
+ * (availability counts, signal mappings with 'tag not configured', the rule thresholds that apply, calculation
+ * definitions), the cameras covering the asset (simulated view / configure a
  * stream), stop / condition / maintenance history and the definitions of every figure the panel
  * shows. Vehicles: their register, visit and position source.
  */
 import { MapPin } from 'lucide-react';
+import { AVAILABILITY_CLASS_LABEL, AVAILABILITY_STATUS_LABEL, SOURCE_SYSTEM_LABEL } from '../../model/catalog';
 import { EQUIPMENT_BY_ID } from '../../data/equipment';
 import { ZONE_BY_ID } from '../../data/layout';
 import { CONVEYOR_BY_ID, DOCKS, LINE, OPS_BY_ID, STAGE_BY_ID } from '../../model/plant';
 import { useSimValue } from '../../sim/store';
-import { formatClock } from '../../sim/time';
 import { useTwin } from '../../store';
 import { clockLabel } from '../../intel/summary';
 import { Disclosure, Facts, ProvenanceBadge } from '../kit/Page';
@@ -23,7 +24,6 @@ import { ConditionAssessment, ConditionHistory, INDICATOR_DEFINITION } from './C
 import { PLANNED_SOURCE, SIM_SOURCE, feedOf } from './feeds';
 import type { EquipmentIntel } from './intel/types';
 import { KIND_LABEL, type AssetProfile } from './profile';
-import { BASIS_LABEL, SIGNAL_KIND_LABEL, assetSignals } from './signals';
 
 /** Clickable upstream / downstream equipment. */
 function Connections({ ids }: { ids: string[] }) {
@@ -45,24 +45,85 @@ function Connections({ ids }: { ids: string[] }) {
   );
 }
 
-function SignalList({ id }: { id: string }) {
-  const rows = useSimValue((s) => assetSignals(s, id), [id]);
-  if (!rows.length) return <p className="insp-desc">No signal is configured for this asset.</p>;
+/**
+ * The asset's signal catalogue as an integrator reads it: availability class × status counts, every signal's mapping
+ * (source system; no tag is configured — mapped at integration), the rule thresholds that apply (default or
+ * configured), the calculation definitions behind the figures and the integration status. Nothing is connected.
+ */
+function CatalogueView({ intel }: { intel: EquipmentIntel }) {
+  const c = intel.catalog;
+  const rows = intel.signalTable ?? [];
   return (
-    <ul className="eqw-sigs">
-      {rows.map((r) => (
-        <li key={r.def.id} title={`Feeds: ${r.metrics} · source: ${r.source}`}>
-          <span className="mono eqw-sig-id">{r.def.id}</span>
-          <span className="eqw-sig-v num">
-            {r.text}
-            {r.reading.quality === 'stale' && r.reading.since != null && <small> · last value {formatClock(r.reading.since)}</small>}
-          </span>
-          <span className="eqw-sig-m">
-            {SIGNAL_KIND_LABEL[r.def.kind]} · {r.def.unit} · <span className={r.basis === 'placeholder' ? 'eqw-warn' : ''}>{BASIS_LABEL[r.basis]}</span>
-          </span>
-        </li>
-      ))}
-    </ul>
+    <>
+      <div className="eqw-sub-h">Integration status</div>
+      <p className="insp-desc">
+        No plant system is connected: every value of this asset is produced by the demo simulation. Controller tags are not configured — each signal is mapped at
+        integration (PLC / SCADA / historian / MES / QMS / WMS as listed).
+      </p>
+      {c && c.counts.length > 0 && (
+        <>
+          <div className="eqw-sub-h">Signal catalogue · availability</div>
+          <ul className="eqw-cat-counts">
+            {c.counts.map((x) => (
+              <li key={`${x.cls}|${x.status}`}>
+                <b className="num">{x.n}</b> {x.cls} · {x.status}
+              </li>
+            ))}
+          </ul>
+        </>
+      )}
+      {rows.length > 0 ? (
+        <>
+          <div className="eqw-sub-h">Signal mappings</div>
+          <ul className="eqw-sigs">
+            {rows.map((r) => (
+              <li key={r.def.signalId} title={r.def.statusNote ?? r.def.description}>
+                <span className="mono eqw-sig-id">{r.def.signalId}</span>
+                <span className="eqw-sig-v">
+                  {SOURCE_SYSTEM_LABEL[r.def.sourceSystem]} · Tag: not configured
+                </span>
+                <span className="eqw-sig-m">
+                  {AVAILABILITY_CLASS_LABEL[r.def.availabilityClass]} · {AVAILABILITY_STATUS_LABEL[r.def.availabilityStatus]}
+                  {r.def.unit ? ` · ${r.def.unit}` : ''}
+                </span>
+              </li>
+            ))}
+          </ul>
+        </>
+      ) : (
+        <p className="insp-desc">No catalogue signal is defined for this asset.</p>
+      )}
+      {c && c.thresholds.length > 0 && (
+        <>
+          <div className="eqw-sub-h">Rule thresholds that apply</div>
+          <dl className="eqw-defs">
+            {c.thresholds.map((x) => (
+              <div key={`${x.ruleId}.${x.key}`}>
+                <dt>
+                  {x.ruleId} · {x.label}
+                </dt>
+                <dd>
+                  {x.value} <span className="muted">({x.source})</span>
+                </dd>
+              </div>
+            ))}
+          </dl>
+        </>
+      )}
+      {c && c.definitions.length > 0 && (
+        <>
+          <div className="eqw-sub-h">Calculations</div>
+          <dl className="eqw-defs">
+            {c.definitions.map((d) => (
+              <div key={d.label}>
+                <dt>{d.label}</dt>
+                <dd>{d.text}</dd>
+              </div>
+            ))}
+          </dl>
+        </>
+      )}
+    </>
   );
 }
 
@@ -97,11 +158,11 @@ function EquipmentTechnical({ prof, intel }: { prof: AssetProfile; intel: Equipm
   const ops = OPS_BY_ID[id];
   const conv = CONVEYOR_BY_ID[id];
   const feed = useSimValue((s) => feedOf(s, id), [id]);
-  const signals = ops?.signals.length ?? 0;
+  const signals = intel.signalTable?.length ?? ops?.signals.length ?? 0;
   const cams = camerasOf(id).length;
   const h = intel.health;
   return (
-    <Disclosure title="Technical details" meta={`register · ${signals} signal${signals === 1 ? '' : 's'} · ${cams} camera${cams === 1 ? '' : 's'} · history · definitions`}>
+    <Disclosure title="Technical details" meta={`register · catalogue of ${signals} signal${signals === 1 ? '' : 's'} · thresholds · ${cams} camera${cams === 1 ? '' : 's'} · history · definitions`}>
       <div className="eqw-sub-h">Register</div>
       <Facts
         rows={[
@@ -158,12 +219,7 @@ function EquipmentTechnical({ prof, intel }: { prof: AssetProfile; intel: Equipm
         ]}
       />
 
-      <div className="eqw-sub-h">Signal registry · current simulated values</div>
-      <SignalList id={id} />
-      <p className="tw-fine">
-        Every value is produced by the simulation engine. Process values the model does not calculate (temperatures, moisture, pressure) are listed as signals a
-        real integration would provide, without a value — the demo has no physical model for them, so it shows none.
-      </p>
+      <CatalogueView intel={intel} />
 
       <div className="eqw-sub-h">Cameras</div>
       <CameraSources equipmentId={id} />

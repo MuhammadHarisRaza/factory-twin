@@ -8,6 +8,7 @@ import type { OperationalState } from '../model/types';
 import { OPERATIONAL_STATE } from './kit/Status';
 import { QUICK_VIEWS } from './twin/quickViews';
 import { assetStatus } from './twin/derive';
+import { useTwinUi } from './twin/uiStore';
 
 /** Keyboard shortcut shown next to the n-th view: 1–9, then 0. */
 export const viewShortcut = (index: number) => (index + 1) % 10;
@@ -51,7 +52,15 @@ export function ZonePanel() {
     <aside className="zones overlay-panel" aria-label="Factory navigation">
       <div className="zones-h">
         <span>Views</span>
-        <button className="btn ghost sm icon" onClick={() => setOpen(false)} title="Collapse panel (reopen from the rail)">
+        <button
+          className="btn ghost sm icon"
+          onClick={() => {
+            setOpen(false);
+            // Hiding the list brings back the panel width the viewer chose (showing it may have made it compact).
+            useTwinUi.getState().restorePanelWidth();
+          }}
+          title="Collapse panel (reopen from the rail)"
+        >
           <PanelLeftClose size={15} />
         </button>
       </div>

@@ -14,7 +14,7 @@ import { alertShown, sharedSeverities, stopMarkerSeverity } from './status/alert
 import { useSceneTabIndex } from './embedded';
 
 /** Operational states that get a status pin above the asset when it is not tagged (conveyors use their own run tags). */
-const PINNED: ReadonlySet<OperationalState> = new Set<OperationalState>(['stopped', 'fault', 'planned', 'reduced']);
+const PINNED: ReadonlySet<OperationalState> = new Set<OperationalState>(['stopped', 'fault', 'planned', 'changeover', 'reduced']);
 
 /** Corner-bracket segments (3 short edges per box corner) around a box. */
 function bracketPoints(box: Box3) {

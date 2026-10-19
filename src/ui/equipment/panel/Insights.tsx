@@ -6,7 +6,9 @@
  * a scenario input or an event rule — never a prediction). The rest of the observation and why it
  * matters open with "Details", so the panel reads in seconds and never shows a wall of text.
  */
-import { useState } from 'react';
+import { memo, useState } from 'react';
+import { sameProps } from '../../kit/equal';
+
 import { Activity, ArrowRight, ChevronDown, FileText, Gauge, ListChecks } from 'lucide-react';
 import type { IntelEvidence, IntelInsight } from '../intel/types';
 import { SEVERITY_META } from './tone';
@@ -75,7 +77,7 @@ function Evidence({ e, onSignal, onEvent, hasSignal }: { e: IntelEvidence; onSig
   );
 }
 
-function Card({
+const Card = memo(function Card({
   i,
   onSignal,
   onEvent,
@@ -135,7 +137,7 @@ function Card({
       )}
     </article>
   );
-}
+}, sameProps);
 
 export function Insights({
   insights,

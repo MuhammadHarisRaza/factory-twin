@@ -2,7 +2,8 @@
  * Detection rules tab of Events & Reports (moved from the retired Assets page): the rule catalogue
  * (EVENT_RULE_DEFS) with the thresholds in force — editable through the shared sim store (setRule /
  * resetRules; they apply from the next simulated minute) — the events each rule raised (a click lists
- * them in the Events tab), and the rules this release cannot run, with the reason.
+ * them in the Events tab), and the rules this release cannot run, with the reason. Below, the thresholds of the
+ * insight rules (rule-engine findings) — see ./InsightThresholdEditor.tsx.
  */
 import { useEffect, useState } from 'react';
 import { CircleSlash, RotateCcw } from 'lucide-react';
@@ -16,6 +17,7 @@ import { fmtInt } from '../../ui/kit/format';
 import { Section } from '../../ui/kit/Page';
 import { DEFAULT_FILTERS } from './filters';
 import { formatParam, isModified, modifiedCount, parseParam, ruleParams, sharedWith, type RuleParam } from './rules';
+import { InsightThresholds } from './InsightThresholdEditor';
 import { useEventsView } from './state';
 
 type RuleDef = (typeof EVENT_RULE_DEFS)[number];
@@ -177,58 +179,61 @@ export function RulesView() {
   ];
 
   return (
-    <div className="work rl">
-      <Section
-        title="Detection rules"
-        subtitle={`${AVAILABLE_RULES.length} rules running on the simulated signals and records · ${modified ? `${modified} threshold${modified === 1 ? '' : 's'} changed from default` : 'all thresholds at default'}`}
-        flush
-        actions={
-          <button className="btn sm" onClick={resetRules} disabled={!modified} title="Restore every threshold to its default">
-            <RotateCcw size={12} aria-hidden /> Reset all to defaults
-          </button>
-        }
-      >
-        <div className="rl-table">
-          <DataTable columns={columns} rows={AVAILABLE_RULES} rowKey={(d) => d.id} maxHeight="none" />
-        </div>
-        <p className="rl-foot">
-          Thresholds apply from the next simulated minute and stay in force until Reset Demo, which restores the defaults. Events already detected keep the threshold
-          recorded in their trigger.
-        </p>
-      </Section>
-      <div className="rl-side">
-        <Section title="Not available in this release" subtitle="Rules that need data this deployment does not have">
-          <ul className="rl-list">
-            {UNAVAILABLE_RULES.map((d) => (
-              <li key={d.id}>
-                <CircleSlash size={13} aria-hidden />
-                <div>
-                  <b>{d.label}</b> <span className="mono muted">{d.id}</span>
-                  <span className="rl-why">Unavailable — {d.unavailableReason ?? 'not configured'}.</span>
-                  <span className="rl-desc">{d.description}</span>
-                </div>
+    <div className="rl-page">
+      <div className="work rl">
+        <Section
+          title="Detection rules"
+          subtitle={`${AVAILABLE_RULES.length} rules running on the simulated signals and records · ${modified ? `${modified} threshold${modified === 1 ? '' : 's'} changed from default` : 'all thresholds at default'}`}
+          flush
+          actions={
+            <button className="btn sm" onClick={resetRules} disabled={!modified} title="Restore every threshold to its default">
+              <RotateCcw size={12} aria-hidden /> Reset all to defaults
+            </button>
+          }
+        >
+          <div className="rl-table">
+            <DataTable columns={columns} rows={AVAILABLE_RULES} rowKey={(d) => d.id} maxHeight="none" />
+          </div>
+          <p className="rl-foot">
+            Thresholds apply from the next simulated minute and stay in force until Reset Demo, which restores the defaults. Events already detected keep the threshold recorded in
+            their trigger.
+          </p>
+        </Section>
+        <div className="rl-side">
+          <Section title="Not available in this release" subtitle="Rules that need data this deployment does not have">
+            <ul className="rl-list">
+              {UNAVAILABLE_RULES.map((d) => (
+                <li key={d.id}>
+                  <CircleSlash size={13} aria-hidden />
+                  <div>
+                    <b>{d.label}</b> <span className="mono muted">{d.id}</span>
+                    <span className="rl-why">Unavailable — {d.unavailableReason ?? 'not configured'}.</span>
+                    <span className="rl-desc">{d.description}</span>
+                  </div>
+                </li>
+              ))}
+            </ul>
+          </Section>
+          <Section title="How detection works">
+            <ul className="rl-list plain">
+              <li>
+                <b>Rules, not a model.</b> Every event is raised by one of these rules on simulated signals and records; the trigger, the values observed and the threshold are
+                stored with the event.
               </li>
-            ))}
-          </ul>
-        </Section>
-        <Section title="How detection works">
-          <ul className="rl-list plain">
-            <li>
-              <b>Rules, not a model.</b> Every event is raised by one of these rules on simulated signals and records; the trigger, the values observed and the threshold
-              are stored with the event.
-            </li>
-            <li>
-              <b>One record per condition.</b> A condition that persists updates its open event instead of raising a new one; the event clears when the condition does.
-            </li>
-            <li>
-              <b>Causes are inferred.</b> Suspected causes carry a confidence — confirmed, likely or possible — traced from correlated events.
-            </li>
-            <li>
-              <b>Simulated inspection.</b> Defect classes come from SIM-CV v0 (simulated) — no vision model is connected.
-            </li>
-          </ul>
-        </Section>
+              <li>
+                <b>One record per condition.</b> A condition that persists updates its open event instead of raising a new one; the event clears when the condition does.
+              </li>
+              <li>
+                <b>Causes are inferred.</b> Suspected causes carry a confidence — confirmed, likely or possible — traced from correlated events.
+              </li>
+              <li>
+                <b>Simulated inspection.</b> Defect classes come from SIM-CV v0 (simulated) — no vision model is connected.
+              </li>
+            </ul>
+          </Section>
+        </div>
       </div>
+      <InsightThresholds />
     </div>
   );
 }

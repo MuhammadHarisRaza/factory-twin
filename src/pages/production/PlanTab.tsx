@@ -3,22 +3,26 @@
  * stage flow with the constraint and its evidence, the largest production losses and the important
  * production events. Raw logs live in Analysis and Events & Reports, not here.
  */
+import type { MouseEvent } from 'react';
 import { ArrowDown, ArrowRight, FileText, Hourglass, Landmark } from 'lucide-react';
 import { openEvent, useApp } from '../../app/store';
 import { M2_PER_TILE } from '../../model/plant';
 import type { PeriodKey } from '../../sim/metrics';
 import { formatClock, formatDuration } from '../../sim/time';
 import { fmtInt, fmtPct } from '../../ui/kit/format';
+import { StateTimeline, type StateLegendItem } from '../../ui/kit/charts';
 import { Disclosure, EmptyState, KpiCard, KpiRow, ProvenanceBadge } from '../../ui/kit/Page';
 import { EventStatusBadge, OPERATIONAL_STATE, SeverityBadge, SourceTag, StatusBadge } from '../../ui/kit/Status';
 import type { ProductionTab } from '../ProductionPage';
 import { Block, kpiCardProps } from './common';
 import { FinanceNote, LossCards } from './LossCards';
 import type { ConstraintView, FlowRow, PlanData, ProductionEvent } from './plan';
+import type { StateDistribution } from './states';
 import { OutputTrend, PlanVsActual } from './PlanVsActual';
 import { ActiveEvents, CauseText, ConstraintTag, Count, StaleMark } from './stage/parts';
 import { countCell, rateShare } from './stage/derive';
-import { useProductionUi } from './ui';
+import { openMaterialFlow, useProductionUi } from './ui';
+import { NO_CALIBRATION } from './units';
 
 /** Plan & flow; `d` is computed once per simulated minute by ProductionPage (planData). */
 export function PlanTab({ periodKey, d, onTab }: { periodKey: PeriodKey; d: PlanData; onTab: (t: ProductionTab) => void }) {
@@ -43,6 +47,8 @@ export function PlanTab({ periodKey, d, onTab }: { periodKey: PeriodKey; d: Plan
       </div>
 
       <StageFlow flow={d.flow} cv={d.cv} periodLabel={d.p.label} />
+
+      <StatesBlock d={d.states} periodLabel={d.p.label} />
 
       <div className="work">
         <Block
@@ -166,11 +172,24 @@ function ConstraintCallout({ cv }: { cv: ConstraintView }) {
 }
 
 function BufferCell({ r }: { r: FlowRow }) {
-  if (r.row.ms.id === 'WH') return <span className="muted num">{fmtInt(r.row.io.wip)} pallets in stock</span>;
+  if (r.row.ms.id === 'WH')
+    return r.row.io.wip != null ? <span className="muted num">{fmtInt(r.row.io.wip)} pallets in stock</span> : <span className="stg-nm">Stock not measured</span>;
   const b = r.buffer;
   if (!b) return <span className="muted">No input buffer</span>;
+  const open = (e: MouseEvent) => {
+    e.stopPropagation();
+    openMaterialFlow(b.id);
+  };
+  if (b.fill == null)
+    return (
+      <button type="button" className="row-link prod-buf" onClick={open} title={`${b.name}: ${b.effect} Open Material flow for this buffer.`}>
+        <span className="stg-nm">Level not available</span>
+      </button>
+    );
+  // Slip tanks and powder silos: a level percentage only — no level-to-mass calibration is configured.
+  const qty = b.material ? `level % only (${NO_CALIBRATION.toLowerCase()})` : `${fmtInt(b.tiles)} of ${fmtInt(b.capacity)} tiles`;
   return (
-    <span className="prod-buf" title={`${b.name}: ${fmtInt(b.tiles)} of ${fmtInt(b.capacity)} tiles · ${b.effect}`}>
+    <button type="button" className="row-link prod-buf" onClick={open} title={`${b.name}: ${qty} · ${b.effect} Open Material flow for this buffer.`}>
       <span className="prod-buf-track" aria-hidden>
         <i style={{ width: `${Math.min(100, b.fill * 100)}%` }} />
       </span>
@@ -180,7 +199,7 @@ function BufferCell({ r }: { r: FlowRow }) {
           {b.trend === 'filling' ? '▲' : '▼'} {b.trend}
         </span>
       )}
-    </span>
+    </button>
   );
 }
 
@@ -190,10 +209,16 @@ function StageFlow({ flow, cv, periodLabel }: { flow: FlowRow[]; cv: ConstraintV
     <Block
       title="Stage flow"
       subtitle={`Input → output per stage · ${periodLabel} · state, buffers and events now · select a stage for its detail`}
+      actions={
+        <button type="button" className="btn sm ghost" onClick={() => openMaterialFlow()} title="Rates in physical units, buffer levels, balance and starvation / blockage findings">
+          Material flow <ArrowRight size={12} aria-hidden />
+        </button>
+      }
       note={
         <span>
           Counts come from each stage’s configured counting points; a quantity without one reads “Not measured”. Rate = actual output ÷ ideal rate × planned running
-          time. Buffer = the stage’s input buffer now and its 60-minute trend. All values simulated.
+          time. Buffer = the stage’s input buffer level now (from its level signal) and its 60-minute trend — select it for
+          Material flow; slip tanks and powder silos are level % only. All values simulated.
         </span>
       }
       flush
@@ -267,6 +292,81 @@ function StageFlow({ flow, cv, periodLabel }: { flow: FlowRow[]; cv: ConstraintV
           );
         })}
       </div>
+    </Block>
+  );
+}
+
+// ── Equipment-state distribution ─────────────────────────────────────────────
+
+const STATE_LEGEND: StateLegendItem[] = [
+  { state: 'running', label: OPERATIONAL_STATE.running.label, tone: 'good' },
+  { state: 'reduced', label: OPERATIONAL_STATE.reduced.label, tone: 'warning', pattern: 'solid' },
+  { state: 'starved', label: OPERATIONAL_STATE.starved.label, tone: 'warning', pattern: 'hatch' },
+  { state: 'blocked', label: OPERATIONAL_STATE.blocked.label, tone: 'warning', pattern: 'dots' },
+  { state: 'idle', label: OPERATIONAL_STATE.idle.label, tone: 'warning', pattern: 'hatch' },
+  { state: 'fault', label: OPERATIONAL_STATE.fault.label, tone: 'critical', pattern: 'dots' },
+  { state: 'stopped', label: OPERATIONAL_STATE.stopped.label, tone: 'critical', pattern: 'solid' },
+  { state: 'changeover', label: OPERATIONAL_STATE.changeover.label, tone: 'planned', pattern: 'hatch' },
+  { state: 'planned', label: OPERATIONAL_STATE.planned.label, tone: 'planned', pattern: 'solid' },
+  { state: 'unknown', label: OPERATIONAL_STATE.unknown.label, tone: 'unknown', pattern: 'dots' },
+  { state: 'disconnected', label: OPERATIONAL_STATE.disconnected.label, tone: 'unknown', pattern: 'hatch' },
+];
+
+/** Machines per state now and the time in each state over the period, with the machines' state timelines. */
+function StatesBlock({ d, periodLabel }: { d: StateDistribution; periodLabel: string }) {
+  const hours = (m: number) => (m >= 600 ? `${fmtInt(m / 60)} h` : formatDuration(m));
+  return (
+    <Block
+      title="Equipment states"
+      subtitle={`${d.machines} process machines · how many are in each state now and machine-time in state over ${periodLabel} · simulated`}
+      note={
+        <span>
+          From each machine’s state timeline (state signal and stop records; minute log for the last hours). Time without a state record
+          {d.unrecorded > 0.5 ? ` (${hours(d.unrecorded)} of machine-time here)` : ''} is shown as such, never as running. Shares are of the machine-time with a record.
+        </span>
+      }
+    >
+      <div className="prod-states-now" role="list" aria-label="Machines per state now">
+        {d.now.map((x) => {
+          const st = OPERATIONAL_STATE[x.state];
+          return (
+            <span key={x.state} role="listitem" className="prod-state-chip" title={x.ids.join(', ')}>
+              <StatusBadge tone={st.tone} icon={st.icon} label={st.label} />
+              <b className="num">{x.count}</b>
+            </span>
+          );
+        })}
+      </div>
+      {d.period.length ? (
+        <table className="table prod-states">
+          <thead>
+            <tr>
+              <th>State · {periodLabel}</th>
+              <th className="n">Machine-time</th>
+              <th className="n">Share</th>
+            </tr>
+          </thead>
+          <tbody>
+            {d.period.map((x) => {
+              const st = OPERATIONAL_STATE[x.state];
+              return (
+                <tr key={x.state}>
+                  <td>
+                    <StatusBadge tone={st.tone} icon={st.icon} label={st.label} />
+                  </td>
+                  <td className="n num">{hours(x.minutes)}</td>
+                  <td className="n num">{fmtPct(x.share, 1)}</td>
+                </tr>
+              );
+            })}
+          </tbody>
+        </table>
+      ) : (
+        <EmptyState title="No state record in this period yet" />
+      )}
+      <Disclosure title="State timeline per machine" meta={`${d.lanes.length} lanes · ${formatClock(d.window.from)}–${formatClock(d.window.to)}`}>
+        <StateTimeline label="Process machine states over the period" from={d.window.from} to={d.window.to} lanes={d.lanes} legend={STATE_LEGEND} laneHeight={12} />
+      </Disclosure>
     </Block>
   );
 }

@@ -28,7 +28,7 @@ import { attentionEvents, goodOutputKpi, targetAttainmentKpi, type KpiModel } fr
 export const toMonitoredStage = (st: StageId): MonitoredStageId => (st === 'DECOR' ? 'GLAZE' : st === 'PAL' ? 'PACK' : st);
 
 const int = (n: number) => Math.round(n).toLocaleString('en-GB');
-const pct = (x: number) => `${Math.round(x * 100)} %`;
+const pct = (x: number | null) => (x == null ? '—' : `${Math.round(x * 100)} %`);
 const KILN_ID = 'H-KILN';
 
 // ── Constraint ───────────────────────────────────────────────────────────────
@@ -116,7 +116,7 @@ export function constraintClaim(s: SimState, windowMin = 120, bn: ReturnType<typ
     const cur = bn.current;
     const starving = bn.cause === 'starving';
     const held = starving ? c.starvedShare : c.blockedShare;
-    const own = cur.downShare > HELD_UP_SHARE ? `down ${pct(cur.downShare)} of that time` : `working ${pct(cur.workingShare)} of that time without being ${starving ? 'starved' : 'blocked'} itself`;
+    const own = (cur.downShare ?? 0) > HELD_UP_SHARE ? `down ${pct(cur.downShare)} of that time` : `working ${pct(cur.workingShare)} of that time without being ${starving ? 'starved' : 'blocked'} itself`;
     const evidence = `the kiln was ${starving ? 'starved' : 'blocked'} ${pct(held)} of ${window}, traced ${starving ? 'upstream' : 'downstream'} to ${STAGE_BY_ID[cur.stage].name.toLowerCase()} (${own})`;
     return base(bn.cause, true, cur.stage, evidence, `${evidence}. Traced from the kiln (the line's design constraint): every stage in between was itself ${starving ? 'starved' : 'blocked'} more than ${pct(HELD_UP_SHARE)} of the window`);
   }
@@ -127,7 +127,7 @@ export function constraintClaim(s: SimState, windowMin = 120, bn: ReturnType<typ
     const evidence = `the kiln has been ${op} since ${formatClock(m.since)}, not yet long enough to trace the constraint to another stage`;
     return base('design', false, kilnStage, evidence, `${evidence}; kiln ${shares} (a stage is traced once the kiln is held up more than ${pct(HELD_UP_SHARE)} of the window)`);
   }
-  const recovered = c.downShare > HELD_UP_SHARE ? `; it was down ${pct(c.downShare)} of ${window} and is running again` : '';
+  const recovered = (c.downShare ?? 0) > HELD_UP_SHARE ? `; it was down ${pct(c.downShare)} of ${window} and is running again` : '';
   return base(
     'design',
     false,

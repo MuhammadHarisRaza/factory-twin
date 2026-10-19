@@ -58,6 +58,8 @@ import { createHealth, degradationLoad, startMaintenance, stepHealth, type Healt
 import { expBounded, lerpRange, noise01, streamFor, weighted, type Rng } from './rng';
 import { DEFAULT_START, MIN_PER_DAY, SHIFT_MIN, formatDate } from './time';
 import { createEventInternal, stepEvents, type EventInternal } from './events';
+import { deviationBoosts } from './process';
+import { snapshotSignals } from './signals';
 
 export const DEFAULT_SEED = 20261012;
 
@@ -127,9 +129,17 @@ type Internal = {
   alertAt: Record<string, number>;
   /** Event-engine state (open conditions, rule timers); separate id sequence so other ids are unchanged. */
   ev: EventInternal;
+  /**
+   * Signal snapshots of the asset of a 'frozen' / 'counter-reset' data-quality scenario (scenario id →
+   * signal id → reading), taken when the scenario takes effect: the frozen value / the reset base.
+   */
+  dqSnap: Record<string, Record<string, { value: number | string | null; text: string }>>;
 };
 
-/** Ring buffer: tiles moved per minute and a state code, indexed by minute % LOG_MIN. */
+/**
+ * Ring buffer: tiles moved per minute and a state code, indexed by minute % LOG_MIN. LOG_MIN = 8 h, so the
+ * 15 min / 1 h / 8 h chart ranges are minute data (src/model/telemetry.ts RANGE_OPTIONS).
+ */
 export type MinuteLog = {
   rate: Float32Array;
   state: Uint8Array;
@@ -137,7 +147,7 @@ export type MinuteLog = {
   lim: Uint8Array;
   t: Int32Array;
 };
-export const LOG_MIN = 240;
+export const LOG_MIN = 480;
 export type QualityLog = { t: Int32Array; inspected: Float32Array; rejected: Float32Array; defect: Record<DefectCategory, Float32Array> };
 export const STATE_CODE: Record<MachineState, number> = { running: 0, reduced: 1, starved: 2, blocked: 3, down: 4, planned: 5 };
 export const CODE_STATE: MachineState[] = ['running', 'reduced', 'starved', 'blocked', 'down', 'planned'];
@@ -210,6 +220,7 @@ export function createSim(seed = DEFAULT_SEED, startMinute = DEFAULT_START, opts
       seq: 0,
       alertAt: {},
       ev: createEventInternal(),
+      dqSnap: {},
     },
     version: 0,
   };
@@ -307,16 +318,24 @@ function pruneHistory(s: SimState, t: number) {
   }
 }
 
-/** Simulated data-feed loss: the asset keeps producing, but its signals stop updating. */
+/**
+ * Simulated data-feed loss: the asset keeps producing, but its signals stop updating. Every signal of the
+ * asset is snapshotted when the feed goes stale and only that snapshot is served while it stays stale.
+ * Also takes the snapshot a 'frozen' / 'counter-reset' data-quality scenario needs when it takes effect.
+ */
 function applyScenarioFeeds(s: SimState, t: number) {
   const lost = new Map<string, string>();
-  for (const sc of activeScenarios(s, t)) if (sc.kind === 'signal-loss' && sc.equipmentId) lost.set(sc.equipmentId, sc.id);
+  for (const sc of activeScenarios(s, t)) {
+    if (sc.kind === 'signal-loss' && sc.equipmentId) lost.set(sc.equipmentId, sc.id);
+    if (sc.kind === 'data-quality' && sc.equipmentId && (sc.mode === 'frozen' || sc.mode === 'counter-reset') && !s.internal.dqSnap[sc.id])
+      s.internal.dqSnap[sc.id] = snapshotSignals(s, sc.equipmentId);
+  }
   for (const id of TRACKED_ASSETS) {
     const f = s.feeds[id];
     const scn = lost.get(id);
     if (scn && f.status === 'ok') {
       const m = s.machines[id];
-      s.feeds[id] = { status: 'stale', since: t, scenarioId: scn, lastState: m.state, lastCount: m.countTotal, lastRate: m.ratePerHour };
+      s.feeds[id] = { status: 'stale', since: t, scenarioId: scn, lastState: m.state, lastCount: m.countTotal, lastRate: m.ratePerHour, last: snapshotSignals(s, id) };
     }
     else if (!scn && f.status === 'stale') s.feeds[id] = { status: 'ok', since: t };
   }
@@ -446,15 +465,20 @@ function setState(m: EquipmentRuntime, state: MachineState, t: number) {
 
 const activeScenarios = (s: SimState, t: number) => s.scenarios.filter((sc) => sc.start <= t && (sc.end == null || sc.end > t));
 
+/** Scenarios that hold an asset stopped: breakdowns, conveyor stops and a run command without running feedback. */
+const holdsStopped = (sc: ScenarioActivation) =>
+  sc.kind === 'machine-stop' || sc.kind === 'conveyor-stop' || (sc.kind === 'data-quality' && sc.mode === 'command-no-feedback');
+
 function applyScenarioStops(s: SimState, t: number) {
   for (const sc of activeScenarios(s, t)) {
-    if ((sc.kind !== 'machine-stop' && sc.kind !== 'conveyor-stop') || !sc.equipmentId) continue;
+    if (!holdsStopped(sc) || !sc.equipmentId) continue;
     const m = s.machines[sc.equipmentId];
     if (!m) continue;
     const current = m.activeDowntimeId ? findDowntime(s, m.activeDowntimeId) : undefined;
     if (current?.scenarioId === sc.id) continue;
     if (current) closeDowntime(s, current, t);
-    openDowntime(s, sc.equipmentId, sc.kind === 'conveyor-stop' ? 'SCN_CNV_STOP' : 'SCN_STOP', t, sc.end, 'scenario', sc.id);
+    const reason = sc.kind === 'conveyor-stop' ? 'SCN_CNV_STOP' : sc.kind === 'data-quality' ? 'SCN_NO_FEEDBACK' : 'SCN_STOP';
+    openDowntime(s, sc.equipmentId, reason, t, sc.end, 'scenario', sc.id);
   }
 }
 
@@ -466,6 +490,16 @@ function scenarioRate(s: SimState, id: string, stage: StageId, t: number) {
     if (sc.kind === 'bottleneck' && sc.stage === stage) f *= sc.factor ?? 0.55;
   }
   return f;
+}
+
+/**
+ * A process machine's own pace at minute t relative to its ideal rate (scenario rate factor × the smooth
+ * performance variation): what it makes when neither starved nor blocked, and what its drives run at.
+ * Pure over the scenario log, so it holds for any minute.
+ */
+export function ownPaceAt(s: SimState, id: string, t: number) {
+  const stage = OPS_BY_ID[id]?.stage;
+  return stage ? scenarioRate(s, id, stage, t) * performanceNoise(s.seed, id, t) : 1;
 }
 
 export function activateScenario(s: SimState, def: Omit<ScenarioActivation, 'id' | 'start'> & { start?: number }) {
@@ -490,12 +524,14 @@ export function activateScenario(s: SimState, def: Omit<ScenarioActivation, 'id'
     startMaintenance(s, sc.equipmentId, duration, sc.id);
     sc.end = sc.start + duration;
   }
-  // One-off logistics injections are applied at once; they are logged, not left "active".
+  // One-off logistics injections are applied at once; they are logged, not left "active". A counter reset
+  // is an instantaneous event too: the counters restart from 0 at the start and keep counting from there.
   if (sc.kind === 'truck-arrival' || sc.kind === 'yard-congestion' || sc.kind === 'prolonged-dock-stay' || sc.kind === 'restricted-entry')
     sc.end = sc.start + 1;
+  if (sc.kind === 'data-quality' && sc.mode === 'counter-reset') sc.end = sc.start + 1;
   s.scenarios.push(sc);
-  if (sc.kind === 'machine-stop' || sc.kind === 'conveyor-stop') applyScenarioStops(s, s.minute);
-  if (sc.kind === 'signal-loss') applyScenarioFeeds(s, s.minute);
+  if (holdsStopped(sc)) applyScenarioStops(s, s.minute);
+  if (sc.kind === 'signal-loss' || sc.kind === 'data-quality') applyScenarioFeeds(s, s.minute);
   applyLogisticsScenario(s, sc);
   raiseAlert(s, sc.start, 'info', `Scenario started: ${sc.label}`, 'Simulated scenario input', { equipmentId: sc.equipmentId }, 'scenario');
   s.version++;
@@ -506,7 +542,7 @@ export function clearScenario(s: SimState, id: string) {
   const sc = s.scenarios.find((x) => x.id === id);
   if (!sc || (sc.end != null && sc.end <= s.minute)) return;
   sc.end = s.minute;
-  if ((sc.kind === 'machine-stop' || sc.kind === 'conveyor-stop') && sc.equipmentId) {
+  if (holdsStopped(sc) && sc.equipmentId) {
     const m = s.machines[sc.equipmentId];
     const ev = m.activeDowntimeId ? findDowntime(s, m.activeDowntimeId) : undefined;
     if (ev?.scenarioId === sc.id) closeDowntime(s, ev, s.minute);
@@ -772,22 +808,32 @@ function trackSpell(s: SimState, id: string, kind: 'Starved' | 'Blocked' | null,
 function rejectRate(s: SimState, t: number) {
   let rate = BASE_REJECT_RATE * qualityDrift(s.seed, t);
   const boosts: Partial<Record<DefectCategory, number>> = {};
-  for (const sc of activeScenarios(s, t)) {
+  const active = activeScenarios(s, t);
+  let scenarioDriven = false;
+  for (const sc of active) {
     if (sc.kind !== 'quality-deterioration') continue;
+    scenarioDriven = true;
     const mult = sc.factor ?? 3;
     // Concentrate the deterioration in the defects originating at the chosen stage.
     for (const d of DEFECT_ORDER) if (!sc.stage || DEFECTS[d].origin === sc.stage) boosts[d] = (boosts[d] ?? 1) * mult;
   }
+  // Process → quality coupling: a PV beyond its warning band raises the defects originating at its stage,
+  // in proportion to the excess (src/sim/process.ts deviationBoosts) — only while the deviation is active.
+  for (const [stage, mult] of Object.entries(deviationBoosts(s, t, active)) as [StageId, number][]) {
+    if (mult <= 1) continue;
+    scenarioDriven = true;
+    for (const d of DEFECT_ORDER) if (DEFECTS[d].origin === stage) boosts[d] = (boosts[d] ?? 1) * mult;
+  }
   const weights = DEFECT_ORDER.map((d): [DefectCategory, number] => [d, DEFECTS[d].weight * (boosts[d] ?? 1)]);
   const baseWeight = DEFECT_ORDER.reduce((a, d) => a + DEFECTS[d].weight, 0);
   const totalWeight = weights.reduce((a, [, w]) => a + w, 0);
-  return { rate: rate * (totalWeight / baseWeight), weights, totalWeight };
+  return { rate: rate * (totalWeight / baseWeight), weights, totalWeight, scenarioDriven };
 }
 
 /** Inspects the tiles sorted this minute; returns the tiles rejected (diverted off the line). */
 function inspect(s: SimState, t: number, hour: number, inspected: number): number {
   if (inspected <= 0) return 0;
-  const { rate, weights, totalWeight } = rejectRate(s, t);
+  const { rate, weights, totalWeight, scenarioDriven } = rejectRate(s, t);
   const rejected = Math.min(inspected, inspected * rate);
   const good = inspected - rejected;
   const ql = s.qualityLog;
@@ -820,7 +866,7 @@ function inspect(s: SimState, t: number, hour: number, inspected: number): numbe
     s.internal.recordAcc[key] = (s.internal.recordAcc[key] ?? 0) + n;
     while (s.internal.recordAcc[key] >= TILES_PER_RECORD) {
       s.internal.recordAcc[key] -= TILES_PER_RECORD;
-      pushInspection(s, t, def.station, batch.id, defect);
+      pushInspection(s, t, def.station, batch.id, defect, scenarioDriven);
     }
   }
   // QC laboratory sample every 60 min.
@@ -893,7 +939,7 @@ const MEASURE: Record<DefectCategory, (r: Rng) => string> = {
   },
 };
 
-function pushInspection(s: SimState, t: number, stationId: string, batchIdValue: string, defect: DefectCategory) {
+function pushInspection(s: SimState, t: number, stationId: string, batchIdValue: string, defect: DefectCategory, scenarioDriven: boolean) {
   const r = s.internal.qualityRng;
   const sev = weighted(r(), [
     ['minor', 0.62],
@@ -911,7 +957,7 @@ function pushInspection(s: SimState, t: number, stationId: string, batchIdValue:
     measurement: MEASURE[defect](r),
     tiles: TILES_PER_RECORD,
     ...visionFields(stationId, detection(s.internal.cvRng, defect)),
-    source: activeScenarios(s, t).some((sc) => sc.kind === 'quality-deterioration') ? 'scenario' : 'simulation',
+    source: scenarioDriven ? 'scenario' : 'simulation',
   });
 }
 

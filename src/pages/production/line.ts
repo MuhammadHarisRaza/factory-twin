@@ -3,10 +3,12 @@
  * constraint, and what the buffers between them say about it (upstream accumulation, downstream
  * starvation, how long the WIP protects the next stage). Pure functions over the one SimState.
  */
-import { BUFFERS, LINE, M2_PER_TILE, OPS_BY_ID, STAGES, STAGE_BY_ID, TARGET } from '../../model/plant';
+import { BUFFERS, BUFFER_LEVEL_SIGNAL, LINE, M2_PER_TILE, OPS_BY_ID, STAGES, STAGE_BY_ID, TARGET } from '../../model/plant';
 import type { OperationalState, StageId } from '../../model/types';
 import type { SimState } from '../../sim/engine';
 import { operationalState, type LineMetrics, type StageMetrics, bottleneck } from '../../sim/metrics';
+import { readSignal } from '../../sim/telemetry';
+import { formatClock } from '../../sim/time';
 
 type Bottleneck = ReturnType<typeof bottleneck>;
 
@@ -15,6 +17,7 @@ const KILN = 'H-KILN';
 const MATERIAL = new Set(['BUF-SLIP', 'BUF-SILO']);
 const n0 = new Intl.NumberFormat('en-GB', { maximumFractionDigits: 0 });
 const mins = (v: number) => `${n0.format(Math.round(v))} min`;
+const cap = (x: string) => x.charAt(0).toUpperCase() + x.slice(1);
 
 /** Design rate of a stage, tiles per minute (sum of its machines). */
 export const stageRatePerMin = (id: StageId) => STAGE_BY_ID[id].machines.reduce((a, m) => a + (OPS_BY_ID[m].idealRatePerHour ?? 0), 0) / 60;
@@ -32,14 +35,18 @@ export type BufferTrend = 'filling' | 'draining' | 'steady';
 export type FlowBuffer = {
   id: string;
   name: string;
-  tiles: number;
+  /** Tiles (tile-equivalents for slip / powder) from the level reading; null when the level is not available. */
+  tiles: number | null;
   capacity: number;
-  fill: number;
+  /** Level 0–1 from the buffer's level signal; null when it is missing, stale or flagged bad (never 0). */
+  fill: number | null;
+  /** Why there is no level (null when there is one). */
+  levelReason: string | null;
   /** Change over the last 60 simulated minutes, tiles (null when not logged yet). */
   delta60: number | null;
   trend: BufferTrend | null;
-  /** Minutes the consuming stage could run on this buffer alone, at its design rate. */
-  coverMin: number;
+  /** Minutes the consuming stage could run on this buffer alone, at its design rate (null without a level). */
+  coverMin: number | null;
   /** Minutes the feeding stage could keep discharging into the free space, at its design rate. */
   spaceMin: number | null;
   feeds: StageId;
@@ -70,8 +77,28 @@ export type FlowStage = {
 
 function flowBuffer(s: SimState, id: string, feeds: StageId, fedBy: StageId | null, bnIndex: number): FlowBuffer {
   const def = BUFFERS.find((b) => b.id === id)!;
-  const tiles = s.buffers[id] ?? 0;
-  const fill = def.capacity > 0 ? tiles / def.capacity : 0;
+  const material = MATERIAL.has(id);
+  const level = levelOf(s, id);
+  if (level.fill == null)
+    return {
+      id,
+      name: def.name,
+      tiles: null,
+      capacity: def.capacity,
+      fill: null,
+      levelReason: level.reason,
+      delta60: null,
+      trend: null,
+      coverMin: null,
+      spaceMin: null,
+      feeds,
+      fedBy,
+      material,
+      effect: `Level not available — ${level.reason}.`,
+      tone: 'neutral',
+    };
+  const fill = level.fill;
+  const tiles = fill * def.capacity;
   const now = bufferAt(s, id, s.minute - 1);
   const then = bufferAt(s, id, s.minute - 61);
   const delta60 = now != null && then != null ? now - then : null;
@@ -79,7 +106,7 @@ function flowBuffer(s: SimState, id: string, feeds: StageId, fedBy: StageId | nu
   const trend: BufferTrend | null = delta60 == null ? null : delta60 > band ? 'filling' : delta60 < -band ? 'draining' : 'steady';
   const consume = stageRatePerMin(feeds);
   const produce = fedBy ? stageRatePerMin(fedBy) : 0;
-  const coverMin = consume > 0 ? tiles / consume : 0;
+  const coverMin = consume > 0 ? tiles / consume : null;
   const spaceMin = produce > 0 ? (def.capacity - tiles) / produce : null;
   const feedsIdx = STAGES.findIndex((x) => x.id === feeds);
   const feedsName = STAGE_BY_ID[feeds].name.toLowerCase();
@@ -90,20 +117,39 @@ function flowBuffer(s: SimState, id: string, feeds: StageId, fedBy: StageId | nu
   let tone: FlowBuffer['tone'] = 'neutral';
   if (fill >= 0.9) {
     tone = 'warning';
-    effect = `Nearly full — ${fedName} is or will be blocked; ${side === 'upstream' ? 'WIP accumulating ahead of the bottleneck' : `${feedsName} is not taking tiles fast enough`}.`;
+    effect = `Nearly full — ${fedName} is or will be blocked; ${side === 'upstream' ? 'WIP accumulating ahead of the bottleneck' : `${feedsName} is not taking ${material ? 'material' : 'tiles'} fast enough`}.`;
   } else if (fill <= 0.08) {
     tone = 'warning';
-    effect = `Nearly empty — ${feedsName} is or will be starved (${mins(coverMin)} of feed left).`;
+    effect = `Nearly empty — ${feedsName} is or will be starved${coverMin != null ? ` (${mins(coverMin)} of feed left)` : ''}.`;
   } else if (trend === 'filling') {
-    effect = `Filling (+${n0.format(delta60!)} tiles in 60 min): ${fedName} delivers more than ${feedsName} takes${side === 'upstream' ? ' — accumulation upstream of the bottleneck' : ''}.`;
+    effect = `Filling (+${deltaText(delta60!, def.capacity, material)} in 60 min): ${fedName} delivers more than ${feedsName} takes${side === 'upstream' ? ' — accumulation upstream of the bottleneck' : ''}.`;
   } else if (trend === 'draining') {
-    tone = coverMin < 20 ? 'warning' : 'neutral';
-    effect = `Draining (${n0.format(delta60!)} tiles in 60 min): ${feedsName} takes more than ${fedName} delivers${side === 'downstream' ? ' — starvation risk downstream of the bottleneck' : ''}; ${mins(coverMin)} of feed left.`;
+    tone = coverMin != null && coverMin < 20 ? 'warning' : 'neutral';
+    effect = `Draining (−${deltaText(-delta60!, def.capacity, material)} in 60 min): ${feedsName} takes more than ${fedName} delivers${side === 'downstream' ? ' — starvation risk downstream of the bottleneck' : ''}${coverMin != null ? `; ${mins(coverMin)} of feed left` : ''}.`;
   } else {
     tone = 'good';
-    effect = trend == null ? `${mins(coverMin)} of ${feedsName} feed at its design rate.` : `Steady — ${mins(coverMin)} of ${feedsName} feed at its design rate.`;
+    const cover = coverMin != null ? `${mins(coverMin)} of ${feedsName} feed at its design rate` : `no design rate for ${feedsName}`;
+    effect = trend == null ? `${cap(cover)}.` : `Steady — ${cover}.`;
   }
-  return { id, name: def.name, tiles, capacity: def.capacity, fill, delta60, trend, coverMin, spaceMin, feeds, fedBy, material: MATERIAL.has(id), effect, tone };
+  return { id, name: def.name, tiles, capacity: def.capacity, fill, levelReason: null, delta60, trend, coverMin, spaceMin, feeds, fedBy, material, effect, tone };
+}
+
+/** A level change in words: tiles for tile buffers, percentage points for slip / powder (a level is not a quantity without a calibration). */
+const deltaText = (d: number, capacity: number, material: boolean) => (material ? `${n0.format((d / capacity) * 100)} % pts` : `${n0.format(d)} tiles`);
+
+/**
+ * The buffer's level now from its level signal (src/sim/telemetry.ts readSignal): a missing, stale or bad
+ * reading is no level — never 0 % (which would read as "nearly empty — starved").
+ */
+export function levelOf(s: SimState, id: string): { fill: number | null; reason: string } {
+  const sig = BUFFER_LEVEL_SIGNAL[id];
+  if (!sig) return { fill: null, reason: 'no level signal configured' };
+  const r = readSignal(s, sig);
+  if (typeof r.value !== 'number' || !Number.isFinite(r.value)) return { fill: null, reason: r.note ?? 'no level received' };
+  if (r.quality === 'bad') return { fill: null, reason: `${sig} flagged bad by the source` };
+  if (r.quality === 'stale' || r.quality === 'missing')
+    return { fill: null, reason: `${sig} not current${r.timestamp != null ? ` (last value ${formatClock(r.timestamp)})` : ''}` };
+  return { fill: Math.max(0, Math.min(1, r.value / 100)), reason: '' };
 }
 
 /** Stages in process order with their state shares (the bottleneck window) and the buffer feeding each. */

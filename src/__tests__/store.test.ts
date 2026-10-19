@@ -12,7 +12,7 @@ vi.hoisted(() => {
   g.window ??= { addEventListener() {}, removeEventListener() {}, innerWidth: 1920, innerHeight: 1080 };
 });
 
-import { CAMERA_FOV, equipmentBounds, focusPose, minimapCamera, useTwin } from '../store';
+import { CAMERA_FOV, equipmentBounds, focusPose, lastFocusPose, minimapCamera, useTwin } from '../store';
 import { HALL } from '../data/layout';
 import type { Vec3 } from '../data/types';
 // The module's source text (Vite raw import), to check its imports.
@@ -91,6 +91,8 @@ describe('focusPose (plain-number asset framing)', () => {
     const want = reference(b, minimapCamera);
     cam.pos.forEach((v, i) => expect(v).toBeCloseTo(want.pos[i], 9));
     cam.target.forEach((v, i) => expect(v).toBeCloseTo(want.target[i], 9));
+    // The framing is recorded with its shift (the twin re-frames a compact-shift pose once its panel is wide).
+    expect(lastFocusPose()).toEqual({ id: 'TEST-ASSET', shift: 0.1, nonce: cam.nonce });
     // Unknown asset: no flight.
     useTwin.getState().focusEquipment('NO-SUCH-ASSET');
     expect(useTwin.getState().camera.nonce).toBe(nonce + 1);

@@ -1,10 +1,11 @@
 /**
  * View state of the Factory Twin overlays that outlives a single component (the workspace section
  * a quick view or an event link asks to show, the live list's tab and fold state, the floating
- * camera view, the panel's width). Scene selection, stage highlight, alert filter and camera stay
+ * camera view, the panel’s width and chart time range). Scene selection, stage highlight, alert filter and camera stay
  * in src/store.ts.
  */
 import { create } from 'zustand';
+import { RANGE_BY_KEY, type RangeKey } from '../../model/telemetry';
 
 /** The viewer's panel width choice, kept in this browser (wide unless they chose compact). */
 const WIDTH_KEY = 'twin.panelWidth';
@@ -15,9 +16,30 @@ function storedWide(): boolean {
     return true;
   }
 }
+/** The viewer's width choice for this visit (also when storage is blocked). */
+let chosenWide = storedWide();
 function storeWide(wide: boolean) {
   try {
     localStorage.setItem(WIDTH_KEY, wide ? 'wide' : 'compact');
+  } catch {
+    /* storage blocked: the choice lasts for this visit */
+  }
+}
+
+/** The viewer's chart time range of the equipment / stage panels, kept in this browser (default 8 h). */
+const RANGE_KEY = 'twin.panelRange';
+export const DEFAULT_PANEL_RANGE: RangeKey = '8h';
+function storedRange(): RangeKey {
+  try {
+    const v = typeof localStorage === 'undefined' ? null : localStorage.getItem(RANGE_KEY);
+    return v && Object.hasOwn(RANGE_BY_KEY, v) ? (v as RangeKey) : DEFAULT_PANEL_RANGE;
+  } catch {
+    return DEFAULT_PANEL_RANGE;
+  }
+}
+function storeRange(key: RangeKey) {
+  try {
+    localStorage.setItem(RANGE_KEY, key);
   } catch {
     /* storage blocked: the choice lasts for this visit */
   }
@@ -44,7 +66,13 @@ type TwinUiState = {
    * (src/ui/twin/panelWidth.ts).
    */
   panelWide: boolean;
-  setPanelWide: (wide: boolean) => void;
+  /** `remember` false: for this visit only (the rail's zone-list button), the saved choice stays. */
+  setPanelWide: (wide: boolean, remember?: boolean) => void;
+  /** Back to the width the viewer chose with the header's button (or the default, wide). */
+  restorePanelWidth: () => void;
+  /** The panels' chart time range (15 min … 7 days), remembered in this browser. */
+  panelRange: RangeKey;
+  setPanelRange: (key: RangeKey) => void;
   /** Pixels the open wide panel covers at the right of the 3D view (0 otherwise): the scene centres its view in the rest. */
   insetRight: number;
   setInsetRight: (px: number) => void;
@@ -62,10 +90,19 @@ export const useTwinUi = create<TwinUiState>((set, get) => ({
   setLiveOpen: (liveOpen) => set({ liveOpen }),
   camera: null,
   setCamera: (camera) => set({ camera }),
-  panelWide: storedWide(),
-  setPanelWide: (panelWide) => {
-    storeWide(panelWide);
+  panelWide: chosenWide,
+  setPanelWide: (panelWide, remember = true) => {
+    if (remember) {
+      chosenWide = panelWide;
+      storeWide(panelWide);
+    }
     set({ panelWide });
+  },
+  restorePanelWidth: () => set({ panelWide: chosenWide }),
+  panelRange: storedRange(),
+  setPanelRange: (panelRange) => {
+    storeRange(panelRange);
+    set({ panelRange });
   },
   insetRight: 0,
   setInsetRight: (insetRight) => {

@@ -4,6 +4,9 @@
  * Three route-bound tabs (?tab=…) over the one simulation state:
  *   Plan & flow (default) — plan vs actual, the stage flow and the constraint, losses, events;
  *                           with a stage open (#/production/<stage>) the stage view.
+ *   Material flow         — the stage chain in physical units (t/h for slip / powder, tiles/h and m²/h after
+ *                           pressing), buffer levels, trends, time to empty / full and balance, the bottleneck
+ *                           ranking, the flow findings of the rule engine and the 12-stage mapping.
  *   OEE & losses          — line OEE = A × P × Q with its definitions, integrity checks, count
  *                           reconciliation and the largest OEE losses.
  *   Analysis              — equipment OEE drill-down, capacity waterfall, downtime Pareto, shift
@@ -27,12 +30,14 @@ import { PlanTab } from './production/PlanTab';
 import { withPeriod } from './production/loss';
 import { oeeData } from './production/oee';
 import { planData } from './production/plan';
+import { MaterialFlow } from './production/MaterialFlow';
+import { materialFlow } from './production/material';
 import { StageView, showStageIn3D } from './production/stage/StageView';
 import { stageRow, stageSentence, bottleneckView } from './production/stage/derive';
 import './production/production.css';
 
-export type ProductionTab = 'flow' | 'oee' | 'analysis';
-const TABS: readonly ProductionTab[] = ['flow', 'oee', 'analysis'];
+export type ProductionTab = 'flow' | 'material' | 'oee' | 'analysis';
+const TABS: readonly ProductionTab[] = ['flow', 'material', 'oee', 'analysis'];
 
 export function ProductionPage() {
   const periodKey = useApp((s) => s.period);
@@ -70,15 +75,19 @@ export function ProductionPage() {
   const d = useSimValue(
     (s) => {
       const p = resolvePeriod(periodKey, s.minute);
-      if (stageOpen && ms) return { p, summary: stageSentence(stageRow(s, ms, p, bottleneckView(s)), periodKey), plan: null, oee: null };
+      if (stageOpen && ms) return { p, summary: stageSentence(stageRow(s, ms, p, bottleneckView(s)), periodKey), plan: null, oee: null, material: null };
       if (tab === 'oee') {
         const oee = oeeData(s, p, finance);
-        return { p, summary: oee.summary, plan: null, oee };
+        return { p, summary: oee.summary, plan: null, oee, material: null };
+      }
+      if (tab === 'material') {
+        const material = materialFlow(s);
+        return { p, summary: material.summary, plan: null, oee: null, material };
       }
       if (tab === 'analysis')
-        return { p, summary: analysisSummary(s, p, finance), plan: null, oee: null };
+        return { p, summary: analysisSummary(s, p, finance), plan: null, oee: null, material: null };
       const plan = planData(s, p, finance);
-      return { p, summary: plan.summary, plan, oee: null };
+      return { p, summary: plan.summary, plan, oee: null, material: null };
     },
     [periodKey, tab, stageOpen, ms?.id, finance],
   );
@@ -87,13 +96,19 @@ export function ProductionPage() {
   const context = (
     <>
       <span>{scope}</span>
-      <span>
-        {PERIOD_LABELS[periodKey]} ·{' '}
-        {Math.floor(d.p.from / 1440) === Math.floor((d.p.to - 1) / 1440)
-          ? `${formatDay(d.p.from)} ${formatClock(d.p.from)}–${formatClock(d.p.to)}`
-          : `${formatDateTime(d.p.from)} – ${formatDateTime(d.p.to)}`}{' '}
-        plant time
-      </span>
+      {d.material ? (
+        <span>
+          Last {d.material.window.minutes} min · {formatClock(d.material.window.from)}–{formatClock(d.material.window.to)} plant time · charts on their own range
+        </span>
+      ) : (
+        <span>
+          {PERIOD_LABELS[periodKey]} ·{' '}
+          {Math.floor(d.p.from / 1440) === Math.floor((d.p.to - 1) / 1440)
+            ? `${formatDay(d.p.from)} ${formatClock(d.p.from)}–${formatClock(d.p.to)}`
+            : `${formatDateTime(d.p.from)} – ${formatDateTime(d.p.to)}`}{' '}
+          plant time
+        </span>
+      )}
       <span>States and events: now</span>
     </>
   );
@@ -129,11 +144,13 @@ export function ProductionPage() {
         onChange={(t) => setTab(t)}
         options={[
           { value: 'flow', label: ms ? `Plan & flow · ${ms.name}` : 'Plan & flow', title: 'Plan vs actual, stage flow, constraint, losses and events' },
+          { value: 'material', label: 'Material flow', title: 'Stage chain in physical units, buffers, balance, bottleneck ranking and starvation / blockage findings' },
           { value: 'oee', label: 'OEE & losses', title: 'Line OEE, integrity checks, count reconciliation and the largest OEE losses' },
           { value: 'analysis', label: 'Analysis', title: 'Equipment OEE, capacity waterfall, downtime Pareto, shifts, assumptions and what-ifs' },
         ]}
       />
       {tab === 'flow' && (ms ? <StageView key={`${ms.id}:${resets}`} stageId={ms.id} periodKey={periodKey} onAsset={setAsset} /> : d.plan && <PlanTab key={resets} periodKey={periodKey} d={d.plan} onTab={setTab} />)}
+      {tab === 'material' && d.material && <MaterialFlow key={resets} d={d.material} />}
       {tab === 'oee' && d.oee && <OeeTab key={resets} d={d.oee} onTab={setTab} />}
       {tab === 'analysis' && <AnalysisTab key={resets} periodKey={periodKey} asset={asset} onAsset={setAsset} />}
       {asset && canDrill(asset) && <EquipmentDrawer id={asset} periodKey={periodKey} onClose={closeDrawer} />}

@@ -118,11 +118,11 @@ export const BASE_SIGNAL_LABELS: Record<string, string> = {
  * illustrative energy model's values: never a signal row, always a "not modelled" line with its reason.
  */
 export const NOT_MODELLED_SIGNALS: Record<string, { label: string; reason: string }> = {
-  temp_firing: { label: 'Firing temperature profile', reason: 'no thermal model of the kiln — the temp_firing signal is listed under Technical details without a value' },
-  temp_preheat: { label: 'Pre-heating temperature', reason: 'no thermal model of the kiln — the temp_preheat signal has no value' },
-  temp_inlet: { label: 'Hot-air inlet temperature', reason: 'no thermal model of the spray dryer — the temp_inlet signal has no value' },
-  powder_moisture: { label: 'Powder moisture', reason: 'no drying model — residual moisture is not calculated' },
-  temp_deck: { label: 'Dryer deck temperature', reason: 'no thermal model of the dryer — the temp_deck signal has no value' },
+  temp_firing: { label: 'Firing temperature profile (single value)', reason: 'no single firing-temperature signal — the five simulated zone temperatures (H-KILN.zone1–5_temp_pv) stand in; there is no thermal model of the firing curve along the kiln' },
+  temp_preheat: { label: 'Pre-heating temperature (single value)', reason: 'no single pre-heating signal — the simulated zone 1 temperature (H-KILN.zone1_temp_pv) stands in' },
+  temp_inlet: { label: 'Hot-air inlet temperature (single value)', reason: 'superseded by the simulated inlet-air PV / SP pair (D-TWR.inlet_temp_pv)' },
+  powder_moisture: { label: 'Powder moisture (single value)', reason: 'superseded by the simulated moisture PV / SP pair (D-TWR.powder_moisture_pv) — no physical drying model behind it' },
+  temp_deck: { label: 'Dryer deck temperature (single value)', reason: 'superseded by the simulated zone temperatures (F-DRY.zone1_temp_pv, zone2_temp_pv)' },
   header_pressure: { label: 'Compressed-air header pressure', reason: 'no pneumatic model of the compressed-air network' },
   tank_level: { label: 'Water tank level', reason: 'no water-supply model' },
   energy_kwh: { label: 'Energy consumption', reason: 'energy is not monitored in this product (the illustrative energy model is not a product module)' },
@@ -203,7 +203,7 @@ const STAGE: Partial<Record<StageId, StageOverride>> = {
   PREP: {
     labels: { rate: 'Slip output rate', count_total: 'Slip counter · tile-eq.' },
     notModelled: [
-      { label: 'Slip density', reason: 'only recorded as a stop reason (slip density out of spec), never measured' },
+      { label: 'Slip density at the mill', reason: 'not measured at the mills — the simulated slip density is at the slip tanks (C-SLIP.slip_density_pv)' },
       { label: 'Raw-material feed rate', reason: 'box-feeder weighing is not integrated; the mills are fed continuously' },
     ],
     output: { noun: 'slip (tile-equivalents)', equivalent: true },
@@ -214,7 +214,7 @@ const STAGE: Partial<Record<StageId, StageOverride>> = {
   },
   PRESS: {
     labels: { rate: 'Press output rate', count_total: 'Tiles pressed · counter' },
-    notModelled: [{ label: 'Pressing force / specific pressure', reason: 'no hydraulic process model — only the hydraulic pump’s condition is monitored' }],
+    notModelled: [{ label: 'Green-tile thickness / density', reason: 'no in-line measurement in the model (the pressing pressure is a simulated PV / SP pair, not a hydraulic model)' }],
     output: { noun: 'tiles pressed', equivalent: false },
   },
   DRY: {
@@ -224,17 +224,17 @@ const STAGE: Partial<Record<StageId, StageOverride>> = {
   },
   GLAZE: {
     labels: { rate: 'Line rate', count_total: 'Tiles glazed · counter' },
-    notModelled: [{ label: 'Glaze density and viscosity', reason: 'only recorded as a stop reason (glaze viscosity adjustment), never measured' }],
+    notModelled: [{ label: 'Glaze viscosity', reason: 'only recorded as a stop reason (glaze viscosity adjustment), never measured — the glaze density is a simulated PV / SP pair' }],
     output: { noun: 'tiles glazed', equivalent: false },
   },
   DECOR: {
     labels: { rate: 'Print rate', count_total: 'Tiles decorated · counter' },
-    notModelled: [{ label: 'Ink levels and nozzle status', reason: 'ink supply and printhead faults appear only as stop reasons' }],
+    notModelled: [{ label: 'Nozzle status and printhead temperature', reason: 'not modelled — printhead faults appear only as stop reasons (the ink level is a simulated signal)' }],
     output: { noun: 'tiles decorated', equivalent: false },
   },
   KILN: {
     labels: { rate: 'Production rate', count_total: 'Tiles fired · counter' },
-    notModelled: [{ label: 'Firing-cycle time', reason: 'no thermal model of the kiln' }],
+    notModelled: [{ label: 'Firing-cycle time', reason: 'not simulated (H-KILN.firing_cycle_time is not modelled); the zone temperatures and roller speed are simulated' }],
     output: { noun: 'tiles fired', equivalent: false },
   },
   SORT: {

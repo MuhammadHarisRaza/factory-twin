@@ -65,7 +65,7 @@ export type Insight = {
 
 const RANK: Record<InsightSeverity, number> = { critical: 500, serious: 400, warning: 300, info: 100, positive: 50 };
 const m2 = (tiles: number) => Math.round(tiles * M2_PER_TILE).toLocaleString('en-GB');
-const pct = (f: number, d = 1) => `${(f * 100).toFixed(d)} %`;
+const pct = (f: number | null, d = 1) => (f == null ? '—' : `${(f * 100).toFixed(d)} %`);
 const name = (id: string) => EQUIPMENT_BY_ID[id]?.name ?? id;
 const cap = (t: string) => t.charAt(0).toUpperCase() + t.slice(1);
 
@@ -183,8 +183,8 @@ function bottleneckRule(s: SimState): Insight[] {
   const machines = STAGE_BY_ID[cur.stage].machines;
   const at = bn.stages.indexOf(cur);
   const shifted = claim.kind === 'starving' || claim.kind === 'blocking';
-  const up = shifted ? bn.stages.filter((r, i) => i < at && r.blockedShare > HELD_UP_SHARE).map((r) => r.name) : [];
-  const down = shifted ? bn.stages.filter((r, i) => i > at && r.starvedShare > HELD_UP_SHARE).map((r) => r.name) : [];
+  const up = shifted ? bn.stages.filter((r, i) => i < at && (r.blockedShare ?? 0) > HELD_UP_SHARE).map((r) => r.name) : [];
+  const down = shifted ? bn.stages.filter((r, i) => i > at && (r.starvedShare ?? 0) > HELD_UP_SHARE).map((r) => r.name) : [];
   const ev = [`${cap(claim.detail)}.`];
   // Trace shares are evidence only while the kiln feed is current (a stale feed leaves the kiln's state unknown).
   if (claim.kind !== 'kiln-unknown') ev.push(`${cur.name} was active ${pct(cur.activeShare, 0)} of the last 2 h (starved ${pct(cur.starvedShare, 0)}, blocked ${pct(cur.blockedShare, 0)}, down ${pct(cur.downShare, 0)}).`);
@@ -213,7 +213,7 @@ function bottleneckRule(s: SimState): Insight[] {
               : 'Keep the kiln fed: avoid starving it from upstream and schedule its maintenance in planned windows.',
       equipmentId: machines[0],
       links: machines.map((id) => ({ kind: 'equipment' as const, id, label: `Locate ${id}` })),
-      weight: RANK[severity] + cur.activeShare * 10,
+      weight: RANK[severity] + (cur.activeShare ?? 0) * 10,
     },
   ];
 }

@@ -45,6 +45,7 @@ export const OP_RANK: Record<OperationalState, number> = {
   running: 1,
   idle: 2,
   planned: 3,
+  changeover: 3.5,
   disconnected: 4,
   unknown: 5,
   starved: 6,

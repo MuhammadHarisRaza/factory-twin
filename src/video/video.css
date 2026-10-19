@@ -157,6 +157,31 @@
   outline: 2px solid var(--accent);
   outline-offset: -3px;
 }
+/* A provider embed's Pause / Resume for keyboard users: hidden until it has focus (no visible controls otherwise). */
+.vp-toggle {
+  position: absolute;
+  left: 8px;
+  bottom: 8px;
+  z-index: 2;
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  height: 26px;
+  padding: 0 10px;
+  border: 1px solid var(--accent-line);
+  border-radius: 13px;
+  background: #0b0f12f0;
+  color: var(--text-1);
+  font-size: var(--fs-11);
+  clip-path: inset(50%);
+  opacity: 0;
+}
+.vp-toggle:focus-visible {
+  clip-path: none;
+  opacity: 1;
+  outline: 2px solid var(--accent);
+  outline-offset: 1px;
+}
 .vp-held {
   position: absolute;
   left: 8px;

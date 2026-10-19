@@ -21,6 +21,7 @@ import { rejectCost, type FinanceAssumptions, type MoneyLine } from '../../sim/f
 import { lineMetrics, qualityIn, type Period } from '../../sim/metrics';
 import type { Metric, OeeResult } from '../../sim/oee';
 import type { EventImpact } from '../../intel/report';
+import { rateOf } from './lookup';
 
 // ── Inference source ─────────────────────────────────────────────────────────
 
@@ -131,7 +132,7 @@ export function referenceRate(s: SimState, t: number, d: DefectCategory): number
     inspected += q['ST-VIS'].inspected;
     rejected += q[DEFECTS[d].station]?.byDefect[d] ?? 0;
   }
-  return inspected > 0 ? rejected / inspected : null;
+  return rateOf(rejected, inspected);
 }
 
 /** Consecutive reject records of the record's category at its station, ending with the record. */
@@ -148,7 +149,7 @@ export function repeatRun(s: SimState, rec: Pick<QualityInspection, 'id' | 'stat
   return n;
 }
 
-const OUT_OF_LOG = 'window outside the 4-hour minute log';
+const OUT_OF_LOG = `window outside the ${LOG_MIN / 60}-hour minute log`;
 
 /**
  * The quality detection rules evaluated at a record (or, for a sampled pass frame, at a minute):
@@ -211,7 +212,7 @@ export function ruleChecks(s: SimState, at: { time: number; rec: QualityInspecti
 export type StateAt = { id: string; role: string; state: MachineState | null };
 
 /**
- * Machine states at a minute (from the 4-hour minute log): the defect's origin-stage machines and
+ * Machine states at a minute (from the per-minute log, LOG_MIN minutes): the defect's origin-stage machines and
  * the sorting line. null = not in the log any more.
  */
 export function contextStates(s: SimState, rec: Pick<QualityInspection, 'time' | 'defect'>, t = rec.time): StateAt[] {
@@ -290,7 +291,7 @@ export function periodQualityImpact(s: SimState, p: Period, f: FinanceAssumption
     inspected,
     rejected,
     accepted: lm.good,
-    rate: inspected > 0 ? rejected / inspected : null,
+    rate: rateOf(rejected, inspected),
     lines: all.lines,
     total: all.total,
     baseRate: BASE_REJECT_RATE,
@@ -313,14 +314,14 @@ export type MachineWindow = { id: string; logged: number; byState: Partial<Recor
 export type Correlation = {
   from: number;
   to: number;
-  /** Whether the window lies inside the 4-hour per-minute log (otherwise hourly counters are used). */
+  /** Whether the window lies inside the per-minute log (LOG_MIN minutes; otherwise hourly counters are used). */
   minuteResolution: boolean;
   /** Rejects by category in the event window, with the category's share in the 24 h before detection. */
   mix: DefectMixRow[];
   topDefect: DefectCategory | null;
   /** Stage where the event's category (or the window's top category) usually originates. */
   origin: StageId | null;
-  /** States of the origin stage's machines during the window (minutes from the 4-hour minute log). */
+  /** States of the origin stage's machines during the window (minutes from the per-minute log). */
   machines: MachineWindow[];
   /** Non-quality events on the origin stage's machines that overlap the window (correlation in time only). */
   concurrent: OpEvent[];

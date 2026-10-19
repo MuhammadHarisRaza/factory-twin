@@ -13,23 +13,28 @@ import { formatClock, formatDuration } from '../../sim/time';
 import { factoryOeeKpi, firstPassQualityKpi, goodOutputKpi } from '../../intel/kpis';
 import { constraintClaim } from '../../intel/summary';
 import { flowStages } from '../flow/derive';
-import { NOT_CONFIRMED, NOT_MODELLED, NO_OPERATING_DATA, equipmentKpis, ownStops, stageCountingAssets, stageKpis, vehicleKpis, type EqKpi } from './kpis';
+import { KG_PER_TILE } from '../../model/catalog';
+import { NOT_CONFIRMED, NOT_MODELLED, NO_OPERATING_DATA, equipmentKpis, signalRate, ownStops, stageCountingAssets, stageKpis, vehicleKpis, type EqKpi } from './kpis';
 import { assetProfile, monitoredOf } from './profile';
 
 const keys = (ks: EqKpi[]) => ks.map((k) => k.key);
 
-/** The KPI set chosen for each process stage (master §7 table, limited to what the model contains). */
+/**
+ * The KPI set chosen for each process stage (master §7 table; wave 3: the brief §6A equipment-specific figures from
+ * the simulated process signals — t/h for slip and powder, PV vs SP, cycle time, zones within band, cartons / pallets
+ * per hour, line state).
+ */
 const BY_STAGE: Record<StageId, string[]> = {
-  PREP: ['output', 'rate', 'availability', 'stops', 'slip-density'],
-  SPRAY: ['output', 'rate', 'availability', 'stops', 'moisture'],
-  PRESS: ['rate', 'good', 'rejects', 'stops'],
-  DRY: ['output', 'rate', 'availability', 'stops', 'conditions'],
-  GLAZE: ['rate', 'output', 'rejects', 'stops'],
+  PREP: ['rate', 'output', 'speed', 'availability', 'stops'],
+  SPRAY: ['rate', 'outlet', 'moisture', 'output', 'stops'],
+  PRESS: ['rate', 'cycle', 'good', 'rejects', 'stops'],
+  DRY: ['zone1', 'zone2', 'speed', 'rate', 'output', 'stops'],
+  GLAZE: ['speed', 'density', 'rate', 'output', 'rejects', 'stops'],
   DECOR: ['rate', 'output', 'rejects', 'stops'],
-  KILN: ['rate', 'availability', 'stops', 'output', 'profile'],
+  KILN: ['zones', 'rate', 'speed', 'alarms', 'output', 'stops'],
   SORT: ['inspected', 'rejected', 'fpq', 'inspection-rate'],
-  PACK: ['output', 'rate', 'backlog', 'stops'],
-  PAL: ['output', 'rate', 'backlog', 'stops'],
+  PACK: ['per-hour', 'state', 'output', 'rate', 'backlog', 'stops'],
+  PAL: ['per-hour', 'state', 'output', 'rate', 'backlog', 'stops'],
 };
 
 describe('equipment KPI selection', () => {
@@ -45,8 +50,10 @@ describe('equipment KPI selection', () => {
   });
 
   it('gives conveyors, buffers, stations, raw materials and logistics their own sets', () => {
-    for (const id of CONVEYOR_IDS) expect(keys(equipmentKpis(s, id, p).kpis), id).toEqual(['availability', 'utilisation', 'stops', 'moved']);
-    for (const id of ['C-SLIP', 'D-SILO', 'F-BUF', 'I-BUF']) expect(keys(equipmentKpis(s, id, p).kpis), id).toEqual(['level', 'inflow', 'outflow', 'cover']);
+    for (const id of CONVEYOR_IDS) expect(keys(equipmentKpis(s, id, p).kpis), id).toEqual(['state', 'speed', 'stops', 'utilisation', 'moved']);
+    // Silos and slip tanks: level %, trend, time to empty / full (% basis), flows in t/h and the mass that needs a calibration (not modelled).
+    for (const id of ['C-SLIP', 'D-SILO']) expect(keys(equipmentKpis(s, id, p).kpis), id).toEqual(['level', 'trend', 'time-to', 'inflow', 'outflow', 'mass']);
+    for (const id of ['F-BUF', 'I-BUF']) expect(keys(equipmentKpis(s, id, p).kpis), id).toEqual(['level', 'trend', 'time-to', 'inflow', 'outflow']);
     expect(keys(equipmentKpis(s, 'I-GAUGE', p).kpis)).toEqual(['inspected', 'rejected', 'reject-rate', 'top-defect']);
     expect(keys(equipmentKpis(s, 'I-VIS', p).kpis)).toEqual(['inspected', 'rejected', 'reject-rate', 'top-defect']);
     expect(keys(equipmentKpis(s, 'I-QC', p).kpis)).toEqual(['samples', 'last', 'counts']);
@@ -58,7 +65,7 @@ describe('equipment KPI selection', () => {
     expect(keys(equipmentKpis(s, 'K-RACK', p).kpis)).toEqual(['stock', 'in', 'out']);
   });
 
-  it('shows three to five figures, or says there is no operating data', () => {
+  it('shows three to six figures, or says there is no operating data', () => {
     for (const e of EQUIPMENT) {
       const set = equipmentKpis(s, e.id, p);
       expect(set.scope).toBe(p.label);
@@ -68,7 +75,7 @@ describe('equipment KPI selection', () => {
         expect(['utility', 'support', 'storage']).toContain(assetProfile(e.id).kind);
       } else {
         expect(set.kpis.length, e.id).toBeGreaterThanOrEqual(3);
-        expect(set.kpis.length, e.id).toBeLessThanOrEqual(5);
+        expect(set.kpis.length, e.id).toBeLessThanOrEqual(6);
       }
     }
   });
@@ -86,7 +93,7 @@ describe('equipment KPI selection', () => {
     expect(tile.value).toBe(fpq.display);
     expect(tile.status).toEqual(fpq.status);
     const cm = conveyorMetrics(s, 'CV-KIN', p);
-    expect(equipmentKpis(s, 'CV-KIN', p).kpis[0].value).toBe((cm.availability! * 100).toFixed(1));
+    expect(equipmentKpis(s, 'CV-KIN', p).kpis.find((k) => k.key === 'utilisation')!.value).toBe((cm.utilisation! * 100).toFixed(1));
     // Stage panel figures are the stage's counting points, in m² with the tile count next to it.
     const io = stageIO(s, 'KILN', p);
     const kiln = stageKpis(s, 'KILN', p).kpis[0];
@@ -97,11 +104,11 @@ describe('equipment KPI selection', () => {
 
   it('labels parameters the model does not contain as not modelled, with the reason and no value', () => {
     const na = (id: string, key: string) => equipmentKpis(s, id, p).kpis.find((k) => k.key === key)!;
+    // Wave 3: kiln zones, powder moisture and dryer zones are simulated PV / SP pairs now (tiles with values); the silo
+    // and tank masses need a level-to-mass calibration.
     const expected: [string, string, string][] = [
-      ['H-KILN', 'profile', NOT_MODELLED.kilnProfile],
-      ['D-TWR', 'moisture', NOT_MODELLED.powderMoisture],
-      ['C-BM2', 'slip-density', NOT_MODELLED.slipDensity],
-      ['F-DRY', 'conditions', NOT_MODELLED.dryerConditions],
+      ['D-SILO', 'mass', NOT_MODELLED.siloMass],
+      ['C-SLIP', 'mass', NOT_MODELLED.tankMass],
       ['B-FEED', 'feed-rate', NOT_MODELLED.feedRate],
       ['B-BAYS', 'stock', NOT_MODELLED.rawStock],
       ['B-RCV', 'incoming-quality', NOT_MODELLED.incomingQuality],
@@ -114,13 +121,14 @@ describe('equipment KPI selection', () => {
       expect(k.value).toBeUndefined();
       expect(k.unit).toBeUndefined();
     }
-    expect(NOT_MODELLED.kilnProfile).toMatch(/without a value/);
-    // No tile anywhere carries both a value and an unavailable reason, and no temperature / moisture / pressure value is shown.
+    // No tile anywhere carries both a value and an unavailable reason; process values come only from simulated signals
+    // (with "now"); no powder / slip / silo figure is in tiles.
     for (const e of EQUIPMENT)
       for (const k of equipmentKpis(s, e.id, p).kpis) {
         expect(k.value != null && k.unavailable != null, `${e.id} ${k.key}`).toBe(false);
         if (k.notModelled) expect(k.unavailable, `${e.id} ${k.key}`).toMatch(/^Not in the model/);
-        expect(k.unit ?? '', `${e.id} ${k.key}`).not.toMatch(/°C|bar|Nm³/);
+        if (/°C|bar|g\/L|g\/cm³/.test(k.unit ?? '') && k.value != null) expect(k.window, `${e.id} ${k.key}`).toBe('now');
+        if (['C-BM1', 'C-BM2', 'C-BM3', 'D-TWR', 'D-SILO', 'C-SLIP'].includes(e.id)) expect(`${k.unit ?? ''} ${k.sub ?? ''}`, `${e.id} ${k.key}`).not.toMatch(/tiles?\/h|\btiles\b/);
       }
   });
 
@@ -314,7 +322,10 @@ describe('stale counting feeds: running figures, marked not confirmed (finding #
     const silo = equipmentKpis(s, 'D-SILO', p);
     const out = tile(silo.kpis, 'outflow');
     expect(out.status?.label).toBe('Incl. last value of E-PRS1');
-    expect(out.value).toBe(fmt((s.feeds['E-PRS1'].lastRate ?? 0) + s.machines['E-PRS2'].ratePerHour + s.machines['E-PRS3'].ratePerHour));
+    // Powder in simulated t/h (tile-equivalents × KG_PER_TILE), never tiles/h.
+    expect(out.unit).toBe('t/h');
+    const tph = (((s.feeds['E-PRS1'].lastRate ?? 0) + s.machines['E-PRS2'].ratePerHour + s.machines['E-PRS3'].ratePerHour) * KG_PER_TILE) / 1000;
+    expect(out.value).toBe(tph.toLocaleString('en-GB', { minimumFractionDigits: 1, maximumFractionDigits: 1 }));
     expect(silo.stale!.assetIds).toEqual(['E-PRS1']);
   });
 
@@ -351,6 +362,20 @@ describe('stale counting feeds: running figures, marked not confirmed (finding #
       expect(set.stale, ms.id).toBeNull();
       expect(set.staleSince ?? null, ms.id).toBeNull();
     }
+  });
+});
+
+describe('missing is never zero (wave 3)', () => {
+  it('a rate signal without a value is null, and its tile says why instead of showing 0', () => {
+    const s = createSim(81, 2 * 1440 + 300);
+    expect(signalRate(s, 'NOT-AN-ASSET')).toBeNull();
+    activateScenario(s, { kind: 'signal-loss', equipmentId: 'E-PRS2', end: null, label: 'feed' });
+    advance(s, s.minute + 3);
+    s.feeds['E-PRS2'].lastRate = null as unknown as number;
+    expect(signalRate(s, 'E-PRS2')).toBeNull();
+    const rate = equipmentKpis(s, 'E-PRS2').kpis.find((k) => k.key === 'rate')!;
+    expect(rate.value).toBeUndefined();
+    expect(rate.unavailable).toMatch(/before a rate was received/);
   });
 });
 

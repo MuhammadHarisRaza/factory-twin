@@ -20,6 +20,7 @@ import {
   type DemoId,
   type DemoRun,
   type HoldWatch,
+  type DemoView,
 } from './demos';
 
 const START = 2 * 1440 + 4 * 60 + 37;
@@ -35,7 +36,7 @@ function setUp(s: SimState, id: DemoId, v?: Values): DemoRun {
 describe('end-to-end demonstrations', () => {
   it('offers valid initial parameters and the required conveyors', () => {
     const s = createSim(7, START);
-    expect(DEMOS.map((d) => d.id)).toEqual(['A', 'B', 'C', 'D']);
+    expect(DEMOS.map((d) => d.id)).toEqual(['A', 'B', 'C', 'D', 'E', 'F', 'G', 'H']);
     expect(DEMO_CONVEYORS[0]).toBe('CV-PACK');
     expect([...DEMO_CONVEYORS].sort()).toEqual([...CONVEYOR_IDS].sort());
     for (const d of DEMOS) {
@@ -157,5 +158,124 @@ describe('end-to-end demonstrations', () => {
     expect(after[0].ok).toBe(true); // refers to the moment of the reset
     expect(after[0].detail).toMatch(/activated since/);
     expect(after[2].ok).toBeNull(); // a scenario makes the plant differ on purpose
+  });
+});
+
+// ── Finding-based demonstrations E–H ──────────────────────────────────────────
+
+/** Follows a demo the way the presenter does: Skip until its findings are there. Returns the view and the minutes simulated. */
+function follow(s: SimState, id: DemoId, run: DemoRun, maxSkips = 20) {
+  const v = resolveValues(DEMO_BY_ID[id], undefined, s);
+  let view: DemoView = demoView(s, DEMO_BY_ID[id], v, run);
+  let skips = 0;
+  const seen = new Set<string>();
+  const note = () => view.rows.forEach((r) => (r.state === 'detected' || r.state === 'cleared') && seen.add(r.key));
+  note();
+  while (!view.complete && skips < maxSkips) {
+    expect(view.skip, `${id}: ${view.eventLine}`).not.toBeNull();
+    advance(s, s.minute + view.skip!);
+    skips++;
+    view = demoView(s, DEMO_BY_ID[id], v, run);
+    note();
+  }
+  return { view, skips, seen, minutes: s.minute - run.at };
+}
+const row = (view: DemoView, key: string) => view.rows.find((r) => r.key === key)!;
+
+/** Honest wording: no AI, no live / connected source, no prediction, no causal claim (an association is "not a cause"). */
+const claims = (text: string) => text.replace(/\bnot an? (demonstrated )?cause\b/gi, '');
+const DISHONEST = /\bAI\b|machine learning|\blive\b|connected|predict|forecast|will fail|caused by|root cause|\bcauses?\b|Ghani|tiles\/h/i;
+
+describe('finding-based demonstrations (E–H)', () => {
+  it('E · powder shortage: spray dryer down → silos fall → presses short → Potential press starvation, with aligned times', () => {
+    const s = createSim(7, START);
+    const run = setUp(s, 'E');
+    const first = demoView(s, DEMO_BY_ID.E, resolveValues(DEMO_BY_ID.E, undefined, s), run);
+    expect(first.complete).toBe(false);
+    expect(first.skip).toBe(60);
+    const { view, skips, seen, minutes } = follow(s, 'E', run);
+    // Watchable: a handful of skips, although the silos take many simulated hours to drain.
+    expect(view.complete).toBe(true);
+    expect(skips).toBeLessThanOrEqual(10);
+    expect(minutes).toBeLessThan(36 * 60);
+    const f = view.finding!;
+    expect(f).toMatchObject({ ruleId: 'F-POWDER-STARVATION', status: 'fired', title: 'Potential press starvation', classification: 'rule-based' });
+    expect(f.firstSeen!).toBeGreaterThanOrEqual(run.at);
+    // The silo trend and the t/h balance were reported on the way (they may have settled once the silos ran low).
+    expect(seen.has('trend')).toBe(true);
+    expect(seen.has('balance')).toBe(true);
+    expect(row(view, 'starve').state).toBe('detected');
+    expect(view.detail).toMatch(/^1 · .+ from \S+.* · 2 · Powder silo level from \S+.* · 3 · E-PRS\d state from \S+/);
+    expect(view.eventLine).toMatch(/^F-POWDER-STARVATION · Detected · Potential press starvation · since /);
+    expect(view.skip).toBeNull();
+    expect(view.steps.map((x) => x.target)).toEqual([
+      { type: 'equipment', id: 'D-TWR' },
+      { type: 'equipment', id: 'D-SILO' },
+      { type: 'workspace', id: 'production', tab: 'material' },
+    ]);
+  });
+
+  it('F · downstream constraint: sorting slows, the kiln outfeed fills, the kiln is limited → F-DOWNSTREAM-CONSTRAINT', () => {
+    const s = createSim(7, START);
+    const run = setUp(s, 'F');
+    const { view, minutes } = follow(s, 'F', run);
+    expect(view.complete).toBe(true);
+    expect(minutes).toBeLessThanOrEqual(60);
+    expect(view.finding).toMatchObject({ ruleId: 'F-DOWNSTREAM-CONSTRAINT', title: 'Possible downstream constraint at sorting', severity: 'serious' });
+    expect(view.finding!.explanation).toMatch(/no polishing \/ rectification stage/);
+    expect(row(view, 'block').state).toBe('detected');
+    expect(DEMO_BY_ID.F.summary).toMatch(/stage 8 “cooling buffer” = the kiln outfeed/);
+    expect(DEMO_BY_ID.F.summary).toMatch(/no polishing \/ rectification stage/);
+    expect(view.steps.map((x) => x.target)).toContainEqual({ type: 'workspace', id: 'production', tab: 'material' });
+  });
+
+  it('G · process deviation → batch → rejects: the association names the batch and stays "to investigate"', () => {
+    const s = createSim(7, START);
+    const run = setUp(s, 'G');
+    const { view, minutes } = follow(s, 'G', run);
+    expect(view.complete).toBe(true);
+    expect(minutes).toBeLessThanOrEqual(60);
+    const f = view.finding!;
+    expect(f).toMatchObject({ ruleId: 'QL-PROCESS-ASSOCIATION', classification: 'statistical' });
+    expect(f.explanation).toMatch(/^Association to investigate — not a demonstrated cause/);
+    expect(row(view, 'limit').state).toBe('detected');
+    expect(view.detail).toMatch(/^Batch B-\d{6}-\d+: reject rate [\d.]+ % for tiles made during the deviation vs [\d.]+ % outside it — an association to investigate, not a cause\.$/);
+    expect(view.steps.map((x) => x.target)).toEqual([
+      { type: 'equipment', id: 'H-KILN' },
+      { type: 'workspace', id: 'quality', tab: 'compare' },
+    ]);
+  });
+
+  it('H · data quality: DQ findings for the frozen counter and the bad sensor; dependent rules not evaluated', () => {
+    const s = createSim(7, START);
+    const run = setUp(s, 'H');
+    expect(run.scenarioIds).toHaveLength(2);
+    const { view, minutes } = follow(s, 'H', run);
+    expect(view.complete).toBe(true);
+    expect(minutes).toBeLessThanOrEqual(15);
+    expect(['DQ-FROZEN', 'DQ-STALE']).toContain(row(view, 'frozen').finding!.ruleId);
+    expect(row(view, 'bad').finding!.ruleId).toBe('DQ-BAD-QUALITY');
+    for (const k of ['counter', 'output', 'zone1']) {
+      expect(row(view, k).state, k).toBe('not-evaluated');
+      expect(row(view, k).finding!.status, k).toBe('insufficient-data');
+    }
+    expect(view.status).toMatch(/\+1 more$/);
+    expect(view.steps.map((x) => x.target)).toContainEqual({ type: 'workspace', id: 'events', tab: 'data' });
+  });
+
+  it('their texts make no causal, AI or live claims and label the inputs simulated', () => {
+    const s = createSim(7, START);
+    for (const id of ['E', 'F', 'G', 'H'] as DemoId[]) {
+      const d = DEMO_BY_ID[id];
+      const v = resolveValues(d, undefined, s);
+      const run: DemoRun = { demo: id, epoch: 0, at: s.minute, scenarioIds: [] };
+      const view = demoView(s, d, v, run);
+      const texts = [d.title, d.summary, view.eventLine, ...d.findings!.map((f) => f.label), ...view.steps.map((x) => x.label), ...d.build(v, s.minute).map((x) => x.label)];
+      for (const text of texts) expect(claims(text), `${id}: ${text}`).not.toMatch(DISHONEST);
+      for (const x of d.build(v, s.minute)) expect(x.label, id).toMatch(/\(simulated\)$/);
+      // Not set up: nothing is evaluated and nothing claimed.
+      expect(demoView(s, d, v, null).rows).toEqual([]);
+      expect(demoView(s, d, v, null).eventLine).toMatch(/^Set up to create the scenario/);
+    }
   });
 });

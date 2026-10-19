@@ -6,8 +6,9 @@
  */
 import type { WorkspaceId } from '../../app/store';
 import { EQUIPMENT_BY_ID } from '../../data/equipment';
-import { CONVEYOR_BY_ID, DOCKS, GEOFENCES, PROCESS_MACHINES, STAGES, STAGE_BY_ID } from '../../model/plant';
-import type { MonitoredStageId, OpEvent, ScenarioActivation, ScenarioKind, StageId } from '../../model/types';
+import { CONVEYOR_BY_ID, DEFECTS, DEFECT_ORDER, DOCKS, GEOFENCES, PROCESS_MACHINES, STAGES, STAGE_BY_ID } from '../../model/plant';
+import { PROCESS_SIGNAL_BY_ID } from '../../model/catalog/process';
+import type { DataQualityMode, MonitoredStageId, OpEvent, ScenarioActivation, ScenarioKind, StageId } from '../../model/types';
 import { scenariosActive, type SimState } from '../../sim/engine';
 import { HEALTH_ASSETS, HEALTH_BY_ID } from '../../sim/health';
 import type { TruckRuntime } from '../../sim/logistics';
@@ -42,14 +43,23 @@ export type ShowTarget =
   /** The copilot, asked about one event. */
   | { type: 'copilot'; question: string; eventId?: string };
 
-export const targetKey = (t: ShowTarget) => (t.type === 'copilot' ? `copilot:${t.eventId ?? ''}` : `${t.type}:${t.id}`);
+export const targetKey = (t: ShowTarget) =>
+  t.type === 'copilot' ? `copilot:${t.eventId ?? ''}` : t.type === 'workspace' && t.tab ? `${t.type}:${t.id}:${t.tab}` : `${t.type}:${t.id}`;
 
 export type CatalogueGroup = 'production' | 'quality' | 'logistics';
 export const GROUP_TITLE: Record<CatalogueGroup, string> = {
-  production: 'Production, equipment & data',
-  quality: 'Quality',
+  production: 'Production, equipment & data quality',
+  quality: 'Quality & process deviations',
   logistics: 'Vehicles & logistics',
 };
+
+/** "Show me" targets of the views the new scenarios show in (tab ids as the workspaces define them). */
+export const VIEW = {
+  material: { type: 'workspace', id: 'production', tab: 'material' },
+  compare: { type: 'workspace', id: 'quality', tab: 'compare' },
+  reliability: { type: 'workspace', id: 'events', tab: 'reliability' },
+  data: { type: 'workspace', id: 'events', tab: 'data' },
+} as const satisfies Record<string, ShowTarget>;
 
 export type CatalogueEntry = {
   /** Stable key (parameter store, tests). */
@@ -58,6 +68,17 @@ export type CatalogueEntry = {
   ref: number;
   kind: ScenarioKind;
   group: CatalogueGroup;
+  /** Card title when several entries share one scenario kind (default: the kind's label). */
+  title?: string;
+  /**
+   * Which logged activations belong to this entry, when several entries share one kind (process deviations and
+   * data-quality faults differ by signal / mode / asset). Default: every activation of the kind.
+   */
+  matches?: (sc: ScenarioActivation) => boolean;
+  /** Rule ids (src/intel/rules) whose findings detect the effect. */
+  detectedBy?: string[];
+  /** Extra "Show me" targets, e.g. a workspace tab (Events › Data & connectivity). */
+  views?: ShowTarget[];
   /** What the scenario does. */
   summary: string;
   /** Where the effect becomes visible. */
@@ -141,6 +162,149 @@ function truckOnSite(s: SimState, sc: ScenarioActivation | null) {
 /** Forklift a restricted-zone entry scenario forces across the walkway. */
 export const RESTRICTED_FORKLIFT = 'FL-05';
 
+// ── Process deviations and data-quality faults (simulated) ────────────────────
+
+/** Minutes over which a catalogue process deviation ramps in. */
+export const DEVIATION_RAMP_MIN = 10;
+
+/** Process stage of a machine. */
+export const stageOfMachine = (equipmentId: string): StageId | null => STAGES.find((st) => st.machines.includes(equipmentId))?.id ?? null;
+
+/** Defect categories that originate at the machine's stage (what a deviation there can raise in the simulation). */
+export const defectsOriginatingAt = (equipmentId: string) => {
+  const stage = stageOfMachine(equipmentId);
+  return DEFECT_ORDER.filter((d) => DEFECTS[d].origin === stage);
+};
+
+const MINUS = '−';
+/** Signed engineering value with its unit, true minus sign ("+35 °C", "−25 bar", "+1.0 %"). */
+export function signedValue(v: number, unit: string, digits = 0) {
+  const txt = `${Math.abs(v).toLocaleString('en-GB', { minimumFractionDigits: digits, maximumFractionDigits: digits })} ${unit}`;
+  return `${v < 0 ? MINUS : '+'}${txt}`;
+}
+const plain = (v: number, unit: string, digits = 0) => `${v.toLocaleString('en-GB', { minimumFractionDigits: digits, maximumFractionDigits: digits })} ${unit}`;
+
+/** Short name of a process value without the " · actual" suffix. */
+const pvName = (signalId: string) => (PROCESS_SIGNAL_BY_ID[signalId]?.name ?? signalId).replace(/ · actual$/, '');
+
+type DeviationSpec = {
+  id: string;
+  ref: number;
+  signalId: string;
+  title: string;
+  offsets: number[];
+  views: ShowTarget[];
+  workspaces: WorkspaceId[];
+};
+
+/** A catalogue process deviation: the PV runs beyond its alarm band; the text states what the simulation couples to it. */
+function deviationEntry(o: DeviationSpec): CatalogueEntry {
+  const spec = PROCESS_SIGNAL_BY_ID[o.signalId];
+  const eqId = spec?.equipmentId ?? o.signalId.split('.')[0];
+  const unit = spec?.unit ?? '';
+  const digits = spec?.digits ?? 0;
+  const sp = spec?.nominal ?? 0;
+  const alarm = spec?.alarmHigh != null ? spec.alarmHigh - sp : spec?.alarmLow != null ? sp - spec.alarmLow : null;
+  const warn = spec?.warningHigh != null ? spec.warningHigh - sp : spec?.warningLow != null ? sp - spec.warningLow : null;
+  const stage = stageOfMachine(eqId);
+  const defects = defectsOriginatingAt(eqId);
+  const coupled = defects.length > 0;
+  const dir = o.offsets[0] >= 0 ? 'above' : 'below';
+  const name = pvName(o.signalId);
+  const band = alarm != null ? ` its ±${plain(alarm, unit, digits)} alarm band (setpoint ${plain(sp, unit, digits)}${warn != null ? `, warning ±${plain(warn, unit, digits)}` : ''})` : ' its alarm band';
+  const coupling = coupled
+    ? `Beyond the warning band the simulation raises the rejects of defects that originate at ${stage ? stageLabel(stage).toLowerCase() : eqId} (${defects.map((d) => DEFECTS[d].label.toLowerCase()).join(', ')}); tiles made during it can show a higher reject rate — an association to investigate, not a demonstrated cause.`
+    : `No defect category originates at ${stage ? stageLabel(stage).toLowerCase() : eqId} in this simulation, so only the value moves: no reject effect is simulated.`;
+  const detectedBy = ['PC-LIMIT', 'PC-SETPOINT', ...(coupled ? ['QL-PROCESS-ASSOCIATION'] : [])];
+  return {
+    id: o.id,
+    ref: o.ref,
+    kind: 'process-deviation',
+    group: 'quality',
+    title: o.title,
+    matches: (sc) => sc.kind === 'process-deviation' && sc.signalId === o.signalId,
+    summary: `Simulated scenario: ${o.signalId} (${name.toLowerCase()}) ramps ${dir} its setpoint over ${DEVIATION_RAMP_MIN} min to beyond${band}. ${coupling}`,
+    effect: `Actual against setpoint and the process findings in the ${eqId} equipment panel (Factory Twin)${coupled ? '; the affected batch and its reject rate in Quality › Compare' : ''}.`,
+    detectedBy,
+    views: o.views,
+    params: [
+      { key: 'offset', label: 'Deviation', initial: o.offsets[0], options: o.offsets.map((v) => ({ value: v, label: `${signedValue(v, unit, digits)} from setpoint` })) },
+      { key: 'duration', label: 'Duration', initial: 0, options: DURATIONS },
+    ],
+    oneOff: false,
+    build: (v, now) => ({
+      kind: 'process-deviation',
+      signalId: o.signalId,
+      offset: num(v.offset),
+      rampMin: DEVIATION_RAMP_MIN,
+      end: num(v.duration) > 0 ? now + num(v.duration) : null,
+      label: `${o.title} · ${signedValue(num(v.offset), unit, digits)} (simulated)`,
+    }),
+    focus: () => ({ type: 'equipment', id: eqId }),
+    workspaces: o.workspaces,
+    unavailable: () => (spec ? null : `${o.signalId} is not in the process signal catalogue.`),
+  };
+}
+
+export const DQ_MODE_LABEL: Record<DataQualityMode, string> = {
+  'bad-quality': 'bad-quality flag',
+  frozen: 'frozen value',
+  'counter-reset': 'counter reset',
+  spike: 'implausible spike',
+  gap: 'missing samples',
+  'command-no-feedback': 'command without running feedback',
+};
+
+type DataQualitySpec = {
+  id: string;
+  ref: number;
+  mode: DataQualityMode;
+  equipmentId: string;
+  /** The signal affected; a 'signals' parameter with these options instead lets the presenter choose (value '' = every signal of the asset). */
+  signalId?: string;
+  signalOptions?: ParamOption[];
+  title: string;
+  summary: string;
+  effect: string;
+  detectedBy: string[];
+  views: ShowTarget[];
+  oneOff?: boolean;
+};
+
+/** A catalogue data-quality fault: only the telemetry changes (except a command without feedback, which holds the machine stopped). */
+function dataQualityEntry(o: DataQualitySpec): CatalogueEntry {
+  const params: ParamDef[] = [];
+  if (o.signalOptions) params.push({ key: 'signal', label: 'Signals', initial: o.signalOptions[0].value, options: o.signalOptions });
+  if (!o.oneOff) params.push({ key: 'duration', label: 'Duration', initial: 0, options: DURATIONS });
+  const signalOf = (v: Values) => (o.signalOptions ? str(v.signal ?? o.signalOptions[0].value) || undefined : o.signalId);
+  return {
+    id: o.id,
+    ref: o.ref,
+    kind: 'data-quality',
+    group: 'production',
+    title: o.title,
+    matches: (sc) => sc.kind === 'data-quality' && sc.mode === o.mode && sc.equipmentId === o.equipmentId,
+    summary: `Simulated scenario: ${o.summary}`,
+    effect: o.effect,
+    detectedBy: o.detectedBy,
+    views: o.views,
+    params,
+    oneOff: !!o.oneOff,
+    build: (v, now) => {
+      const sig = signalOf(v);
+      return {
+        kind: 'data-quality',
+        mode: o.mode,
+        equipmentId: o.equipmentId,
+        ...(sig ? { signalId: sig } : {}),
+        end: !o.oneOff && num(v.duration ?? 0) > 0 ? now + num(v.duration) : null,
+        label: `${o.title}${sig ? ` · ${sig}` : ` · every ${o.equipmentId} ${o.mode === 'counter-reset' ? 'counter' : 'signal'}`} (simulated)`,
+      };
+    },
+    focus: () => ({ type: 'equipment', id: o.equipmentId }),
+    workspaces: [],
+  };
+}
 // ── Catalogue ─────────────────────────────────────────────────────────────────
 
 export const CATALOGUE: CatalogueEntry[] = [
@@ -360,12 +524,147 @@ export const CATALOGUE: CatalogueEntry[] = [
     workspaces: ['fleet'],
     unavailable: (_v, s) => (s.logistics.vehicles[RESTRICTED_FORKLIFT] ? null : `Forklift ${RESTRICTED_FORKLIFT} is not in the simulation.`),
   },
+  // ── Process deviations (simulated) ──
+  deviationEntry({
+    id: 'dev-kiln-z3',
+    ref: 12,
+    signalId: 'H-KILN.zone3_temp_pv',
+    title: 'Kiln zone 3 temperature high',
+    offsets: [35, 25],
+    views: [VIEW.compare],
+    workspaces: [],
+  }),
+  deviationEntry({
+    id: 'dev-spray-moisture',
+    ref: 13,
+    signalId: 'D-TWR.powder_moisture_pv',
+    title: 'Spray-dryer powder moisture high',
+    offsets: [1, 1.5],
+    views: [VIEW.material],
+    workspaces: [],
+  }),
+  deviationEntry({
+    id: 'dev-dryer-z2',
+    ref: 14,
+    signalId: 'F-DRY.zone2_temp_pv',
+    title: 'Dryer zone 2 temperature low',
+    offsets: [-20, -30],
+    views: [],
+    workspaces: [],
+  }),
+  deviationEntry({
+    id: 'dev-press2-pressure',
+    ref: 15,
+    signalId: 'E-PRS2.press_pressure_pv',
+    title: 'Press 2 pressing pressure low',
+    offsets: [-25, -40],
+    views: [VIEW.compare],
+    workspaces: [],
+  }),
+  // ── Data-quality faults (simulated telemetry) ──
+  dataQualityEntry({
+    id: 'dq-frozen-prs2',
+    ref: 16,
+    mode: 'frozen',
+    equipmentId: 'E-PRS2',
+    signalId: 'E-PRS2.count_total',
+    title: 'Frozen counter · E-PRS2',
+    summary:
+      'the production counter of press 2 (E-PRS2.count_total) stops updating — value and timestamp freeze while the press keeps pressing. Production is unchanged; only the telemetry is wrong.',
+    effect: 'The counter reads as stale in the E-PRS2 equipment panel; counter and output rules are “not evaluated” instead of guessing; Events › Data & connectivity.',
+    detectedBy: ['DQ-FROZEN', 'DQ-STALE'],
+    views: [VIEW.data],
+  }),
+  dataQualityEntry({
+    id: 'dq-bad-kiln',
+    ref: 17,
+    mode: 'bad-quality',
+    equipmentId: 'H-KILN',
+    signalId: 'H-KILN.zone1_temp_pv',
+    title: 'Bad-quality kiln zone sensor',
+    summary:
+      'the kiln zone 1 thermocouple (H-KILN.zone1_temp_pv) reports quality “bad”. The reading keeps its value but is not trusted, so the setpoint and limit checks of that zone are not evaluated; the other zones still are.',
+    effect: 'Bad-quality flag on the zone 1 reading in the H-KILN equipment panel; Events › Data & connectivity.',
+    detectedBy: ['DQ-BAD-QUALITY', 'PC-MEASUREMENT'],
+    views: [VIEW.data],
+  }),
+  dataQualityEntry({
+    id: 'dq-reset-jbox',
+    ref: 18,
+    mode: 'counter-reset',
+    equipmentId: 'J-BOX',
+    signalOptions: [
+      { value: 'J-BOX.carton_count', label: 'Carton counter' },
+      { value: '', label: 'Every J-BOX counter' },
+    ],
+    title: 'Carton counter reset · J-BOX',
+    summary:
+      'the carton counter of the packaging machine (J-BOX.carton_count, or every J-BOX counter) restarts from 0 once — as after a PLC restart. The machine keeps packing; the step backwards is classified as a reset, not counted as negative output.',
+    effect: 'Counter step in the J-BOX equipment panel; Events › Data & connectivity.',
+    detectedBy: ['DQ-COUNTER-RESET'],
+    views: [VIEW.data],
+    oneOff: true,
+  }),
+  dataQualityEntry({
+    id: 'dq-spike-dtwr',
+    ref: 19,
+    mode: 'spike',
+    equipmentId: 'D-TWR',
+    signalId: 'D-TWR.outlet_temp_pv',
+    title: 'Implausible spike · spray-dryer outlet',
+    summary:
+      'the spray-dryer outlet air temperature (D-TWR.outlet_temp_pv) delivers one reading outside its engineering range every 10 min. It is a measurement problem, not a process deviation.',
+    effect: 'Out-of-range samples in the D-TWR equipment panel trend; Events › Data & connectivity.',
+    detectedBy: ['DQ-IMPLAUSIBLE', 'PC-MEASUREMENT'],
+    views: [VIEW.data],
+  }),
+  dataQualityEntry({
+    id: 'dq-gap-fdry',
+    ref: 20,
+    mode: 'gap',
+    equipmentId: 'F-DRY',
+    signalOptions: [
+      { value: 'F-DRY.zone1_temp_pv', label: 'Zone 1 temperature only' },
+      { value: '', label: 'Every F-DRY signal' },
+    ],
+    title: 'Missing samples · F-DRY',
+    summary:
+      'the dryer (F-DRY) delivers no samples for the chosen signals: holes in the history, nothing invented to fill them. With every signal missing the whole source counts as interrupted.',
+    effect: 'Gaps (not zeros) in the F-DRY equipment panel trends; dependent rules “not evaluated”; Events › Data & connectivity.',
+    detectedBy: ['DQ-GAP', 'DQ-SOURCE'],
+    views: [VIEW.data],
+  }),
+  dataQualityEntry({
+    id: 'dq-cmd-prs1',
+    ref: 21,
+    mode: 'command-no-feedback',
+    equipmentId: 'E-PRS1',
+    title: 'Command without running feedback · E-PRS1',
+    summary:
+      'press 1 (E-PRS1) gets its run command but never reports running: the command stays on while the machine is held stopped (stop reason: no feedback, electrical & control).',
+    effect: 'Stopped press with run command on in the E-PRS1 equipment panel; the stop in Production; Events › Reliability.',
+    detectedBy: ['RL-COMMAND-FEEDBACK'],
+    views: [VIEW.reliability],
+  }),
 ];
 
 export const ENTRY_BY_ID = Object.fromEntries(CATALOGUE.map((e) => [e.id, e])) as Record<string, CatalogueEntry>;
-export const ENTRY_BY_KIND = Object.fromEntries(CATALOGUE.map((e) => [e.kind, e])) as Partial<Record<ScenarioKind, CatalogueEntry>>;
+/** The first catalogue entry of each kind (several process-deviation / data-quality entries share a kind: use entryFor). */
+export const ENTRY_BY_KIND = Object.fromEntries([...CATALOGUE].reverse().map((e) => [e.kind, e])) as Partial<Record<ScenarioKind, CatalogueEntry>>;
 
-export const ONE_OFF_KINDS: ScenarioKind[] = CATALOGUE.filter((e) => e.oneOff).map((e) => e.kind);
+/** Whether a logged activation belongs to a catalogue entry. */
+export const entryMatches = (e: CatalogueEntry, sc: ScenarioActivation) => sc.kind === e.kind && (!e.matches || e.matches(sc));
+
+/** The catalogue entry a logged activation belongs to (null: no entry, e.g. maintenance or a retired kind). */
+export const entryFor = (sc: ScenarioActivation): CatalogueEntry | null => CATALOGUE.find((e) => entryMatches(e, sc)) ?? null;
+
+/** Kinds whose every activation is injected once (logistics). A data-quality counter reset is one-off too: see isOneOff. */
+export const ONE_OFF_KINDS: ScenarioKind[] = [...new Set(CATALOGUE.filter((e) => e.oneOff).map((e) => e.kind))].filter((k) =>
+  CATALOGUE.filter((e) => e.kind === k).every((e) => e.oneOff),
+);
+
+/** Injected once; logged as "applied", nothing to clear. */
+export const isOneOff = (sc: Pick<ScenarioActivation, 'kind' | 'mode'>) => ONE_OFF_KINDS.includes(sc.kind) || (sc.kind === 'data-quality' && sc.mode === 'counter-reset');
 
 export const initialValues = (): Record<string, Values> =>
   Object.fromEntries(CATALOGUE.map((e) => [e.id, Object.fromEntries(e.params.map((p) => [p.key, p.initial]))]));
@@ -394,15 +693,25 @@ export const maintenanceDef = (equipmentId: string, minutes: number): ScenarioDe
 
 /** Same kind and same target: activating again replaces the running instance instead of stacking it. */
 export function sameTarget(sc: ScenarioActivation, def: ScenarioDef) {
-  if (sc.kind !== def.kind || ONE_OFF_KINDS.includes(sc.kind)) return false;
-  return (sc.equipmentId ?? null) === (def.equipmentId ?? null) && (sc.stage ?? null) === (def.stage ?? null);
+  if (sc.kind !== def.kind || isOneOff(sc) || isOneOff(def)) return false;
+  return (
+    (sc.equipmentId ?? null) === (def.equipmentId ?? null) &&
+    (sc.stage ?? null) === (def.stage ?? null) &&
+    // A process deviation is aimed at one signal; a data-quality fault at one asset with one mode.
+    (sc.kind !== 'process-deviation' || sc.signalId === def.signalId) &&
+    (sc.kind !== 'data-quality' || sc.mode === def.mode)
+  );
 }
 
 /** Generic "Show me" focus of a logged scenario: its catalogue entry, else its equipment. */
 export function scenarioFocus(s: SimState, sc: ScenarioActivation): ShowTarget | null {
-  const entry = ENTRY_BY_KIND[sc.kind];
+  const entry = entryFor(sc);
   if (entry) return entry.focus(resolveValues(entry, undefined, s), sc, s);
   if (sc.equipmentId) return { type: 'equipment', id: sc.equipmentId };
+  if (sc.kind === 'process-deviation' && sc.signalId) {
+    const eq = PROCESS_SIGNAL_BY_ID[sc.signalId]?.equipmentId;
+    if (eq) return { type: 'equipment', id: eq };
+  }
   if (sc.stage) return { type: 'equipment', id: STAGE_BY_ID[sc.stage].machines[0] };
   return null;
 }
@@ -425,7 +734,7 @@ export const FAULT_BROKE_DOWN = 'Broke down';
 
 export function scenarioStatus(s: SimState, sc: ScenarioActivation): ScenarioStatus {
   const now = s.minute;
-  if (ONE_OFF_KINDS.includes(sc.kind)) {
+  if (isOneOff(sc)) {
     const none = sc.kind === 'prolonged-dock-stay' && !scenarioTrucks(s, sc.id).length;
     return { key: 'applied', label: 'Applied', at: sc.start, note: none ? 'No truck was at a dock — no effect' : null };
   }
@@ -496,6 +805,12 @@ export function paramSummary(sc: ScenarioActivation): string {
       return `${machineLabel(sc.equipmentId ?? '—')} · data feed stale`;
     case 'restricted-entry':
       return `${sc.vehicleId ?? RESTRICTED_FORKLIFT} · forced walkway crossing`;
+    case 'process-deviation': {
+      const spec = sc.signalId ? PROCESS_SIGNAL_BY_ID[sc.signalId] : undefined;
+      return `${sc.signalId ?? '—'} · ${signedValue(sc.offset ?? 0, spec?.unit ?? '', spec?.digits ?? 0).trim()} from setpoint${sc.rampMin ? ` (ramp ${sc.rampMin} min)` : ''}`;
+    }
+    case 'data-quality':
+      return `${machineLabel(sc.equipmentId ?? '—')} · ${sc.mode ? DQ_MODE_LABEL[sc.mode] : '—'} · ${sc.signalId ?? 'every signal'}`;
   }
 }
 
@@ -538,6 +853,8 @@ export function outcomeOf(s: SimState, sc: ScenarioActivation): string | null {
       const gf = GEOFENCES.find((g) => g.id === r.geofenceId);
       return `Entered ${gf?.name ?? r.geofenceId} at ${formatClock(r.time)}`;
     }
+    case 'data-quality':
+      return sc.mode === 'counter-reset' ? `Counters restarted from 0 at ${formatClock(sc.start)}` : null;
     default:
       return null;
   }
@@ -557,7 +874,7 @@ export function scenarioEvents(s: SimState, sc: ScenarioActivation): OpEvent[] {
 
 /** Duration so far (active) or in total (ended). */
 export function scenarioDuration(s: SimState, sc: ScenarioActivation) {
-  if (ONE_OFF_KINDS.includes(sc.kind)) return null;
+  if (isOneOff(sc)) return null;
   return Math.max(0, Math.min(sc.end ?? s.minute, s.minute) - sc.start);
 }
 
@@ -583,7 +900,7 @@ export type ImpactWindow = {
 export function impactWindow(s: SimState, mode: WindowMode): ImpactWindow {
   const now = s.minute;
   if (mode === 'scenario') {
-    const active = scenariosActive(s).filter((sc) => !ONE_OFF_KINDS.includes(sc.kind));
+    const active = scenariosActive(s).filter((sc) => !isOneOff(sc));
     if (active.length) {
       const first = active.reduce((a, b) => (b.start < a.start ? b : a));
       const from = Math.floor(first.start / 60) * 60;

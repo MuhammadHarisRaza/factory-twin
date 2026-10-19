@@ -248,7 +248,7 @@ describe('Production render', () => {
   it('equipment drill-down of a machine and a conveyor', () => {
     sync();
     const kiln = renderToStaticMarkup(<EquipmentDrawer id="H-KILN" periodKey="shift" onClose={noop} />);
-    for (const text of ['Machine OEE', 'Contributing events', 'View in 3D', 'Share of the line loss at the constraint', 'Reference video']) expect(kiln, text).toContain(text);
+    for (const text of ['Machine OEE', 'Contributing events', 'Open in Factory Twin', 'Share of the line loss at the constraint', 'Reference video']) expect(kiln, text).toContain(text);
     const cv = renderToStaticMarkup(<EquipmentDrawer id="CV-KIN" periodKey="shift" onClose={noop} />);
     for (const text of ['Not meaningful for a conveyor', 'Utilisation', 'Kiln infeed roller transfer', 'Latest event report']) expect(cv, text).toContain(text);
   });

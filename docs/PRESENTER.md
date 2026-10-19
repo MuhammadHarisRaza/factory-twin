@@ -3,8 +3,10 @@
 Before the meeting: **Scenarios → Guided demos → E · Reset demo** (Mon 12 Oct 10:30, no scenarios). Keep the
 clock at 60× (one plant minute per second). Say once, pointing at the **Simulated** chip in the header:
 *everything you see is a deterministic simulation of a representative plant; nothing is connected to a real
-machine, camera or model, and the product says so wherever it matters. The videos are public reference footage
-of the same kind of process, not this plant.*
+machine, camera or model, and the product says so wherever it matters. The videos are camera recordings provided
+by the client (recordings, not live feeds; their boxes and counts come from the client's recording system) and
+public reference footage of the same kind of process; neither is this plant's live view or linked to the
+simulated data.*
 
 1. **Overview (1.5 min)** — read the summary sentence, then the five KPIs (each says its scope, target and why
    it matters). The 3D factory is live: pick a stage in the flow strip and the model highlights it; click the kiln
@@ -41,5 +43,8 @@ Questions to expect: *Is this live?* — No: a deterministic simulation using th
 integration would fill (`docs/INTEGRATION.md`); real camera streams can be configured per camera (Factory Twin →
 equipment → Technical details → Cameras) and are labelled Live only when they play. *Is the AI real?* — The
 detection rules, classifications and copilot are transparent rules over the shared state; a vision model or an LLM
-can replace them behind the same interfaces. *Are these videos from this plant?* — No: public reference footage
-from equipment makers, tile manufacturers and stock libraries, labelled on every player.
+can replace them behind the same interfaces. *Are these videos from this plant?* — No: the kiln, packing-line and
+site-entrance clips are camera recordings provided by the client (recordings, not live; their overlays come from
+the recording system), and the rest are public reference footage from equipment makers, tile manufacturers and
+stock libraries. Each player names its source: under the clip on the workspace pages, and in the twin panel behind
+the ⓘ (its tooltip says *Recorded footage — not a live feed* or *Reference footage — not this plant, not a live feed*).

@@ -10,13 +10,13 @@
 import { DEFECT_ACTIONS } from '../../model/actions';
 import { DEFECTS, DEFECT_ORDER, STAGE_BY_ID } from '../../model/plant';
 import type { DefectCategory, EventCause, EventValue, OpEvent, ProductionBatch, QualityInspection, ScenarioActivation, StageId } from '../../model/types';
-import { batchAt, type SimState } from '../../sim/engine';
+import { LOG_MIN, batchAt, type SimState } from '../../sim/engine';
 import { EVENT_RULE_DEFS, eventById, qualityWindow } from '../../sim/events';
 import { defectTrend, qualityIn, risingDefects, type Period, type RisingDefects } from '../../sim/metrics';
 import type { VideoTopic } from '../../video/types';
 import { eventRecordIds, eventsOfRecord, inMinuteLog, inspectionEventLinks, qualityEventsIn, referenceRate } from './derive';
 import { BATCH_LAG_MIN, activeQualityScenario, affectingScenario, isFrameStation } from './frames';
-import { STATION_BY_ID } from './lookup';
+import { STATION_BY_ID, rateOf } from './lookup';
 
 type QualityEventSets = { open: OpEvent[]; resolved: OpEvent[] };
 
@@ -82,7 +82,7 @@ export function qualitySummary(s: SimState, p: Period, events: QualityEventSets 
   return {
     inspected: q.inspected,
     rejected: q.rejected,
-    rate: q.inspected > 0 ? q.rejected / q.inspected : null,
+    rate: rateOf(q.rejected, q.inspected),
     limit: s.rules.rejectRateMax,
     top,
     rising: risingDefect(s, p, rise),
@@ -147,8 +147,8 @@ export function rateTrend(s: SimState, p: Period, focus: DefectCategory | null):
       start: b.start,
       inspected: b.inspected,
       rejected,
-      rate: b.inspected > 0 ? rejected / b.inspected : null,
-      focusRate: focus && b.inspected > 0 ? b.byDefect[focus] / b.inspected : null,
+      rate: rateOf(rejected, b.inspected),
+      focusRate: focus ? rateOf(b.byDefect[focus], b.inspected) : null,
     };
   });
   return { bucketMin, points };
@@ -286,7 +286,7 @@ function afterStat(s: SimState, from: number, d: DefectCategory | null, what: st
   if (elapsed < 10) return { value: null, note: `${AFTER_MIN} min after ${what}`, unavailable: `Less than 10 min since ${what}` };
   const win = Math.min(AFTER_MIN, elapsed);
   const w = windowRate(s, from + win, win, d);
-  if (!w) return { value: null, note: `${win} min after ${what}`, unavailable: 'Older than the 4-hour per-minute log' };
+  if (!w) return { value: null, note: `${win} min after ${what}`, unavailable: `Older than the ${LOG_MIN / 60}-hour per-minute log` };
   return { value: w.rate, note: `${win} min after ${what}` };
 }
 
@@ -374,7 +374,7 @@ export function eventEvidence(s: SimState, ev: OpEvent, links: Map<string, strin
       before: ref != null ? { value: ref, note: '24 h before detection' } : { value: null, note: '24 h before detection', unavailable: 'No inspection in the 24 h before detection' },
       during:
         inspected > 0
-          ? { value: rejects / inspected, note: `${Math.round(rejects)} of ${Math.round(inspected)} tiles` }
+          ? { value: rateOf(rejects, inspected), note: `${Math.round(rejects)} of ${Math.round(inspected)} tiles` }
           : { value: null, note: 'Event window', unavailable: 'No tile inspected in the event window' },
       after: ev.end == null ? { value: null, note: 'After clearing', unavailable: 'Condition still active' } : afterStat(s, ev.end, d, 'clearing'),
       excess: ref != null ? Math.max(0, rejects - ref * inspected) : null,
@@ -409,7 +409,7 @@ export function recordEvidence(s: SimState, rec: QualityInspection, links: Map<s
     : {
         measure: d ? `${DEFECTS[d].label} rate` : 'Reject rate',
         before: before != null ? { value: before, note: '24 h reference' } : { value: null, note: '24 h reference', unavailable: 'No inspection in the 24 h reference window' },
-        during: during ? { value: during.rate, note: '60 min to the record' } : { value: null, note: '60 min to the record', unavailable: 'Older than the 4-hour per-minute log' },
+        during: during ? { value: during.rate, note: '60 min to the record' } : { value: null, note: '60 min to the record', unavailable: `Older than the ${LOG_MIN / 60}-hour per-minute log` },
         after: afterStat(s, rec.time, d, 'the record'),
         excess: null,
       };

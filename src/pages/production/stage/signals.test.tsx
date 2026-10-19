@@ -47,11 +47,9 @@ describe('stage view signal table', () => {
     const html = renderToStaticMarkup(<SignalTable rows={signalRows(s, 'H-KILN')} />);
     for (const text of ['Signal id', 'Current value', 'Basis', 'History', 'Not modelled', 'Not monitored', BASIS_LABEL.placeholder, BASIS_LABEL['energy-model'], 'H-KILN.temp_firing'])
       expect(html, text).toContain(text);
-    const firing = signalValue(s, 'H-KILN.temp_firing').text;
+    // The placeholder has no value at the source any more (null, never a plausible number).
+    expect(signalValue(s, 'H-KILN.temp_firing')).toEqual({ value: null, text: '—' });
     const energy = signalValue(s, 'H-KILN.energy_kwh').text;
-    expect(firing).toMatch(/\d/);
-    expect(html).not.toContain(`>${firing}<`);
-    expect(html).not.toContain(`${firing} `);
     expect(html).not.toContain(energy);
     expect(html).not.toMatch(/kWh/);
   });

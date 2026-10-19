@@ -22,7 +22,16 @@ const CLOCK = new Intl.DateTimeFormat('en-GB', { timeZone: 'UTC', hour: '2-digit
 const CLOCK_SEC = new Intl.DateTimeFormat('en-GB', { timeZone: 'UTC', hour: '2-digit', minute: '2-digit', second: '2-digit', hour12: false });
 const DAY = new Intl.DateTimeFormat('en-GB', { timeZone: 'UTC', weekday: 'short', day: 'numeric', month: 'short' });
 
-export const formatClock = (minute: number) => CLOCK.format(toMs(minute));
+/** Clock labels per minute (pure; capped so a long session does not grow it without bound). */
+const clockMemo = new Map<number, string>();
+export const formatClock = (minute: number) => {
+  let text = clockMemo.get(minute);
+  if (text === undefined) {
+    if (clockMemo.size >= 50_000) clockMemo.clear();
+    clockMemo.set(minute, (text = CLOCK.format(toMs(minute))));
+  }
+  return text;
+};
 export const formatClockSec = (minute: number) => CLOCK_SEC.format(toMs(minute));
 export const formatDay = (minute: number) => DAY.format(toMs(minute));
 export const formatDateTime = (minute: number) => `${formatDay(minute)} ${formatClock(minute)}`;

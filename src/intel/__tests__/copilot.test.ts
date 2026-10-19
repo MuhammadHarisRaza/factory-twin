@@ -204,7 +204,7 @@ describe('Numbers equal the KPI cards (same functions, same period)', () => {
       const phrase = constraintPhrase(claim);
       expect(ofKind(a, 'confirmed')[0]).toBe(`${phrase.charAt(0).toUpperCase()}${phrase.slice(1)}.`);
       expect(a.links.some((l) => l.kind === 'stage' && l.id === monitoredStage(claim.processStage))).toBe(true);
-      for (const r of bn.stages) expect(fact(a, r.name)).toContain(`${Math.round(r.workingShare * 100)} % working`);
+      for (const r of bn.stages) expect(fact(a, r.name)).toContain(`${Math.round(r.workingShare! * 100)} % working`);
     }
     expect(ofKind(q(sortBn, Q.constraint), 'inferred').join(' ')).toMatch(/so the kiln is blocked/);
     // The stage open in Production is placed against the constraint.

@@ -26,7 +26,7 @@ import {
 } from '../model/plant';
 import type { DefectCategory, DowntimeCategory, DowntimeEvent, HourBucket, MonitoredStageId, OperationalState, ShiftId, StageId, Vehicle } from '../model/types';
 import type { SimState } from './engine';
-import { LOG_MIN, findDowntime, minuteAt } from './engine';
+import { LOG_MIN, findDowntime, minuteAt, ownPaceAt } from './engine';
 import type { TruckRuntime } from './logistics';
 import { combineOee, computeOee, lossTree, quality, type OeeResult } from './oee';
 import { CONSUMERS, CONSUMER_BY_ID, DEFAULT_TARIFFS, type Tariffs } from './energy';
@@ -276,13 +276,17 @@ export type StageMetrics = {
   name: string;
   machines: MachineMetrics[];
   output: number;
-  /** Share of planned time the stage was working or down on its own (not waiting on neighbours). */
-  activeShare: number;
+  /**
+   * Shares of planned time; null when the stage had no planned time in the period (every minute a planned
+   * stop, or no data), never 0.
+   * activeShare: working or down on its own (not waiting on neighbours).
+   */
+  activeShare: number | null;
   /** Share of planned time the stage was actually producing at its own pace (active minus its own downtime). */
-  workingShare: number;
-  starvedShare: number;
-  blockedShare: number;
-  downShare: number;
+  workingShare: number | null;
+  starvedShare: number | null;
+  blockedShare: number | null;
+  downShare: number | null;
   inputBufferLevel: number | null;
 };
 
@@ -297,11 +301,11 @@ export function stageMetrics(s: SimState, p: Period): StageMetrics[] {
       name: st.name,
       machines: ms,
       output: sum('count'),
-      activeShare: planned > 0 ? (planned - sum('starved') - sum('blocked')) / planned : 0,
-      workingShare: planned > 0 ? Math.max(0, planned - sum('starved') - sum('blocked') - sum('down')) / planned : 0,
-      starvedShare: planned > 0 ? sum('starved') / planned : 0,
-      blockedShare: planned > 0 ? sum('blocked') / planned : 0,
-      downShare: planned > 0 ? sum('down') / planned : 0,
+      activeShare: planned > 0 ? (planned - sum('starved') - sum('blocked')) / planned : null,
+      workingShare: planned > 0 ? Math.max(0, planned - sum('starved') - sum('blocked') - sum('down')) / planned : null,
+      starvedShare: planned > 0 ? sum('starved') / planned : null,
+      blockedShare: planned > 0 ? sum('blocked') / planned : null,
+      downShare: planned > 0 ? sum('down') / planned : null,
       inputBufferLevel: buf ? s.buffers[buf.id] / buf.capacity : null,
     };
   });
@@ -328,25 +332,36 @@ export function bottleneck(s: SimState, windowMin = 120) {
   const c = stages[ci];
   let i = ci;
   let cause: BottleneckCause = 'constraint';
-  if (c.starvedShare > HELD_UP_SHARE && c.starvedShare >= c.blockedShare) {
+  // A stage without planned time in the window (share null) is not held up by its neighbours.
+  const heldUp = (x: number | null) => x != null && x > HELD_UP_SHARE;
+  if (heldUp(c.starvedShare) && c.starvedShare! >= (c.blockedShare ?? 0)) {
     cause = 'starving';
-    while (i > 0 && stages[i].starvedShare > HELD_UP_SHARE) i--;
-  } else if (c.blockedShare > HELD_UP_SHARE) {
+    while (i > 0 && heldUp(stages[i].starvedShare)) i--;
+  } else if (heldUp(c.blockedShare)) {
     cause = 'blocking';
-    while (i < stages.length - 1 && stages[i].blockedShare > HELD_UP_SHARE) i++;
+    while (i < stages.length - 1 && heldUp(stages[i].blockedShare)) i++;
   }
   const current = stages[i];
-  const ranked = [current, ...stages.filter((st) => st !== current).sort((a, b) => b.activeShare - a.activeShare)];
+  // Stages without planned time rank last.
+  const ranked = [current, ...stages.filter((st) => st !== current).sort((a, b) => (b.activeShare ?? -1) - (a.activeShare ?? -1))];
   return { period: p, current, cause, constraint: c, stages, ranked, shifted: current.stage !== LINE.designConstraint };
 }
 
-/** Minute-accurate state shares of a stage over [from, to) from the minute log (planned stops excluded). */
+/**
+ * Minute-accurate state shares of a stage over [from, to) from the minute log (planned stops excluded).
+ * A minute in which the stage still ran at half its own pace or more but was limited by its input / output
+ * (minute log `lim`) counts its held-back fraction (1 − output ÷ own pace) as starved / blocked, as the
+ * hourly accounting does — so a downstream slowdown that throttles the kiln (e.g. sorting slowed → the kiln
+ * outfeed fills → the kiln is held to ~55 %) is seen as blocking although the kiln's state stays 'running'.
+ */
 function logShares(s: SimState, stage: StageId, from: number, to: number) {
   let planned = 0;
   let starved = 0;
   let blocked = 0;
   let down = 0;
   for (const id of STAGE_BY_ID_LOCAL[stage]) {
+    const log = s.minuteLog[id];
+    const ideal = (OPS_BY_ID[id]?.idealRatePerHour ?? 0) / 60;
     for (let m = Math.max(from, to - LOG_MIN); m < to; m++) {
       const x = minuteAt(s, id, m);
       if (!x || x.state === 'planned') continue;
@@ -354,6 +369,12 @@ function logShares(s: SimState, stage: StageId, from: number, to: number) {
       if (x.state === 'starved') starved++;
       else if (x.state === 'blocked') blocked++;
       else if (x.state === 'down') down++;
+      else if (x.limited && ideal > 0) {
+        const pace = ideal * ownPaceAt(s, id, m);
+        const held = pace > 0 ? Math.max(0, Math.min(1, 1 - x.rate / pace)) : 0;
+        if (log.lim[m % LOG_MIN] === 1) starved += held;
+        else blocked += held;
+      }
     }
   }
   if (!planned) return {};
@@ -780,10 +801,25 @@ export function risingDefects(s: SimState, p: Period): RisingDefects {
 
 // ── Operational state (what the product shows for an asset) ──────────────────
 
+/** Simulated stops injected by a scenario: shown as 'stopped' (no alarm classification), never as a 'fault'. */
+const SCENARIO_STOP_CODES: ReadonlySet<string> = new Set(['SCN_STOP', 'SCN_CNV_STOP', 'SCN_NO_FEEDBACK']);
+
+/**
+ * Operational state of an own stop from its reason: planned stops are 'planned', a product changeover is
+ * 'changeover' (setup: still unplanned downtime in the availability accounting), a mechanical / electrical
+ * alarm is a 'fault', anything else (process stops, scenario stops) 'stopped'.
+ */
+export function stopState(reasonCode: string | undefined): OperationalState {
+  const r = reasonCode ? REASON_BY_CODE[reasonCode] : undefined;
+  if (r?.planned) return 'planned';
+  if (reasonCode === 'CHG_PRODUCT') return 'changeover';
+  return r && (r.category === 'Mechanical' || r.category === 'Electrical & control') && !SCENARIO_STOP_CODES.has(reasonCode!) ? 'fault' : 'stopped';
+}
+
 /**
  * State shown for an asset, from signal logic only: a stale data feed makes it 'unknown';
  * a stop is a 'fault' when its alarm code is a mechanical / electrical fault and 'stopped' otherwise;
- * planned stops and changeovers are 'planned'; a conveyor running empty is 'idle'.
+ * planned stops are 'planned' and product changeovers 'changeover'; a conveyor running empty is 'idle'.
  */
 export function operationalState(s: SimState, id: string): OperationalState {
   const f = s.feeds[id];
@@ -792,9 +828,7 @@ export function operationalState(s: SimState, id: string): OperationalState {
   if (!m) return 'unknown';
   if (m.state === 'down') {
     const d = m.activeDowntimeId ? findDowntime(s, m.activeDowntimeId) : undefined;
-    const r = d ? REASON_BY_CODE[d.reasonCode] : undefined;
-    if (r?.planned || d?.reasonCode === 'CHG_PRODUCT') return 'planned';
-    return r && (r.category === 'Mechanical' || r.category === 'Electrical & control') && d!.reasonCode !== 'SCN_STOP' && d!.reasonCode !== 'SCN_CNV_STOP' ? 'fault' : 'stopped';
+    return stopState(d?.reasonCode);
   }
   if (m.state === 'planned') return 'planned';
   if (CONVEYOR_BY_ID[id]) return m.state === 'starved' ? 'idle' : m.state === 'blocked' ? 'blocked' : 'running';
@@ -810,6 +844,7 @@ export const OPERATIONAL_STATE_LABEL: Record<OperationalState, string> = {
   starved: 'Starved',
   blocked: 'Blocked',
   planned: 'Planned stop',
+  changeover: 'Setup / changeover',
   disconnected: 'Disconnected',
   unknown: 'Unknown (data stale)',
 };
@@ -848,10 +883,10 @@ export type StageIO = {
   /** Actual output per hour over the period vs the expected (ideal × planned time) rate. */
   ratePerHour: number | null;
   expectedPerHour: number | null;
-  /** Minutes the stage was down / starved / blocked (sum over its machines ÷ machines). */
-  downMin: number;
-  starvedMin: number;
-  blockedMin: number;
+  /** Minutes the stage was down / starved / blocked (sum over its machines ÷ machines); null where not measured (warehouse transfer). */
+  downMin: number | null;
+  starvedMin: number | null;
+  blockedMin: number | null;
 };
 
 /** Counts at a monitored stage for a period, from its configured counting points. */
@@ -877,9 +912,10 @@ export function stageIO(s: SimState, id: MonitoredStageId, p: Period): StageIO {
       wipCapacity: null,
       ratePerHour: dispatched / hrs,
       expectedPerHour: null,
-      downMin: 0,
-      starvedMin: 0,
-      blockedMin: 0,
+      // Warehouse transfer has no machine time accounting: not measured, not zero.
+      downMin: null,
+      starvedMin: null,
+      blockedMin: null,
     };
   }
   const stageIds: StageId[] = id === 'GLAZE' ? ['GLAZE', 'DECOR'] : id === 'PACK' ? ['PACK', 'PAL'] : [id];

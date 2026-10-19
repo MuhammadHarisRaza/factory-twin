@@ -17,6 +17,7 @@ import type { FinanceAssumptions } from '../../sim/finance';
 import { constraintAttribution, lossLedger, type ConstraintCause } from './loss';
 import { productionLosses, type LossItem } from './lossItems';
 import { assetStage, bottleneckView, monitoredStageOf, overview, type StageRow } from './stage/derive';
+import { stateDistribution } from './states';
 
 const n0 = new Intl.NumberFormat('en-GB', { maximumFractionDigits: 0 });
 const pctS = (f: number | null | undefined, d = 0) => (f == null || !Number.isFinite(f) ? '—' : `${(f * 100).toFixed(d)} %`);
@@ -43,8 +44,9 @@ export type ConstraintView = {
   cause: Bottleneck['cause'];
   /** Trace window in words, e.g. "the last 2 h" (claim.window). */
   windowLabel: string;
-  kilnStarvedShare: number;
-  kilnBlockedShare: number;
+  /** Null when the kiln had no planned time in the window. */
+  kilnStarvedShare: number | null;
+  kilnBlockedShare: number | null;
   threshold: number;
   /** Short heading: the claim's label and the stage, e.g. "Constraint · Kiln firing & cooling". */
   headline: string;
@@ -78,7 +80,7 @@ export function constraintView(s: SimState, bn: Bottleneck = bottleneck(s), clai
   const win = claim.window;
   const flow = lineFlow(s, bn);
   const buf = (stage: StageId) => flow.find((f) => f.stage === stage)?.input ?? null;
-  const bufText = (b: FlowBuffer | null) => (b ? `${b.name} ${pctS(b.fill)} full${b.trend ? ` (${b.trend})` : ''}` : null);
+  const bufText = (b: FlowBuffer | null) => (b ? (b.fill == null ? `${b.name} level not available` : `${b.name} ${pctS(b.fill)} full${b.trend ? ` (${b.trend})` : ''}`) : null);
   const att = constraintAttribution(s, bn.period);
   const rootCause = att.causes.find((c) => c.minutes >= 1) ?? null;
   const root = rootCause ? { ...rootCause, stage: assetStage(rootCause.equipmentId) } : null;
@@ -109,7 +111,7 @@ export function constraintView(s: SimState, bn: Bottleneck = bottleneck(s), clai
     const ci = bn.stages.findIndex((st) => st.stage === designStage);
     const oi = bn.stages.findIndex((st) => st.stage === cur.stage);
     const between = bn.stages.slice(Math.min(ci, oi) + 1, Math.max(ci, oi));
-    const restrictionBetween = starving ? cur.blockedShare > HELD_UP_SHARE : cur.starvedShare > HELD_UP_SHARE;
+    const restrictionBetween = (starving ? (cur.blockedShare ?? 0) : (cur.starvedShare ?? 0)) > HELD_UP_SHARE;
     const rootAsset = root && root.lastActive >= bn.period.from && !named.machines.includes(root.equipmentId) ? `${root.equipmentId} · ${root.name}` : null;
     if (restrictionBetween && rootAsset) restriction = `${rootAsset}, between ${lower(cur.name)} and the kiln`;
     push(starving ? `Kiln starved ${pctS(k.starvedShare)} of ${win} (trace threshold ${pctS(HELD_UP_SHARE)}).` : `Kiln blocked ${pctS(k.blockedShare)} of ${win} (trace threshold ${pctS(HELD_UP_SHARE)}).`);
@@ -134,10 +136,10 @@ export function constraintView(s: SimState, bn: Bottleneck = bottleneck(s), clai
       push(
         `Over ${win} the kiln was starved ${pctS(k.starvedShare)} and blocked ${pctS(k.blockedShare)} of its planned time (trace threshold ${pctS(HELD_UP_SHARE)}): working ${pctS(k.workingShare)}, down ${pctS(k.downShare)}.`,
       );
-      const held = bn.stages.filter((st) => st.stage !== designStage && (st.starvedShare > HELD_UP_SHARE || st.blockedShare > HELD_UP_SHARE));
+      const held = bn.stages.filter((st) => st.stage !== designStage && ((st.starvedShare ?? 0) > HELD_UP_SHARE || (st.blockedShare ?? 0) > HELD_UP_SHARE));
       if (held.length)
         push(
-          `Held up elsewhere without reaching the kiln: ${held.map((st) => `${lower(st.name)} ${st.starvedShare >= st.blockedShare ? `starved ${pctS(st.starvedShare)}` : `blocked ${pctS(st.blockedShare)}`}`).join(', ')} — absorbed by the buffers.`,
+          `Held up elsewhere without reaching the kiln: ${held.map((st) => `${lower(st.name)} ${(st.starvedShare ?? 0) >= (st.blockedShare ?? 0) ? `starved ${pctS(st.starvedShare)}` : `blocked ${pctS(st.blockedShare)}`}`).join(', ')} — absorbed by the buffers.`,
         );
     }
     push(kilnBuffers());
@@ -284,6 +286,8 @@ export function planData(s: SimState, p: Period, f: FinanceAssumptions) {
     shortfallM2: Math.max(0, L.planGapM2),
     allowance: L.theoreticalM2 > 0 ? L.allowanceM2 / L.theoreticalM2 : null,
     events: productionEvents(s, p),
+    /** Machines per state now and time in state over the period (state timelines). */
+    states: stateDistribution(s, p),
     now: s.minute,
     /** Why the losses are not confirmed ("kiln data stale since 10:30"), or null. */
     lossStale: lossesNotConfirmed(kpis),

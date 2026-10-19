@@ -7,7 +7,7 @@
  * Event lifecycle actions (acknowledge, assign, investigate, note, resolve) and evidence
  * attachments go through this store so every view re-renders from the same record.
  */
-import { useMemo } from 'react';
+import { useRef, useSyncExternalStore } from 'react';
 import { create } from 'zustand';
 import type { EventRules, Evidence, ScenarioActivation } from '../model/types';
 import { DEFAULT_EVENT_RULES } from '../model/plant';
@@ -275,13 +275,49 @@ if (typeof window !== 'undefined') {
   if (import.meta.env.DEV) Object.assign(window, { sim: useSim, simClock });
 }
 
-/** Re-render on every simulated minute and memoise `fn` on it. */
-export function useSimValue<T>(fn: (s: SimState) => T, deps: unknown[] = []): T {
-  const version = useSim((s) => s.version);
-  const sim = useSim((s) => s.sim);
-  // eslint-disable-next-line react-hooks/exhaustive-deps
-  return useMemo(() => fn(sim), [sim, version, ...deps]);
+const isPrimitive = (v: unknown) => v === null || (typeof v !== 'object' && typeof v !== 'function');
+const isPlain = (v: unknown): v is Record<string, unknown> => v !== null && typeof v === 'object' && Object.getPrototypeOf(v) === Object.prototype;
+
+/**
+ * Whether a newly derived value says nothing new: the same primitive, or an array / plain object of the same
+ * primitives. Anything holding an object counts as changed — simulation records are mutated in place, so the same
+ * reference may carry new content.
+ */
+export function samePrimitives(a: unknown, b: unknown): boolean {
+  if (isPrimitive(a) || isPrimitive(b)) return isPrimitive(a) && Object.is(a, b);
+  // The same object again may be a record mutated since: changed.
+  if (a === b) return false;
+
+  if (Array.isArray(a) && Array.isArray(b)) return a.length === b.length && a.every((x, i) => isPrimitive(x) && Object.is(x, b[i]));
+  if (isPlain(a) && isPlain(b)) {
+    const ka = Object.keys(a);
+    if (ka.length !== Object.keys(b).length) return false;
+    return ka.every((k) => Object.prototype.hasOwnProperty.call(b, k) && isPrimitive(a[k]) && Object.is(a[k], b[k]));
+  }
+  return false;
 }
+
+const sameDeps = (a: unknown[], b: unknown[]) => a.length === b.length && a.every((x, i) => Object.is(x, b[i]));
+
+/**
+ * `fn` of the shared simulation, recomputed once per simulated minute (and when `deps` change). The component
+ * re-renders only when the value changes: a value of the same primitives as before (a state word, a count, an
+ * array of ids) keeps its previous identity and skips the render; anything holding objects re-renders every minute.
+ */
+export function useSimValue<T>(fn: (s: SimState) => T, deps: unknown[] = []): T {
+  const cache = useRef<{ sim: SimState; version: number; deps: unknown[]; value: T } | null>(null);
+  const getSnapshot = () => {
+    const { sim, version } = useSim.getState();
+    const c = cache.current;
+    if (c && c.sim === sim && c.version === version && sameDeps(c.deps, deps)) return c.value;
+    const next = fn(sim);
+    const value = c && c.sim === sim && samePrimitives(c.value, next) ? c.value : next;
+    cache.current = { sim, version, deps, value };
+    return value;
+  };
+  return useSyncExternalStore(useSim.subscribe, getSnapshot, getSnapshot);
+}
+
 
 /** Current plant minute (integer). */
 export const useSimMinute = () => useSimValue((s) => s.minute);

@@ -34,13 +34,14 @@ import type {
 export const FACTORY: Factory = {
   id: 'PLANT-01',
   name: 'Ceramic Tile Plant · Reference facility',
-  reference: 'Representative ceramic tile plant; reference context Ghani Ceramics. Not a reproduction of any real site.',
+  reference: 'Representative ceramic tile plant. Not a reproduction of any real site.',
   timezoneLabel: 'Plant time',
 };
 
 export const PRODUCTS: Product[] = [
   { sku: 'FT-6060-BEI-M', name: 'Floor tile 60×60 · Beige matt', format: '60×60 cm', m2PerTile: 0.36 },
-  { sku: 'FT-6060-GRY-P', name: 'Floor tile 60×60 · Grey polished', format: '60×60 cm', m2PerTile: 0.36 },
+  // A glazed stone-look surface: this representative line has no polishing / rectification stage.
+  { sku: 'FT-6060-GRY-R', name: 'Floor tile 60×60 · Grey stone-look', format: '60×60 cm', m2PerTile: 0.36 },
   { sku: 'FT-6060-WOD-S', name: 'Floor tile 60×60 · Wood-look satin', format: '60×60 cm', m2PerTile: 0.36 },
 ];
 /** All products share one format, so tiles ↔ m² is a single factor. */
@@ -67,6 +68,31 @@ export const BUFFERS: BufferDef[] = [
   { id: 'BUF-SORT', name: 'Accumulation buffer', equipmentId: 'I-BUF', capacity: 1500, initialFill: 0.3 },
   { id: 'BUF-PACK', name: 'Carton transfer', equipmentId: null, capacity: 120, initialFill: 0.3 },
 ];
+
+/**
+ * Level signals of the buffers that have no equipment of their own, on the conveyor that holds them (the ids
+ * the signal catalogue documents). Simulated from the buffer content like `<equipmentId>.level`, so the kiln
+ * outfeed (BUF-KOUT, the stage-8 cooling buffer) and the other transfers can be read like any buffer.
+ */
+export const HOSTED_BUFFER_LEVELS: { bufferId: string; equipmentId: string; name: string }[] = [
+  { bufferId: 'BUF-GLZ', equipmentId: 'CV-GLZ', name: 'transfer_buffer_level' },
+  { bufferId: 'BUF-KIN', equipmentId: 'CV-KIN', name: 'infeed_buffer_level' },
+  { bufferId: 'BUF-KOUT', equipmentId: 'CV-SORT', name: 'outfeed_buffer_level' },
+  { bufferId: 'BUF-PACK', equipmentId: 'CV-PAL', name: 'transfer_buffer_level' },
+];
+
+/** Buffer id → its level signal id (`<equipmentId>.level`, or the hosted level signal of a buffer without equipment). */
+export const BUFFER_LEVEL_SIGNAL: Record<string, string> = Object.fromEntries(
+  BUFFERS.flatMap((b) => {
+    const hosted = HOSTED_BUFFER_LEVELS.find((h) => h.bufferId === b.id);
+    const id = b.equipmentId ? `${b.equipmentId}.level` : hosted ? `${hosted.equipmentId}.${hosted.name}` : null;
+    return id ? [[b.id, id]] : [];
+  }),
+);
+
+const BUFFER_BY_LEVEL_SIGNAL = new Map(BUFFERS.filter((b) => BUFFER_LEVEL_SIGNAL[b.id]).map((b) => [BUFFER_LEVEL_SIGNAL[b.id], b]));
+/** Level signal id → the buffer it reads (null for any other signal). */
+export const bufferOfLevelSignal = (signalId: string): BufferDef | null => BUFFER_BY_LEVEL_SIGNAL.get(signalId) ?? null;
 
 export const STAGES: ProcessStage[] = [
   { id: 'PREP', name: 'Body preparation', step: 2, zone: 'C', machines: ['C-BM1', 'C-BM2', 'C-BM3'], inputBuffer: null },
@@ -104,6 +130,8 @@ export const SCENARIO_KIND_LABELS: Record<ScenarioKind, string> = {
   'conveyor-stop': 'Conveyor stoppage',
   'signal-loss': 'Data feed loss (PLC link)',
   'restricted-entry': 'Restricted-zone entry',
+  'process-deviation': 'Process deviation from setpoint',
+  'data-quality': 'Data-quality fault (telemetry)',
 };
 
 export const DOWNTIME_REASONS: DowntimeReason[] = [
@@ -136,6 +164,7 @@ export const DOWNTIME_REASONS: DowntimeReason[] = [
   { code: 'CNV_DRIVE', label: 'Conveyor drive trip', category: 'Electrical & control', planned: false },
   { code: 'CNV_PULLCORD', label: 'Safety pull-cord stop', category: 'Electrical & control', planned: false },
   { code: 'SCN_CNV_STOP', label: 'Simulated conveyor stop (scenario)', category: 'Mechanical', planned: false },
+  { code: 'SCN_NO_FEEDBACK', label: 'Run command without running feedback (scenario)', category: 'Electrical & control', planned: false },
 ];
 export const REASON_BY_CODE = Object.fromEntries(DOWNTIME_REASONS.map((r) => [r.code, r]));
 
@@ -342,6 +371,12 @@ const categoryFor = (id: string, zone: ZoneId): EquipmentCategory => {
   return 'support';
 };
 
+/**
+ * Analog signals of the original signal list. The process ones (kiln, spray dryer, dryer temperatures, powder
+ * moisture, air header pressure, water tank level) have no model behind them and read null ('Not modelled');
+ * the simulated process values are the PROCESS_SIGNALS of src/model/catalog/process.ts (src/sim/process.ts).
+ * Power and gas come from the illustrative energy model.
+ */
 const ANALOG: Record<string, [string, string][]> = {
   'H-KILN': [
     ['temp_firing', '°C'],
@@ -559,6 +594,7 @@ export const EQUIPMENT_OPS: EquipmentOps[] = EQUIPMENT.map((e) => {
     sigs.push(signal(e.id, 'run_state', 'enum', 'state', ['availability', 'downtime']));
     sigs.push(signal(e.id, 'speed', 'm/min', 'analog', []));
     sigs.push(signal(e.id, 'tile_count', 'tiles', 'counter', ['output']));
+    for (const h of HOSTED_BUFFER_LEVELS) if (h.equipmentId === e.id) sigs.push(signal(e.id, h.name, '%', 'analog', ['buffer-level']));
   }
   for (const [name, unit] of ANALOG[e.id] ?? []) sigs.push(signal(e.id, name, unit, 'analog', ['energy']));
   if (CONDITION_MONITORED.includes(e.id)) {

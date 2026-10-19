@@ -250,7 +250,9 @@ describe('line flow', () => {
       const total = f.workingShare + f.downShare + f.starvedShare + f.blockedShare;
       if (total > 0) expect(total).toBeCloseTo(1, 6);
       if (f.input) {
-        expect(f.input.coverMin).toBeCloseTo(f.input.tiles / stageRatePerMin(f.stage), 6);
+        // A level reading is required: without one there is no cover time (never 0 tiles).
+        expect(f.input.tiles).not.toBeNull();
+        expect(f.input.coverMin).toBeCloseTo(f.input.tiles! / stageRatePerMin(f.stage), 6);
         expect(f.input.effect.length).toBeGreaterThan(5);
       }
     }

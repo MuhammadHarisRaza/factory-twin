@@ -15,7 +15,7 @@ export const UNITS_PER_MM = TILE / 600;
 export type Surface = 'beige' | 'grey' | 'wood';
 export const SURFACES: Record<Surface, { base: string; label: string }> = {
   beige: { base: '#d0bf9f', label: 'Beige matt' },
-  grey: { base: '#8c9194', label: 'Grey polished' },
+  grey: { base: '#8c9194', label: 'Grey stone-look' },
   wood: { base: '#a2754d', label: 'Wood-look satin' },
 };
 export const surfaceOf = (sku: string): Surface => (sku.includes('-GRY-') ? 'grey' : sku.includes('-WOD-') ? 'wood' : 'beige');

@@ -18,8 +18,9 @@ import { EmptyState, ProvenanceBadge, Section } from '../../ui/kit/Page';
 import { GAUGE_CLASSES, SIM_MODEL, VISION_CLASSES, impactFigures, inspectionMethod, periodQualityImpact, qualityEventsIn } from './derive';
 import { affectingScenario } from './frames';
 import { periodRecords } from './history';
-import { PRODUCT_BY_SKU, STATION_BY_ID } from './lookup';
+import { PRODUCT_BY_SKU, STATION_BY_ID, rateOf } from './lookup';
 import { ScrapImpact } from './ScrapImpact';
+import { openCompare } from './compareFocus';
 
 type StationRow = { id: string; inspected: number; rejected: number; rate: number | null; samples: boolean };
 type BatchRow = { batch: ProductionBatch; rejectedTiles: number; topDefect: DefectCategory | null; affectedTiles: number };
@@ -50,13 +51,13 @@ export function StationsTab({ periodKey, selectedId, onFilterStation, onFilterBa
       const stations: StationRow[] = INSPECTION_STATIONS.map((st) => {
         if (INLINE(st.id)) {
           const b = q.byStation[st.id];
-          return { id: st.id, inspected: b.inspected, rejected: b.rejected, rate: b.inspected > 0 ? b.rejected / b.inspected : null, samples: false };
+          return { id: st.id, inspected: b.inspected, rejected: b.rejected, rate: rateOf(b.rejected, b.inspected), samples: false };
         }
         // Sample-based station: counts come from its records.
         const own = records.filter((r) => r.stationId === st.id);
         const inspected = own.reduce((a, r) => a + r.tiles, 0);
         const rejected = own.filter((r) => r.result === 'reject').reduce((a, r) => a + r.tiles, 0);
-        return { id: st.id, inspected, rejected, rate: inspected > 0 ? rejected / inspected : null, samples: true };
+        return { id: st.id, inspected, rejected, rate: rateOf(rejected, inspected), samples: true };
       });
       const batches: BatchRow[] = s.batches
         .filter((b) => b.start < p.to && (b.end ?? s.minute) > p.from)
@@ -171,6 +172,23 @@ export function StationsTab({ periodKey, selectedId, onFilterStation, onFilterBa
     { key: 'end', header: 'End', render: (r) => (r.batch.end == null ? <span className="dim">Active</span> : formatDateTime(r.batch.end)), sort: (r) => r.batch.end ?? Infinity },
     { key: 'rej', header: 'Rejected tiles', numeric: true, render: (r) => fmtInt(r.rejectedTiles), sort: (r) => r.rejectedTiles },
     { key: 'top', header: 'Top defect', render: (r) => (r.topDefect ? DEFECTS[r.topDefect].label : <span className="muted">—</span>) },
+    {
+      key: 'compare',
+      header: '',
+      render: (r) => (
+        <button
+          type="button"
+          className="row-link"
+          title="Reject rate and FPY of this batch against the rest (Quality › Compare)"
+          onClick={(e) => {
+            e.stopPropagation();
+            openCompare(r.batch.id);
+          }}
+        >
+          Compare
+        </button>
+      ),
+    },
   ];
 
   return (
@@ -193,7 +211,7 @@ export function StationsTab({ periodKey, selectedId, onFilterStation, onFilterBa
             <EmptyState title="No rejects in this period" />
           )}
         </Section>
-        <Section title="Production batches" subtitle="Batches active in the period · select one to see its inspection records" flush>
+        <Section title="Production batches" subtitle="Batches active in the period · select one to see its inspection records · Compare for its reject rate and FPY" flush>
           <DataTable columns={batchCols} rows={d.batches} rowKey={(r) => r.batch.id} onRowClick={(r) => onFilterBatch(r.batch.id)} maxHeight={330} empty="No batches in this period" />
         </Section>
       </div>

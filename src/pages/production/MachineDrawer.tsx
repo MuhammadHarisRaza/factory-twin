@@ -9,7 +9,7 @@ import { formatDateTime, formatDuration } from '../../sim/time';
 import { EventList } from '../../ui/events/EventList';
 import { ColumnChart, TipRow } from '../../ui/kit/charts';
 import { DataTable, type Column } from '../../ui/kit/DataTable';
-import { fmtInt, fmtPct } from '../../ui/kit/format';
+import { fmt1, fmtInt, fmtPct } from '../../ui/kit/format';
 import { MetricText, OperationalStatus, SourceTag } from '../../ui/kit/Status';
 import { ContextVideo } from '../../video/ContextVideo';
 import { assetName, m2 } from './common';
@@ -17,6 +17,7 @@ import { granularityFor, machineLoss, machineTrend, reasonLabel } from './derive
 import { assetEvents, consequenceEvents } from './equipment';
 import { sinceLabel } from './stage/derive';
 import { contributionParts, equipmentContribution, lossLedger } from './loss';
+import { MASS_DISCLOSURE, isMaterialAsset, tileEqToT } from './units';
 
 type EvRow = { ev: DowntimeEvent };
 
@@ -34,6 +35,9 @@ export function EquipmentDrawer({ id, periodKey, onClose }: { id: string; period
   }, [onClose]);
 
   const conveyor = CONVEYOR_BY_ID[id];
+  // Slip / powder machines: their tile-equivalents in t (dry-body equivalent, disclosed), never m² of tiles.
+  const material = isMaterialAsset(id);
+  const unitOf = (m2v: number) => (material ? (tileEqToT(m2v / M2_PER_TILE) ?? 0) : m2v);
   const d = useSimValue(
     (s) => {
       const p = resolvePeriod(periodKey, s.minute);
@@ -109,8 +113,8 @@ export function EquipmentDrawer({ id, periodKey, onClose }: { id: string; period
                 <FileText size={13} aria-hidden /> Latest event report
               </button>
             )}
-            <button type="button" className="btn sm" onClick={() => openEquipment(id)} title="Select and frame this asset in the 3D Factory Twin">
-              <MapPin size={13} aria-hidden /> View in 3D
+            <button type="button" className="btn sm" onClick={() => openEquipment(id)} title="Open the shared equipment panel (signals, analytics, events) with this asset selected and framed in the 3D Factory Twin">
+              <MapPin size={13} aria-hidden /> Open in Factory Twin
             </button>
           </div>
 
@@ -151,7 +155,19 @@ export function EquipmentDrawer({ id, periodKey, onClose }: { id: string; period
               </dd>
               <dt>Output</dt>
               <dd>
-                {fmtInt(d.mm.totals.count * M2_PER_TILE)} m² <span className="muted">· {fmtInt(d.mm.totals.count)} tiles · ideal {fmtInt(d.mm.idealRatePerHour)} tiles/h</span>
+                {isMaterialAsset(id) ? (
+                  // Slip / powder: tile-equivalents and t/h (a disclosed conversion) — never tiles or m².
+                  <>
+                    {fmtInt(d.mm.totals.count)} tile-eq{' '}
+                    <span className="muted">
+                      · ≈ {fmt1(tileEqToT(d.mm.totals.count))} t · ideal {fmt1(tileEqToT(d.mm.idealRatePerHour))} t/h · {MASS_DISCLOSURE}
+                    </span>
+                  </>
+                ) : (
+                  <>
+                    {fmtInt(d.mm.totals.count * M2_PER_TILE)} m² <span className="muted">· {fmtInt(d.mm.totals.count)} tiles · ideal {fmtInt(d.mm.idealRatePerHour)} tiles/h</span>
+                  </>
+                )}
               </dd>
               <dt>Unplanned down</dt>
               <dd>{formatDuration(d.mm.totals.down)}</dd>
@@ -162,9 +178,10 @@ export function EquipmentDrawer({ id, periodKey, onClose }: { id: string; period
               </dd>
               <dt>Own lost output</dt>
               <dd title="Unplanned downtime and starved / blocked minutes × ideal rate — asset level, not additive to the line loss">
-                {fmtInt(d.loss.totalM2)} m²{' '}
+                {material ? `${fmt1(unitOf(d.loss.totalM2))} t` : `${fmtInt(d.loss.totalM2)} m²`}{' '}
                 <span className="muted">
-                  · down {fmtInt(d.loss.downM2)} · starved {fmtInt(d.loss.starvedM2)} · blocked {fmtInt(d.loss.blockedM2)} m² at ideal rate
+                  · down {material ? fmt1(unitOf(d.loss.downM2)) : fmtInt(d.loss.downM2)} · starved {material ? fmt1(unitOf(d.loss.starvedM2)) : fmtInt(d.loss.starvedM2)} · blocked{' '}
+                  {material ? fmt1(unitOf(d.loss.blockedM2)) : fmtInt(d.loss.blockedM2)} {material ? 't' : 'm²'} at ideal rate
                 </span>
               </dd>
             </dl>
@@ -176,11 +193,22 @@ export function EquipmentDrawer({ id, periodKey, onClose }: { id: string; period
               </dd>
               <dt>Utilisation</dt>
               <dd>
-                {fmtPct(d.cm.utilisation)} <span className="muted">· transported ÷ nominal {fmtInt(conveyor.capacityPerHour)} tiles/h</span>
+                {fmtPct(d.cm.utilisation)}{' '}
+                <span className="muted">
+                  · transported ÷ nominal {isMaterialAsset(id) ? `${fmt1(tileEqToT(conveyor.capacityPerHour))} t/h (${MASS_DISCLOSURE})` : `${fmtInt(conveyor.capacityPerHour)} tiles/h`}
+                </span>
               </dd>
               <dt>Transported</dt>
               <dd>
-                {fmtInt(d.cm.totals.count * M2_PER_TILE)} m² <span className="muted">· {fmtInt(d.cm.totals.count)} tiles</span>
+                {isMaterialAsset(id) ? (
+                  <>
+                    {fmtInt(d.cm.totals.count)} tile-eq <span className="muted">· ≈ {fmt1(tileEqToT(d.cm.totals.count))} t</span>
+                  </>
+                ) : (
+                  <>
+                    {fmtInt(d.cm.totals.count * M2_PER_TILE)} m² <span className="muted">· {fmtInt(d.cm.totals.count)} tiles</span>
+                  </>
+                )}
               </dd>
               <dt>Stops</dt>
               <dd>
@@ -214,20 +242,23 @@ export function EquipmentDrawer({ id, periodKey, onClose }: { id: string; period
           {!conveyor && (
             <section>
               <h3 className="prod-h3">
-                {d.g === 'hour' ? 'Hourly' : 'Per-shift'} output vs ideal <span className="muted">· m², dashed = ideal rate over planned time</span>
+                {d.g === 'hour' ? 'Hourly' : 'Per-shift'} output vs ideal{' '}
+                <span className="muted">· {material ? `t, dry-body equivalent (${MASS_DISCLOSURE})` : 'm²'}, dashed = ideal rate over planned time</span>
               </h3>
               <ColumnChart
-                data={d.trend.map((b) => ({ key: b.key, label: b.label, value: b.outputM2, target: b.idealM2 }))}
+                data={d.trend.map((b) => ({ key: b.key, label: b.label, value: unitOf(b.outputM2), target: unitOf(b.idealM2) }))}
                 height={160}
-                format={fmtInt}
+                format={material ? fmt1 : fmtInt}
                 tickEvery={Math.max(1, Math.ceil(d.trend.length / 6))}
                 tip={(c) => {
                   const b = d.trend.find((x) => x.key === c.key)!;
+                  const u = material ? 't' : 'm²';
+                  const f = material ? fmt1 : fmtInt;
                   return (
                     <>
                       <b>{b.tip}</b>
-                      <TipRow k="Output" v={`${fmtInt(b.outputM2)} m²`} />
-                      <TipRow k="Ideal" v={`${fmtInt(b.idealM2)} m²`} />
+                      <TipRow k="Output" v={`${f(unitOf(b.outputM2))} ${u}`} />
+                      <TipRow k="Ideal" v={`${f(unitOf(b.idealM2))} ${u}`} />
                       <TipRow k="Planned time" v={formatDuration(b.plannedMin)} />
                     </>
                   );

@@ -67,7 +67,8 @@ export function constraintRole(s: SimState, prof: AssetProfile, marker: Constrai
   if (marker.processStage === stage) return { kind: 'constraint', stage, marker };
   const bn = bottleneck(s);
   const row = bn.stages.find((r) => r.stage === stage);
-  if (row && (row.starvedShare > HELD_UP_SHARE || row.blockedShare > HELD_UP_SHARE))
+  // Shares are null only without planned time in the window (then the stage is not held up).
+  if (row && row.starvedShare != null && row.blockedShare != null && (row.starvedShare > HELD_UP_SHARE || row.blockedShare > HELD_UP_SHARE))
     return { kind: 'held-up', stage, name: row.name, starvedShare: row.starvedShare, blockedShare: row.blockedShare, window: bn.period.label.toLowerCase(), marker };
   return null;
 }

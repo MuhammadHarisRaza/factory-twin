@@ -81,8 +81,9 @@ export function OutputTrend({ periodKey }: { periodKey: PeriodKey }) {
     [periodKey],
   );
   const per = d.g === 'hour' ? 'hour' : 'shift';
-  const behind = d.data.filter((b) => !b.partial && b.targetM2 > 0 && b.outputM2 < b.targetM2 * 0.97).length;
-  const complete = d.data.filter((b) => !b.partial && b.targetM2 > 0).length;
+  const behind = d.data.filter((b) => !b.partial && b.targetM2 > 0 && b.outputM2 != null && b.outputM2 < b.targetM2 * 0.97).length;
+  const complete = d.data.filter((b) => !b.partial && b.targetM2 > 0 && b.outputM2 != null).length;
+  const gaps = d.data.filter((b) => b.outputM2 == null).length;
   return (
     <Block
       title="Output trend"
@@ -95,11 +96,17 @@ export function OutputTrend({ periodKey }: { periodKey: PeriodKey }) {
           </>
         ) : undefined
       }
-      note={<span>Faded bars are partial {per}s (still running or cut by the period). The plan per {per} excludes planned kiln stops.</span>}
+      note={
+        <span>
+          Faded bars are partial {per}s (still running or cut by the period). The plan per {per} excludes planned kiln stops.
+          {gaps > 0 ? ` ${gaps} ${per}${gaps === 1 ? '' : 's'} without data are left empty (no data — not a zero).` : ''}
+        </span>
+      }
     >
       <ColumnChart
         height={250}
-        data={d.data.map((b) => ({ key: b.key, label: b.label, value: b.outputM2, target: b.targetM2, muted: b.partial }))}
+        // A bucket without data has no bar (value 0, muted) and its tip says "No data" — never a 0 m² figure.
+        data={d.data.map((b) => ({ key: b.key, label: b.label, value: b.outputM2 ?? 0, target: b.targetM2, muted: b.partial || b.outputM2 == null }))}
         format={fmtInt}
         tickEvery={Math.max(1, Math.ceil(d.data.length / 8))}
         tip={(col) => {
@@ -110,9 +117,9 @@ export function OutputTrend({ periodKey }: { periodKey: PeriodKey }) {
                 {b.tip}
                 {b.partial ? ' (partial)' : ''}
               </b>
-              <TipRow k="Good output" v={`${fmtInt(b.outputM2)} m²`} swatch="var(--series-1)" />
+              <TipRow k="Good output" v={b.outputM2 != null ? `${fmtInt(b.outputM2)} m²` : 'No data'} swatch="var(--series-1)" />
               <TipRow k="Plan" v={`${fmtInt(b.targetM2)} m²`} />
-              <TipRow k="Attainment" v={b.targetM2 > 0 ? pct(b.outputM2 / b.targetM2) : '—'} />
+              <TipRow k="Attainment" v={b.targetM2 > 0 && b.outputM2 != null ? pct(b.outputM2 / b.targetM2) : '—'} />
             </>
           );
         }}

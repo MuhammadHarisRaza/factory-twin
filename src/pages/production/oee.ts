@@ -8,8 +8,12 @@ import { constraintFeedStale, sortingFeedStale } from '../../intel/kpis';
 import { M2_PER_TILE, TARGET } from '../../model/plant';
 import { formatClock, formatDateTime } from '../../sim/time';
 import type { SimState } from '../../sim/engine';
-import { clippedDuration, downtimeIn, lineLossTree, lineMetrics, type Period } from '../../sim/metrics';
-import type { Metric } from '../../sim/oee';
+import { MONITORED_STAGES, OPS_BY_ID } from '../../model/plant';
+import type { MonitoredStageId } from '../../model/types';
+import { clippedDuration, downtimeIn, lineLossTree, lineMetrics, machineMetrics, type Period } from '../../sim/metrics';
+import { computeTeep, type Metric } from '../../sim/oee';
+import { granularityFor, lineTrend, type Granularity } from './derive';
+import { MATERIAL_MONITORED_STAGES } from './units';
 import { fmtMetric } from '../../ui/kit/format';
 import { oeeExplain, type OeeExplain } from './derive';
 import type { FinanceAssumptions } from '../../sim/finance';
@@ -205,6 +209,119 @@ export function oeeView(s: SimState, p: Period): OeeView {
   };
 }
 
+// ── Partial OEE (a component missing) ────────────────────────────────────────
+
+export type PartialOee = { value: number; label: string; formula: string; missing: 'quality' | 'performance' };
+
+/**
+ * When OEE cannot be computed because quality (or performance) is unavailable while the other two components are
+ * valid, the honest partial figure: A × P (computeTeep) labelled "Partial — quality input missing" (or A × Q,
+ * "Partial — performance input missing"). Never presented as OEE; null when OEE itself is available or nothing fits.
+ */
+export function partialOee(a: Metric, p: Metric, q: Metric, oee?: Metric): PartialOee | null {
+  if (oee?.status === 'ok') return null;
+  if (q.status === 'unavailable') {
+    const ap = computeTeep(a, p);
+    return ap.status === 'ok' ? { value: ap.value!, label: 'Partial — quality input missing', formula: 'Availability × Performance', missing: 'quality' } : null;
+  }
+  if (p.status === 'unavailable') {
+    const aq = computeTeep(a, q);
+    return aq.status === 'ok' ? { value: aq.value!, label: 'Partial — performance input missing', formula: 'Availability × Quality', missing: 'performance' } : null;
+  }
+  return null;
+}
+
+const metricOf = (v: number | null): Metric => (v == null ? { value: null, status: 'unavailable' } : { value: v, status: 'ok' });
+
+// ── OEE trend ────────────────────────────────────────────────────────────────
+
+export type OeeTrendPoint = {
+  key: string;
+  /** Bucket start (plant minute) — the time axis. */
+  t: number;
+  label: string;
+  tip: string;
+  partial: boolean;
+  oee: number | null;
+  availability: number | null;
+  performance: number | null;
+  quality: number | null;
+  /** A × P (or A × Q) where OEE is unavailable but two components are valid; null otherwise. */
+  partialOee: number | null;
+};
+
+export type OeeTrend = { granularity: Granularity; stepMin: number; from: number; to: number; points: OeeTrendPoint[]; gaps: number; partials: number };
+
+/** Line OEE and its components per hour (per shift beyond ~a day) from lineTrend; a bucket without a value is a gap. */
+export function oeeTrend(s: SimState, p: Period): OeeTrend {
+  const g = granularityFor(p);
+  const points = lineTrend(s, p, g).map((b) => {
+    const part = b.oee == null ? partialOee(metricOf(b.availability), metricOf(b.performance), metricOf(b.quality)) : null;
+    return {
+      key: b.key,
+      t: Number(b.key),
+      label: b.label,
+      tip: b.tip,
+      partial: b.partial,
+      oee: b.oee,
+      availability: b.availability,
+      performance: b.performance,
+      quality: b.quality,
+      partialOee: part ? part.value : null,
+    };
+  });
+  return {
+    granularity: g,
+    stepMin: g === 'hour' ? 60 : 480,
+    from: points[0]?.t ?? p.from,
+    to: Math.min(p.to, s.minute),
+    points,
+    gaps: points.filter((x) => x.oee == null && x.partialOee == null).length,
+    partials: points.filter((x) => x.partialOee != null).length,
+  };
+}
+
+// ── Stage comparison ─────────────────────────────────────────────────────────
+
+export type StageOeeRow = {
+  stage: MonitoredStageId;
+  stageName: string;
+  /** Standalone OEE is meaningful for this stage (MonitoredStage.oeeMeaningful). */
+  meaningful: boolean;
+  /** Basis note (tile-equivalent ideal rates for slip / powder machines; transfer stages). */
+  note: string | null;
+  machines: { id: string; name: string; oee: Metric; availability: Metric; performance: Metric; quality: Metric; partial: PartialOee | null }[];
+};
+
+/**
+ * Each monitored stage's machines with their own OEE (machineMetrics) — asset-level figures, not additive:
+ * downtime is not summed across stages (the line loss is counted once, at the kiln). Transfer stages whose
+ * standalone OEE is not meaningful (MonitoredStage.oeeMeaningful) get a row saying so, with no figure.
+ */
+export function stageOee(s: SimState, p: Period): StageOeeRow[] {
+  return MONITORED_STAGES.map((ms) => {
+    const ids = ms.equipment.filter((id) => OPS_BY_ID[id]?.idealRatePerHour != null);
+    const meaningful = ms.oeeMeaningful && ids.length > 0;
+    return {
+      stage: ms.id,
+      stageName: ms.name,
+      meaningful,
+      note: !meaningful
+        ? 'Not meaningful — a transfer / storage stage without an ideal rate'
+        : MATERIAL_MONITORED_STAGES.has(ms.id)
+          ? 'Performance against tile-equivalent ideal rates (slip / powder)'
+          : null,
+      machines: meaningful
+        ? ids.map((id) => {
+            const mm = machineMetrics(s, id, p);
+            const r = mm.oee;
+            return { id, name: mm.name, oee: r.oee, availability: r.availability, performance: r.performance, quality: r.quality, partial: partialOee(r.availability, r.performance, r.quality, r.oee) };
+          })
+        : [],
+    };
+  });
+}
+
 // ── Everything OEE & losses shows ────────────────────────────────────────────
 
 export type OeeData = ReturnType<typeof oeeData>;
@@ -216,6 +333,10 @@ export function oeeData(s: SimState, p: Period, f: FinanceAssumptions) {
   return {
     p,
     v,
+    /** A × P (or A × Q) when line OEE is unavailable for a missing component — labelled partial, never OEE. */
+    partial: partialOee(v.x.oee.availability, v.x.oee.performance, v.x.oee.quality, v.oee),
+    trend: oeeTrend(s, p),
+    stages: stageOee(s, p),
     checks: evaluateIntegrity(inputs),
     chain: reconciliationView(inputs.chain),
     losses: oeeLosses(s, p, f, lossLedger(s, p, f)),

@@ -14,7 +14,7 @@ import { OPS_BY_ID, REASON_BY_CODE } from '../model/plant';
 import type { AlertSeverity, RecordSource } from '../model/types';
 import type { SimState } from './engine';
 import { minuteAt, nextId, openDowntime, raiseAlert } from './engine';
-import { lerpRange, noise01, streamFor } from './rng';
+import { lerpRange, noiseAt, noiseKey, streamFor } from './rng';
 import { MIN_PER_DAY } from './time';
 
 export type HealthAsset = {
@@ -193,12 +193,16 @@ export function severityAt(s: SimState, id: string, t: number) {
   return Math.min(1.05, Math.max(0, sev));
 }
 
-/** Load 0–1 (output relative to ideal rate) of a machine at minute t. */
-export function loadAt(s: SimState, id: string, t: number) {
+/**
+ * Load 0–1 (output relative to ideal rate) of a machine at minute t; null when nothing is known about
+ * the minute (no ideal rate, before the simulation start, no record of the hour), never a fabricated 0.
+ */
+export function loadAt(s: SimState, id: string, t: number): number | null {
   const ideal = OPS_BY_ID[id]?.idealRatePerHour;
-  if (!ideal) return 0;
+  if (!ideal || t < 0) return null;
   if (t >= s.minute - 1) {
     const m = s.machines[id];
+    if (!m) return null;
     return m.state === 'down' || m.state === 'planned' ? 0 : Math.min(1, m.ratePerHour / ideal);
   }
   // Minute-accurate while the minute log still holds t: a stopped minute is a stopped minute.
@@ -212,7 +216,7 @@ export function loadAt(s: SimState, id: string, t: number) {
   }
   const h = Math.floor(t / 60);
   const b = s.hours[id]?.get(h);
-  if (!b) return 0;
+  if (!b) return null;
   const minutes = h === Math.floor((s.minute - 1) / 60) ? ((s.minute - 1) % 60) + 1 : 60;
   return Math.min(1, b.count / ((ideal / 60) * minutes));
 }
@@ -225,13 +229,24 @@ export const expectedTemp = (a: HealthAsset, load: number) => ambient + (a.temp.
 /** Healthy-baseline vibration (mm/s RMS) for the current load. */
 export const expectedVib = (a: HealthAsset, load: number, running: boolean) => (running ? a.vib.full * (0.8 + 0.25 * load) : 0.25);
 
-export function sensorsAt(s: SimState, id: string, t: number): SensorReading {
+/** The noise streams `sens:<id>:t|v|c` of an asset, keyed once per seed (every condition sample of charts and rules). */
+const SENSOR_KEYS = new Map<string, { seed: number; t: number; v: number; c: number }>();
+function sensorKeys(seed: number, id: string) {
+  let k = SENSOR_KEYS.get(id);
+  if (!k || k.seed !== seed) SENSOR_KEYS.set(id, (k = { seed, t: noiseKey(seed, `sens:${id}:t`), v: noiseKey(seed, `sens:${id}:v`), c: noiseKey(seed, `sens:${id}:c`) }));
+  return k;
+}
+
+/** Condition signals of a monitored asset at minute t; null when the minute has no load record (nothing to base a reading on). */
+export function sensorsAt(s: SimState, id: string, t: number): SensorReading | null {
   const a = HEALTH_BY_ID[id];
-  const load = loadAt(s, id, t);
+  const load = a ? loadAt(s, id, t) : null;
+  if (load == null) return null;
   const running = load > 0.05;
   const sev = severityAt(s, id, t);
   const k = Math.floor(t / 5);
-  const n = (key: string) => noise01(s.seed, `sens:${id}:${key}`, k) - 0.5;
+  const keys = sensorKeys(s.seed, id);
+  const n = (key: 't' | 'v' | 'c') => noiseAt(keys[key], k) - 0.5;
   const kv = a.vib.trip / a.vib.full - 1;
   const temperature = expectedTemp(a, load) + (a.temp.trip - 2 - a.temp.full) * sev ** 1.6 + n('t') * 1.6;
   const vibration = running ? expectedVib(a, load, true) * (1 + kv * sev ** 1.4) + n('v') * 0.12 * a.vib.full : 0.25 + n('v') * 0.05;
@@ -239,11 +254,14 @@ export function sensorsAt(s: SimState, id: string, t: number): SensorReading {
   return { t, temperature, vibration: Math.max(0, vibration), current: Math.max(0, current), running, load };
 }
 
-/** Sampled history for charts (every `step` minutes, oldest first). */
+/** Sampled history for charts (every `step` minutes, oldest first; minutes without a record are left out). */
 export function sensorHistory(s: SimState, id: string, minutes: number, step = 10) {
   const out: SensorReading[] = [];
   const end = s.minute - 1;
-  for (let t = Math.max(0, end - minutes); t <= end; t += step) out.push(sensorsAt(s, id, t));
+  for (let t = Math.max(0, end - minutes); t <= end; t += step) {
+    const r = sensorsAt(s, id, t);
+    if (r) out.push(r);
+  }
   return out;
 }
 
@@ -273,8 +291,12 @@ export function assess(s: SimState, id: string): HealthAssessment {
   const a = HEALTH_BY_ID[id];
   const now = Math.max(0, s.minute - 1);
   const samples: SensorReading[] = [];
-  for (let t = Math.max(0, now - 180); t <= now; t += 5) samples.push(sensorsAt(s, id, t));
-  const reading = samples[samples.length - 1];
+  for (let t = Math.max(0, now - 180); t <= now; t += 5) {
+    const r = sensorsAt(s, id, t);
+    if (r) samples.push(r);
+  }
+  // No record at all (before the first simulated minute): an offline reading at rest, assessed as 'offline'.
+  const reading = samples[samples.length - 1] ?? { t: now, temperature: ambient, vibration: 0, current: 0, running: false, load: 0 };
   const recent = samples.filter((x) => x.running && x.t > now - 60);
   const ratios = recent.map((x) => x.vibration / expectedVib(a, x.load, true));
   const ratio = mean(ratios);

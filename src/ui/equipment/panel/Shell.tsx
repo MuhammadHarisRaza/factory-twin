@@ -4,10 +4,13 @@
  * persistent action bar. The header carries the one status line: state pill, since, source pill.
  * Wide (src/ui/twin/panelWidth.ts) the header is one line and the width button sits by the close button.
  */
-import type { ReactNode, Ref } from 'react';
-import { CircleDashed, CircleHelp, Maximize2, Minimize2, Radio, X, type LucideIcon } from 'lucide-react';
+import type { CSSProperties, ReactNode, Ref } from 'react';
+import { pureIcon } from '../../kit/icon';
+import { Box, CircleDashed, CircleHelp, Maximize2, Minimize2, Radio, X, type LucideIcon } from 'lucide-react';
 import { useWidePanel, useWidePanelFits } from '../../twin/panelWidth';
 import { useTwinUi } from '../../twin/uiStore';
+import { PROVENANCE } from '../../kit/Page';
+import type { IntelSourceKind } from '../intel/types';
 import type { FlowLink } from './links';
 
 export function PanelShell({
@@ -28,7 +31,9 @@ export function PanelShell({
   return (
     <aside className={`inspector overlay-panel tw-insp eqp ${className}`} aria-label={label}>
       {header}
-      <div className="tw-insp-b eqp-b" ref={bodyRef}>
+      {/* tabIndex -1: the overlays move focus here when the list a keyboard user opened the panel from folds
+          away, and a click in the body focuses the scroller itself, so the keys scroll it. */}
+      <div className="tw-insp-b eqp-b" ref={bodyRef} tabIndex={-1}>
         {children}
       </div>
       {actions && (
@@ -44,6 +49,7 @@ export function PanelShell({
 export function PanelHeader({
   zone,
   title,
+  tag,
   subtitle,
   status,
   onClose,
@@ -52,6 +58,8 @@ export function PanelHeader({
 }: {
   zone: { id: string; color: string } | null;
   title: string;
+  /** The subject's id, beside the title (mono). */
+  tag?: ReactNode;
   subtitle: ReactNode;
   status: ReactNode;
   onClose: () => void;
@@ -64,11 +72,12 @@ export function PanelHeader({
       <div className="eqp-h-main">
         <div className="eqp-h-title">
           {zone && (
-            <span className="chip" style={{ background: zone.color }} title={`Zone ${zone.id}`} aria-label={`Zone ${zone.id}`}>
+            <span className="chip eqp-zone" style={{ background: zone.color, '--zone': zone.color } as CSSProperties} title={`Zone ${zone.id}`} aria-label={`Zone ${zone.id}`}>
               {zone.id}
             </span>
           )}
           <h2>{title}</h2>
+          {tag != null && <span className="eqp-h-id mono">{tag}</span>}
         </div>
         <div className="eqp-h-sub">{subtitle}</div>
         <div className="eqp-h-status">{status}</div>
@@ -98,12 +107,21 @@ function WidthToggle() {
   );
 }
 
-/** The kit's source icons: Simulated (CircleDashed), a stale feed (CircleHelp — its stale / unknown icon), Connected (Radio). */
-const SOURCE_ICON: Record<'simulated' | 'stale' | 'connected', LucideIcon> = { simulated: CircleDashed, stale: CircleHelp, connected: Radio };
+/**
+ * The kit's source icons: Simulated (CircleDashed), a stale feed (CircleHelp — its stale / unknown icon), Connected
+ * (Radio), no operating data (the kit's unavailable icon), a 3D-layout reference without data (Box).
+ */
+const SOURCE_ICON: Record<IntelSourceKind, LucideIcon> = {
+  simulated: CircleDashed,
+  stale: CircleHelp,
+  connected: Radio,
+  unavailable: PROVENANCE.unavailable.icon,
+  reference: Box,
+};
 
-/** The one source pill of a panel (Simulated · Stale since hh:mm · Connected). */
-export function SourcePill({ kind, label, title }: { kind: 'simulated' | 'stale' | 'connected'; label: string; title: string }) {
-  const Icon = SOURCE_ICON[kind];
+/** The one source pill of a panel (Simulated · Stale since hh:mm · Connected · Unavailable · Reference). */
+export function SourcePill({ kind, label, title }: { kind: IntelSourceKind; label: string; title: string }) {
+  const Icon = pureIcon(SOURCE_ICON[kind]);
   return (
     <span className={`prov prov-${kind} eqp-src`} title={title}>
       <Icon size={11} strokeWidth={2.2} aria-hidden />
@@ -120,6 +138,7 @@ export function BarButton({
   onClick,
   pressed,
   disabled,
+  accent,
 }: {
   icon: LucideIcon;
   label: string;
@@ -127,11 +146,13 @@ export function BarButton({
   onClick: () => void;
   pressed?: boolean;
   disabled?: boolean;
+  /** The bar's primary action (Ask Copilot): accented. */
+  accent?: boolean;
 }) {
   return (
     <button
       type="button"
-      className={`btn sm eqp-act ${pressed ? 'on' : ''}`}
+      className={`btn sm eqp-act ${pressed ? 'on' : ''} ${accent ? 'accent' : ''}`}
       aria-pressed={pressed}
       aria-disabled={disabled || undefined}
       onClick={disabled ? undefined : onClick}

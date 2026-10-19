@@ -8,7 +8,7 @@
  * the root event instead of adding it again.
  */
 import { EQUIPMENT_BY_ID } from '../data/equipment';
-import { CAMERA_BY_ID, CONVEYOR_BY_ID, DEFECTS, GEOFENCES, INSPECTION_STATIONS, M2_PER_TILE, MONITORED_STAGE_BY_ID, STAGE_BY_ID, cameraFor } from '../model/plant';
+import { BASE_REJECT_RATE, CAMERA_BY_ID, CONVEYOR_BY_ID, DEFECTS, GEOFENCES, INSPECTION_STATIONS, M2_PER_TILE, MONITORED_STAGE_BY_ID, STAGE_BY_ID, cameraFor } from '../model/plant';
 import type { EventValue, Evidence, OpEvent } from '../model/types';
 import type { SimState } from '../sim/engine';
 import { CONSUMER_BY_ID, DEFAULT_TARIFFS, type Tariffs } from '../sim/energy';
@@ -25,12 +25,13 @@ import { HEALTH_BY_ID, assess } from '../sim/health';
 import { lineMetrics, qualityIn, resolvePeriod } from '../sim/metrics';
 import { factoryOeeKpi, goodOutputKpi, type KpiModel } from './kpis';
 import { formatClock, formatDateTime, formatDuration, shiftAt, toIso } from '../sim/time';
+import { localeNumber } from '../sim/numberFormat';
 
 export type ImpactRow = { label: string; value: string; basis: string };
 
 export type EventImpact = { rows: ImpactRow[]; estimate: Estimate | null; notes: string[] };
 
-const fmtN = (v: number, d = 0) => v.toLocaleString('en-GB', { maximumFractionDigits: d, minimumFractionDigits: d });
+const fmtN = (v: number, d = 0) => localeNumber(v, d, d);
 /**
  * A KPI's figure as its card shows it, with the card's stale mark when the feed it rests on stopped updating:
  * "91.7 % — not confirmed · kiln data stale since 10:30" (the same figure and mark as the app, never a plain value).
@@ -38,10 +39,14 @@ const fmtN = (v: number, d = 0) => v.toLocaleString('en-GB', { maximumFractionDi
 const withStale = (k: KpiModel, value: string) => (k.provenance === 'stale' && k.status ? `${value} — ${k.status.label.charAt(0).toLowerCase()}${k.status.label.slice(1)}` : value);
 const m2 = (tiles: number) => tiles * M2_PER_TILE;
 
-/** First-pass yield over the 24 h before a minute (to convert kiln tiles into good tiles). */
+/**
+ * First-pass yield over the 24 h before a minute (to convert kiln tiles into good tiles). With no
+ * inspection in that window (only right at the simulation start) it falls back to the simulation's
+ * design yield (1 − BASE_REJECT_RATE), a stated model assumption, not a measured figure.
+ */
 export function fpyBefore(s: SimState, t: number) {
   const q = qualityIn(s, { from: Math.max(0, t - 1440), to: Math.max(1, t), label: '' });
-  return q.inspected > 0 ? 1 - q.rejected / q.inspected : 0.976;
+  return q.inspected > 0 ? 1 - q.rejected / q.inspected : 1 - BASE_REJECT_RATE;
 }
 
 /**

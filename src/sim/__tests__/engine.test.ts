@@ -83,6 +83,21 @@ describe('scenarios', () => {
     expect(bottleneck(s, 60).current.stage).toBe('DRY');
   });
 
+  it('a sorting slowdown that throttles the kiln is traced downstream as blocking (partial blockage counted)', () => {
+    // Stage 8 → 10 of the brief: sorting slowed → the kiln outfeed (cooling / roller storage) fills → the kiln
+    // runs held to ~55 % with its state still 'running' (limited by its output in the minute log).
+    const s = createSim(9, START);
+    activateScenario(s, { kind: 'bottleneck', stage: 'SORT', factor: 0.55, end: null, label: 'Sorting slowdown' });
+    advance(s, START + 120);
+    expect(s.machines['H-KILN'].state).toBe('running');
+    const bn = bottleneck(s, 60);
+    expect(bn.cause).toBe('blocking');
+    expect(bn.current.stage).toBe('SORT');
+    expect(bn.constraint.blockedShare!).toBeGreaterThan(0.3);
+    // Without a scenario the kiln remains the constraint as designed.
+    expect(bottleneck(createSim(9, START + 120), 60).cause).toBe('constraint');
+  });
+
   it('quality deterioration raises rejects and lowers the quality rate', () => {
     const base = createSim(6, START + 120);
     const s = createSim(6, START);

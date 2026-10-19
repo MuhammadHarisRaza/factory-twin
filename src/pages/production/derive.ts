@@ -60,15 +60,28 @@ export type TrendBucket = {
   label: string;
   tip: string;
   partial: boolean;
-  outputM2: number;
+  /** Good output, m²; null when the bucket has no simulated data (a gap — never a 0 m² bar). */
+  outputM2: number | null;
   targetM2: number;
+  /** Line OEE of the bucket; null when it cannot be computed (unavailable / invalid). */
   oee: number | null;
+  /** OEE components of the bucket (null = unavailable); A × P is the partial figure when Q is missing. */
+  availability: number | null;
+  performance: number | null;
+  quality: number | null;
   /** Tiles sorted / rejected at inspection in the bucket. */
   inspected: number;
   rejected: number;
   /** rejected ÷ inspected; null when nothing was sorted. */
   defectRate: number | null;
 };
+
+const okValue = (m: Metric) => (m.status === 'ok' ? m.value : null);
+const components = (r: OeeResult | null) => ({
+  availability: r ? okValue(r.availability) : null,
+  performance: r ? okValue(r.performance) : null,
+  quality: r ? okValue(r.quality) : null,
+});
 
 /** Line output vs target, OEE and defect rate per bucket (hourlyTrend for hours, lineMetrics per shift otherwise). */
 export function lineTrend(s: SimState, p: Period, g: Granularity): TrendBucket[] {
@@ -81,28 +94,33 @@ export function lineTrend(s: SimState, p: Period, g: Granularity): TrendBucket[]
     const pts = new Map(hourlyTrend(s, p).map((h) => [h.start, h]));
     return sl.map((x) => {
       const h = pts.get(Number(x.key));
+      // Hour components come from the same per-hour lineMetrics as hourlyTrend (only for hours with a point).
+      const lm = h && x.from >= 0 && x.from < s.minute ? lineMetrics(s, { from: x.from, to: Math.min(x.to, s.minute), label: '' }) : null;
       return {
         key: x.key,
         label: x.label,
         tip: x.tip,
         partial: x.partial,
-        outputM2: (h?.output ?? 0) * M2_PER_TILE,
+        outputM2: h && lm ? h.output * M2_PER_TILE : null,
         targetM2: (h?.target ?? 0) * M2_PER_TILE,
-        oee: h?.oee ?? null,
+        oee: lm ? (h?.oee ?? null) : null,
+        ...components(lm?.oee ?? null),
         ...quality(x),
       };
     });
   }
   return sl.map((x) => {
-    const lm = lineMetrics(s, { from: x.from, to: x.to, label: x.tip });
+    const simulated = x.from >= 0 && x.from < s.minute;
+    const lm = simulated ? lineMetrics(s, { from: x.from, to: Math.min(x.to, s.minute), label: x.tip }) : null;
     return {
       key: x.key,
       label: x.label,
       tip: x.tip,
       partial: x.partial,
-      outputM2: lm.outputM2,
-      targetM2: lm.targetM2,
-      oee: lm.oee.oee.status === 'ok' ? lm.oee.oee.value : null,
+      outputM2: lm ? lm.outputM2 : null,
+      targetM2: lm ? lm.targetM2 : 0,
+      oee: lm && lm.oee.oee.status === 'ok' ? lm.oee.oee.value : null,
+      ...components(lm?.oee ?? null),
       ...quality(x),
     };
   });
@@ -205,7 +223,8 @@ export function cumulativeVsPlan(s: SimState, key: PeriodKey, p: Period): Cumula
     labels: times.map((t) => (step === 60 ? `${weekday(t)} ${formatClock(t)}` : formatClock(t))),
     tickEvery,
     step,
-    actual: times.map((t) => (t <= actualTo ? cumTiles(t) * M2_PER_TILE : null)),
+    // Before the simulated history (minute < 0) there is no output record: a gap, not a zero.
+    actual: times.map((t) => (t <= actualTo && t >= 0 ? cumTiles(t) * M2_PER_TILE : null)),
     plan: times.map((t) => planAt(t)),
     projection: times.map((t) => (rateM2PerMin == null || t < now ? null : actualNowM2 + rateM2PerMin * (t - now))),
     end,

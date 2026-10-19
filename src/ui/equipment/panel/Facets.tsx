@@ -3,10 +3,13 @@
  * line role (vehicles: location, movement, trip, dwell) — as one compact row of chips "Label · value"
  * with a tone icon. How each is determined is in its tooltip. A facet without a value is not shown.
  */
+import { memo } from 'react';
+import { sameProps } from '../../kit/equal';
 import type { Facet } from '../intel/types';
+
 import { STALE_ICON, TONE_ICON, isStaleWording } from './tone';
 
-export function Facets({ facets }: { facets: Facet[] }) {
+export const Facets = memo(function Facets({ facets }: { facets: Facet[] }) {
   const shown = facets.filter((f) => f.value.trim() && f.value.trim() !== '—');
   if (!shown.length) return null;
   return (
@@ -25,4 +28,4 @@ export function Facets({ facets }: { facets: Facet[] }) {
       })}
     </ul>
   );
-}
+}, sameProps);

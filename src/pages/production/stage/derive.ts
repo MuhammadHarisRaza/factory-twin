@@ -43,6 +43,20 @@ import { constraintClaim, constraintPhrase, type ConstraintClaim } from '../../.
 import { outputStale, type FlowStale } from '../../../ui/flow/derive';
 import { signalValue } from '../../../sim/signals';
 import { BASIS_LABEL, basisOf, type SignalBasis } from '../../../ui/equipment/signals';
+import {
+  AVAILABILITY_CLASS_LABEL,
+  AVAILABILITY_STATUS_LABEL,
+  CATEGORY_ORDER,
+  PROCESS_SIGNAL_BY_ID,
+  SIGNAL_CATEGORY_LABEL,
+  catalogFor,
+  definitionOf,
+  type AvailabilityStatus,
+  type SignalCategory,
+} from '../../../model/catalog';
+import type { Quality } from '../../../calc';
+import { readSignal } from '../../../sim/telemetry';
+import { MASS_DISCLOSURE, MATERIAL_MONITORED_STAGES, catalogUnit, isMaterialAsset, massFlowSignalOf, tileEqToT } from '../units';
 import { formatClock, formatDateTime, formatDay, formatDuration, shiftAt } from '../../../sim/time';
 
 /** "since 09:12" for a time today, "since Sun 11 Oct 11:37" for an older one (a bare clock time would read as today). */
@@ -89,6 +103,7 @@ export const STATE_RANK: Record<OperationalState, number> = {
   blocked: 5,
   reduced: 6,
   idle: 7,
+  changeover: 7.5,
   planned: 8,
   running: 9,
 };
@@ -296,8 +311,20 @@ export type CountCell = { measured: boolean; value: number | null; unit: string;
 export function countCell(ms: MonitoredStage, which: 'input' | 'output' | 'good' | 'rejected', io: StageIO): CountCell | null {
   const cp = ms[which];
   if (!cp) return null;
-  return { measured: cp.measured, value: cp.measured ? io[which] : null, unit: cp.unit, label: cp.label, note: cp.note ?? null, signalId: cp.signalId };
+  return { measured: cp.measured, value: cp.measured ? io[which] : null, unit: countUnit(ms, cp.unit, cp.signalId), label: cp.label, note: cp.note ?? null, signalId: cp.signalId };
 }
+
+/**
+ * The unit a count is shown in: slip and powder are counted in tile-equivalents (the catalogue's 'tile-eq'), never
+ * 'tiles' — at the slip / powder stages and wherever the counting signal's catalogue unit says so (the press powder feed).
+ */
+export function countUnit(ms: MonitoredStage, unit: string, signalId: string | null): string {
+  if (unit !== 'tiles') return unit;
+  return MATERIAL_MONITORED_STAGES.has(ms.id) || catalogUnit(signalId) === 'tile-eq' ? 'tile-eq' : unit;
+}
+
+/** Whether the stage's own rate / buffer are slip or powder (rates in t/h, buffer as level % only). */
+export const isMaterialStage = (ms: MonitoredStage) => MATERIAL_MONITORED_STAGES.has(ms.id);
 
 /** Actual rate as a share of the expected rate (ideal × planned running time); null when there is no expectation. */
 export const rateShare = (io: StageIO) => (io.expectedPerHour != null && io.expectedPerHour > 0 && io.ratePerHour != null ? io.ratePerHour / io.expectedPerHour : null);
@@ -326,6 +353,7 @@ const STATE_WORD: Record<OperationalState, string> = {
   starved: 'starved',
   blocked: 'blocked',
   planned: 'in a planned stop',
+  changeover: 'in a product changeover',
   disconnected: 'disconnected',
   unknown: 'of unknown state (data stale)',
 };
@@ -342,15 +370,29 @@ export function stageSentence(r: StageRow, periodKey: PeriodKey): string {
   const { ms, io } = r;
   const when = PERIOD_PHRASE[periodKey];
   const parts: string[] = [];
+  // Missing is never zero: an unmeasured quantity is said to be not measured.
+  const qty = (v: number | null | undefined, unit: string) => {
+    if (v == null || !Number.isFinite(v)) return null;
+    const mass = unit === 'tile-eq' ? tileEqToT(v) : null;
+    return `${fmtN(v)} ${unit}${mass != null ? ` (≈ ${mass.toLocaleString('en-GB', { maximumFractionDigits: 0 })} t, ${MASS_DISCLOSURE})` : ''}`;
+  };
   if (ms.id === 'WH') {
-    parts.push(`${ms.name} received ${fmtN(io.input ?? 0)} pallets from the wrapper and dispatched ${fmtN(io.output ?? 0)} ${when}; ${fmtN(io.wip ?? 0)} pallets are in stock.`);
+    const rec = qty(io.input, 'pallets');
+    const out = qty(io.output, 'pallets');
+    const stock = qty(io.wip, 'pallets');
+    parts.push(
+      `${ms.name} ${rec ? `received ${rec} from the wrapper` : 'pallets received: not measured'} and ${out ? `dispatched ${out}` : 'dispatched: not measured'} ${when}; ${stock ? `${stock} are in stock` : 'stock not measured'}.`,
+    );
   } else {
     const share = rateShare(io);
     const rate = share != null ? `${Math.round(share * 100)} % of the expected rate` : null;
+    const out = qty(io.output, countUnit(ms, ms.output.unit, ms.output.signalId));
     parts.push(
-      r.staleMark
-        ? `${ms.name} output ${when} not confirmed — ${r.staleMark.reason} (simulated running total ${fmtN(io.output ?? 0)} ${ms.output.unit}${rate ? `, ${rate}` : ''}).`
-        : `${ms.name} put out ${fmtN(io.output ?? 0)} ${ms.output.unit} ${when}${rate ? ` — ${rate}` : ''}.`,
+      !out
+        ? `${ms.name} output ${when}: not measured${rate ? ` (${rate})` : ''}.`
+        : r.staleMark
+          ? `${ms.name} output ${when} not confirmed — ${r.staleMark.reason} (simulated running total ${out}${rate ? `, ${rate}` : ''}).`
+          : `${ms.name} put out ${out} ${when}${rate ? ` — ${rate}` : ''}.`,
     );
   }
   if (r.constraint) parts.push(`${cap(constraintPhrase(r.constraint))}.`);
@@ -368,6 +410,7 @@ export function stageSentence(r: StageRow, periodKey: PeriodKey): string {
   if (stoppedConv.length) parts.push(`${stoppedConv.map((c) => `${c.id} is ${STATE_WORD[c.state!]}`).join('; ')}.`);
   const w = wipShare(io);
   if (w != null) parts.push(`Input buffer (${bufferName(ms.wipBufferId)}) at ${Math.round(w * 100)} %.`);
+  else if (ms.wipBufferId) parts.push(`Input buffer (${bufferName(ms.wipBufferId)}): level not available.`);
   if (r.stale.length)
     parts.push(
       `Data feed of ${r.stale.map((a) => `${a.id} stale since ${sinceLabel(a.feed.since ?? a.since ?? 0, r.now)}`).join(', ')}: state unknown, signal values frozen at the last value received.`,
@@ -377,7 +420,8 @@ export function stageSentence(r: StageRow, periodKey: PeriodKey): string {
 
 // ── Production trend ──────────────────────────────────────────────────────────
 
-export type TrendBucket = { key: string; label: string; tip: string; from: number; to: number; input: number | null; output: number; expected: number | null; partial: boolean };
+/** `output` null = not measured / no data in the bucket (a gap, never a zero bar). */
+export type TrendBucket = { key: string; label: string; tip: string; from: number; to: number; input: number | null; output: number | null; expected: number | null; partial: boolean };
 
 /** Hourly buckets up to ~26 h, shift buckets beyond (same rule as the line trend). */
 export function stageTrend(s: SimState, ms: MonitoredStage, p: Period): { granularity: 'hour' | 'shift'; buckets: TrendBucket[] } {
@@ -405,7 +449,7 @@ export function stageTrend(s: SimState, ms: MonitoredStage, p: Period): { granul
         from: x.from,
         to: x.to,
         input: ms.input.measured ? io.input : null,
-        output: io.output ?? 0,
+        output: io.output ?? null,
         expected: io.expectedPerHour != null ? io.expectedPerHour * hrs : null,
         partial: x.from > x.start || x.to < x.end,
       };
@@ -429,7 +473,7 @@ export type TrendSignal = {
 const CONDITION_MEASURE: Record<string, string> = { vibration: 'Vibration velocity', temperature: 'Temperature', motor_current: 'Motor current' };
 
 /**
- * Signals of an asset that have a history in this release: output rate (per-minute log, last 4 h),
+ * Signals of an asset that have a history in this release: output rate (per-minute log, last LOG_MIN minutes),
  * condition signals of condition-monitored assets, and buffer levels. Other signals are current-value only.
  * A condition chart is named after the monitored component ("Temperature · Roller drive gearmotor · firing zone"):
  * a bare "Temperature" on the kiln would read as a firing temperature, which the model does not have.
@@ -451,46 +495,154 @@ export function trendSignals(assetId: string): TrendSignal[] {
   return out;
 }
 
+/** How a row's value is produced: the equipment workspace's classification, plus the catalogue's process model / unavailable. */
+export type RowBasis = SignalBasis | 'process-model' | 'unavailable';
+export const ROW_BASIS_LABEL: Record<RowBasis, string> = {
+  ...BASIS_LABEL,
+  'process-model': 'Process model (simulated)',
+  unavailable: 'Not available in this release',
+};
+
 export type SignalRow = {
   id: string;
   name: string;
+  /** Engineering unit (the catalogue's: tile-eq / tile-eq/h for slip and powder — never tiles). */
   unit: string;
-  kind: SignalDef['kind'];
+  kind: SignalDef['kind'] | null;
+  /** Functional category from the signal catalogue (null when the catalogue does not define the signal). */
+  category: SignalCategory | null;
+  categoryLabel: string;
+  /** Catalogue availability class ('Core candidate' / 'Conditional' / 'External integration') and status ('Simulated', 'Not modelled' …). */
+  availabilityClass: string | null;
+  availabilityStatus: string | null;
   /**
    * Current simulated value — null when the signal has no physical model behind it (placeholder process values such as
    * kiln / dryer temperatures, powder moisture) or belongs to the illustrative energy model: those are listed, never valued.
    */
   value: string | null;
-  /** Shown instead of a value when `value` is null ("Not modelled" / "Not monitored"). */
+  /** Shown instead of a value when `value` is null ("Not modelled" / "Not monitored" / "Unavailable"). */
   valueLabel: string | null;
+  /** Why there is no value (for the tooltip), when there is none. */
+  reason: string | null;
   /** How the value is produced (the same classification as the equipment workspace's Technical details). */
-  basis: SignalBasis;
+  basis: RowBasis;
   basisLabel: string;
+  /** Sample quality of the current value (null without a value). */
+  quality: Quality | null;
+  /** Minutes since the value's timestamp (null without one). */
+  ageMin: number | null;
   staleSince: number | null;
   trend: boolean;
 };
 
-/** Every configured signal of an asset with its current (simulated) value — placeholder / energy-model values withheld. */
+const UNAVAILABLE_LABEL: Partial<Record<AvailabilityStatus, string>> = { 'not-modelled': 'Not modelled', unavailable: 'Unavailable', reference: 'Reference only' };
+
+/**
+ * Every configured signal of an asset with its current (simulated) value — placeholder / energy-model values withheld —
+ * plus the catalogue's further signals of the asset (process values and setpoints of the process model, signals defined
+ * but not modelled), each with its category and the catalogue's availability class and status.
+ */
 export function signalRows(s: SimState, assetId: string): SignalRow[] {
   const trend = new Set(trendSignals(assetId).map((t) => t.signal.id));
-  return SIGNALS.filter((x) => x.equipmentId === assetId).map((x) => {
+  const cat = (id: string) => {
+    const d = definitionOf(id);
+    return {
+      category: d?.category ?? null,
+      categoryLabel: d ? SIGNAL_CATEGORY_LABEL[d.category] : 'Not in the catalogue',
+      availabilityClass: d ? AVAILABILITY_CLASS_LABEL[d.availabilityClass] : null,
+      availabilityStatus: d ? AVAILABILITY_STATUS_LABEL[d.availabilityStatus] : null,
+    };
+  };
+  const reading = (id: string) => {
+    const r = readSignal(s, id);
+    const has = r.value != null && r.quality !== 'missing';
+    return { quality: has ? r.quality : null, ageMin: has && r.timestamp != null ? Math.max(0, s.minute - r.timestamp) : null, note: r.note ?? null };
+  };
+  const listed = SIGNALS.filter((x) => x.equipmentId === assetId).map((x): SignalRow => {
     const r = signalValue(s, x.id);
     const basis = basisOf(x.name);
     const withheld = basis === 'placeholder' ? 'Not modelled' : basis === 'energy-model' ? 'Not monitored' : null;
+    const q = withheld ? { quality: null, ageMin: null, note: null } : reading(x.id);
     return {
       id: x.id,
       name: x.name,
-      unit: x.unit,
+      unit: catalogUnit(x.id) ?? x.unit,
       kind: x.kind,
+      ...cat(x.id),
       value: withheld ? null : r.text,
       valueLabel: withheld,
+      reason: withheld ? (basis === 'placeholder' ? 'No physical model behind this process value' : 'Energy is not monitored in this product') : null,
       basis,
       basisLabel: BASIS_LABEL[basis],
+      quality: q.quality,
+      ageMin: q.ageMin,
       staleSince: !withheld && r.quality === 'stale' ? (r.since ?? null) : null,
       trend: trend.has(x.id),
     };
   });
+  const known = new Set(listed.map((r) => r.id));
+  const charted = new Set(processCharts(assetId).flatMap((c) => (c.sp ? [c.pv, c.sp] : [c.pv])));
+  const mass = isMaterialAsset(assetId) ? massFlowSignalOf(assetId) : null;
+  if (mass) charted.add(mass);
+  const extra = catalogFor(assetId)
+    .filter((d) => !known.has(d.signalId))
+    .map((d): SignalRow => {
+      const r = readSignal(s, d.signalId);
+      const missing = d.availabilityStatus !== 'simulated' || r.value == null;
+      const basis: RowBasis = d.availabilityStatus === 'simulated' ? 'process-model' : d.availabilityStatus === 'not-modelled' ? 'placeholder' : 'unavailable';
+      const q = missing ? { quality: null, ageMin: null } : reading(d.signalId);
+      return {
+        id: d.signalId,
+        name: d.name,
+        unit: d.unit ?? '',
+        kind: null,
+        ...cat(d.signalId),
+        value: missing ? null : r.text,
+        valueLabel: missing ? (UNAVAILABLE_LABEL[d.availabilityStatus] ?? 'No value') : null,
+        reason: missing ? (r.note ?? d.statusNote ?? 'No value in this release') : null,
+        basis,
+        basisLabel: ROW_BASIS_LABEL[basis],
+        quality: q.quality,
+        ageMin: q.ageMin,
+        staleSince: !missing && r.quality === 'stale' ? r.timestamp : null,
+        trend: !missing && charted.has(d.signalId),
+      };
+    });
+  return [...listed, ...extra];
 }
+
+export type ProcessChart = { pv: string; sp: string | null; label: string; unit: string; digits: number; warningLow?: number; warningHigh?: number; alarmLow?: number; alarmHigh?: number };
+
+/** The simulated process values (PV, with their setpoint) of an asset that are charted in the stage view (process model). */
+export function processCharts(assetId: string): ProcessChart[] {
+  return catalogFor(assetId)
+    .filter((d) => d.availabilityStatus === 'simulated' && PROCESS_SIGNAL_BY_ID[d.signalId]?.role === 'pv')
+    .map((d) => {
+      const spec = PROCESS_SIGNAL_BY_ID[d.signalId];
+      return {
+        pv: d.signalId,
+        sp: spec.pairId && PROCESS_SIGNAL_BY_ID[spec.pairId] ? spec.pairId : null,
+        label: d.name,
+        unit: d.unit ?? '',
+        digits: spec.digits,
+        warningLow: d.warningLow,
+        warningHigh: d.warningHigh,
+        alarmLow: d.alarmLow,
+        alarmHigh: d.alarmHigh,
+      };
+    });
+}
+
+/** Rows matching a free-text query (id, name, category, unit) and a category ('all' = any). Pure. */
+export function filterSignalRows(rows: SignalRow[], query: string, category: SignalCategory | 'all' = 'all'): SignalRow[] {
+  const q = query.trim().toLowerCase();
+  return rows.filter(
+    (r) => (category === 'all' || r.category === category) && (!q || [r.id, r.name, r.categoryLabel, r.unit].some((x) => x.toLowerCase().includes(q))),
+  );
+}
+
+/** Categories present in the rows, in the catalogue's display order. */
+export const rowCategories = (rows: SignalRow[]): SignalCategory[] => CATEGORY_ORDER.filter((c) => rows.some((r) => r.category === c));
 
 export type Series = { t: number[]; v: (number | null)[] };
 

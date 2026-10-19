@@ -6,7 +6,8 @@
  *
  * The selected event or record is the route (#/quality/<event or record id>): a user's pick adds a
  * history step; arriving without one opens the newest relevant quality event (rewriting the entry).
- * Raw inspection history and the station / batch / cost tables are secondary tabs.
+ * Raw inspection history, the station / batch / cost tables and the batch / shift / product comparison
+ * (?tab=compare) are secondary tabs.
  *
  * Records, classes, boxes and confidences come from deterministic simulation rules — no camera or
  * vision model runs. Reference videos illustrate the inspection type only.
@@ -28,11 +29,12 @@ import { defaultSelection, defectList, inPeriod, qualitySummary, rateTrend, summ
 import { RateTrend } from './quality/RateTrend';
 import { NO_FILTERS, RecordsTab, type RecordFilters } from './quality/RecordsTab';
 import { StationsTab } from './quality/StationsTab';
+import { CompareTab } from './quality/CompareTab';
 // Registers the inspection-image rasteriser (reports and the PDF draw the same frames).
 import './quality/rasterise';
 import './quality/quality.css';
 
-const TABS = ['investigate', 'records', 'stations'] as const;
+const TABS = ['investigate', 'records', 'stations', 'compare'] as const;
 type Tab = (typeof TABS)[number];
 const RECORD_PAGE = 10;
 
@@ -158,6 +160,7 @@ function QualityWorkspace() {
           { value: 'investigate', label: 'Defect investigation', count: data.summary.open || null, title: 'Quality events and defect records with their evidence' },
           { value: 'records', label: 'Inspection records', title: 'Raw inspection history of the period' },
           { value: 'stations', label: 'Stations, batches & cost', title: 'Inspection stations, defect categories, batches and the scrap / rework estimate' },
+          { value: 'compare', label: 'Compare', title: 'Reject rate and first-pass yield by batch, shift and product; trend; defect categories; process association' },
         ]}
       />
 
@@ -191,6 +194,8 @@ function QualityWorkspace() {
       )}
 
       {tab === 'records' && <RecordsTab periodKey={periodKey} filters={filters} onFilters={setFilters} onOpen={openInvestigation} onShowEvent={openInvestigation} selectedId={selectedId} />}
+
+      {tab === 'compare' && <CompareTab onBatchRecords={(id) => toRecords({ batch: id })} />}
 
       {tab === 'stations' && (
         <StationsTab

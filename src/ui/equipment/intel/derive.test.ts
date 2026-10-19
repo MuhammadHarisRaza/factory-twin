@@ -56,7 +56,8 @@ function expectComplete(m: EquipmentIntel, label: string) {
   expect(m.header.title, label).toBeTruthy();
   expect(m.header.subtitle, label).toMatch(/ · /);
   expect(['good', 'warning', 'critical', 'neutral']).toContain(m.header.state.tone);
-  expect(['simulated', 'stale', 'connected']).toContain(m.header.source.kind);
+  // Wave 3: assets without operating data say 'unavailable' / 'reference', never 'simulated'; nothing is 'connected'.
+  expect(['simulated', 'stale', 'unavailable', 'reference']).toContain(m.header.source.kind);
   expect(['live-stream', 'recording', 'twin-view', 'reference', 'none']).toContain(m.feed.kind);
   if (m.feed.kind === 'none') {
     expect(m.feed.badge).toBeNull();
@@ -204,7 +205,8 @@ describe('signals: PLC-style rows from the registry, honest about what is not mo
     }
     const kiln = deriveEquipmentIntel(normal, 'H-KILN').signals;
     expect(kiln.rows.some((r) => r.id === 'H-KILN.temp_firing')).toBe(false);
-    expect(kiln.notModelled.find((n) => n.label === 'Firing temperature profile')?.reason).toMatch(/no thermal model/);
+    // Wave 3: the single firing temperature is superseded by the simulated zone temperatures, and says so.
+    expect(kiln.notModelled.find((n) => n.label === 'Firing temperature profile (single value)')?.reason).toMatch(/five simulated zone temperatures/);
   });
 
   it('labels the condition temperature with its component, never as a process temperature', () => {
@@ -677,7 +679,7 @@ describe('review fixes: one reading of each fact', () => {
 
   it('a product changeover is "Changeover" in the header, the timeline and the stoppages tile — never an unplanned stop', () => {
     const ink = deriveEquipmentIntel(kilnStop, 'G-INK');
-    expect(ink.header.state).toEqual({ label: 'Changeover', tone: 'neutral', op: 'planned' });
+    expect(ink.header.state).toEqual({ label: 'Changeover', tone: 'neutral', op: 'changeover' });
     expect(ink.analytics!.timeline.some((sg) => sg.label === 'Changeover')).toBe(true);
     expect(ink.analytics!.timeInState.some((t) => t.label === 'Changeover')).toBe(true);
     const own = ownStops(kilnStop, 'G-INK', resolvePeriod('shift', kilnStop.minute));

@@ -1,10 +1,12 @@
-import { Activity, Eye, Info, Play, RefreshCw, Wrench, X } from 'lucide-react';
+import { Activity, Eye, Info, ListChecks, Play, RefreshCw, Wrench, X } from 'lucide-react';
+import { CLASSIFICATION_LABEL, RULE_BY_ID } from '../../intel/rules';
 import { SCENARIO_KIND_LABELS } from '../../model/plant';
 import type { SimState } from '../../sim/engine';
 import { HEALTH_BY_ID, assess, formatH } from '../../sim/health';
 import { useSim, useSimValue } from '../../sim/store';
 import { formatClock } from '../../sim/time';
 import {
+  entryMatches,
   maintenanceDef,
   outcomeOf,
   paramOptions,
@@ -55,7 +57,7 @@ export function ScenarioCard({ entry, origin, onNavigate }: { entry: CatalogueEn
   const d = useSimValue(
     (s) => {
       const v = resolveValues(entry, values, s);
-      const rows = s.scenarios.filter((sc) => sc.kind === entry.kind).map((sc) => ({ sc, st: scenarioStatus(s, sc) }));
+      const rows = s.scenarios.filter((sc) => entryMatches(entry, sc)).map((sc) => ({ sc, st: scenarioStatus(s, sc) }));
       // Only instances still in effect: a fault that broke down or was removed is over (finding #24).
       const open = entry.oneOff ? [] : rows.filter((r) => r.st.key === 'active');
       const last = rows[rows.length - 1] ?? null;
@@ -67,6 +69,7 @@ export function ScenarioCard({ entry, origin, onNavigate }: { entry: CatalogueEn
       const targets: ShowTarget[] = [
         ...(focus ? [focus] : []),
         ...(ev ? [{ type: 'event', id: ev.id } as ShowTarget] : []),
+        ...(entry.views ?? []),
         ...entry.workspaces.map((id): ShowTarget => ({ type: 'workspace', id })),
       ];
       return {
@@ -90,7 +93,7 @@ export function ScenarioCard({ entry, origin, onNavigate }: { entry: CatalogueEn
   };
   const main = entry.params.map((p, i) => ({ p, i })).filter(({ p }) => p.section !== 'maintenance');
   const cbm = entry.params.map((p, i) => ({ p, i })).find(({ p }) => p.section === 'maintenance');
-  const title = SCENARIO_KIND_LABELS[entry.kind];
+  const title = entry.title ?? SCENARIO_KIND_LABELS[entry.kind];
 
   return (
     <article className={`scnp-card ${d.open.length ? 'on' : ''}`} aria-label={`Scenario ${entry.ref}: ${title}`}>
@@ -99,6 +102,9 @@ export function ScenarioCard({ entry, origin, onNavigate }: { entry: CatalogueEn
           {entry.ref}
         </span>
         <h3>{title}</h3>
+        <span className="tag sim" title="A scenario input of the simulation — not a measured plant event">
+          Simulated scenario
+        </span>
         <div className="spacer" />
         {d.open.length > 1 ? (
           <span className="scnp-state on">
@@ -119,6 +125,17 @@ export function ScenarioCard({ entry, origin, onNavigate }: { entry: CatalogueEn
         <Eye size={13} aria-hidden />
         <span>{entry.effect}</span>
       </p>
+      {entry.detectedBy && entry.detectedBy.length > 0 && (
+        <p className="scnp-where scnp-rules">
+          <ListChecks size={13} aria-hidden />
+          <span>Detected by</span>
+          {entry.detectedBy.map((id) => (
+            <span key={id} className="tag mono" title={RULE_BY_ID[id] ? `${RULE_BY_ID[id].title} · ${CLASSIFICATION_LABEL[RULE_BY_ID[id].classification]}` : id}>
+              {id}
+            </span>
+          ))}
+        </p>
+      )}
 
       <div className="scnp-row">
         {main.map(({ p, i }) => (

@@ -26,6 +26,7 @@ import { EventStatusBadge, SeverityBadge } from '../../ui/kit/Status';
 import { Lifecycle } from '../../ui/report/Lifecycle';
 import { ContextVideo } from '../../video/ContextVideo';
 import { DefectSeverity } from './badges';
+import { openCompare } from './compareFocus';
 import { EventCorrelation, RecordStates } from './Correlation';
 import { contextStates, correlationEvidence, inspectionEventLinks, inspectionMethod, isVisionRecord, ruleChecks } from './derive';
 import { FrameThumb } from './FrameArt';
@@ -264,7 +265,10 @@ function EvidenceBody({ m, now, fpy, snap, snapImg, onSelect }: BodyProps) {
                 label: 'Batch',
                 value: batch ? (
                   <span title={shown ? 'Batch recorded with the inspection record' : 'Batch at inspection: tiles inspected now were pressed about 3 h earlier'}>
-                    <span className="mono">{batch.id}</span> <span className="dim">· {PRODUCT_BY_SKU[batch.sku]?.name ?? batch.sku}</span>
+                    <span className="mono">{batch.id}</span> <span className="dim">· {PRODUCT_BY_SKU[batch.sku]?.name ?? batch.sku}</span>{' '}
+                    <button type="button" className="row-link" onClick={() => openCompare(batch.id)} title="Reject rate and FPY of this batch against the rest (Quality › Compare)">
+                      Compare batch
+                    </button>
                   </span>
                 ) : (
                   <Unavailable reason="The batch is no longer in the retained production history" />

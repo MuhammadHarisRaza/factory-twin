@@ -5,7 +5,8 @@ import { useSim, useSimValue } from '../../sim/store';
 import { formatClock, formatDuration } from '../../sim/time';
 import { EmptyState } from '../../ui/kit/Page';
 import {
-  ONE_OFF_KINDS,
+  entryFor,
+  isOneOff,
   isClearable,
   outcomeOf,
   paramSummary,
@@ -73,12 +74,12 @@ export function ScenarioLog({ onNavigate }: { onNavigate?: () => void }) {
           <li key={r.sc.id} className={r.st.key === 'active' ? 'on' : ''}>
             <div className="scnl-top">
               <span className="mono dim">{r.sc.id}</span>
-              <b>{SCENARIO_KIND_LABELS[r.sc.kind]}</b>
+              <b>{entryFor(r.sc)?.title ?? SCENARIO_KIND_LABELS[r.sc.kind]}</b>
               <ScenarioState st={r.st} now={now} time={false} />
               <span className="spacer" />
               <span className="scnl-t num">
                 {when(r.sc.start, now)}
-                {ONE_OFF_KINDS.includes(r.sc.kind)
+                {isOneOff(r.sc)
                   ? ' · one-off'
                   : r.sc.end == null
                     ? r.st.key === 'active'

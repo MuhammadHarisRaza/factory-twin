@@ -44,6 +44,9 @@ import {
   cameraFor,
 } from '../../../model/plant';
 import { DEFECT_ACTIONS, REASON_ACTIONS } from '../../../model/actions';
+import { KG_PER_TILE, STAGE_BY_NO, catalogFor, definitionOf, stageOfEquipment } from '../../../model/catalog';
+import type { RangeKey } from '../../../model/telemetry';
+import { seriesOf } from '../../../sim/telemetry';
 import type { BufferDef, DefectCategory, DowntimeEvent, MachineState, OpEvent, OperationalState, ProcessStage, SignalDef, StageId, Vehicle } from '../../../model/types';
 import type { CameraSource } from '../../../app/store';
 import { LOG_MIN, minuteAt, type SimState } from '../../../sim/engine';
@@ -62,6 +65,7 @@ import {
   qualityIn,
   resolvePeriod,
   risingDefects,
+  stopState,
   sumBuckets,
   visitDurations,
   type Period,
@@ -69,6 +73,11 @@ import {
 import { signalValue, type SignalReading } from '../../../sim/signals';
 import { formatDuration } from '../../../sim/time';
 import { delayedTrucks } from '../../../intel/kpis';
+import { liveFindingsFor } from '../../../intel/rules/live';
+import { liveCharts } from './live';
+import { windowOf } from './ranges';
+
+
 import { eventImpact } from '../../../intel/report';
 import { clockLabel, constraintClaim, type ConstraintClaim } from '../../../intel/summary';
 import { ALL_EVENTS_FILTERS, filterEvents } from '../../../pages/events/filters';
@@ -79,7 +88,9 @@ import type { VideoRef, VideoTopic } from '../../../video/types';
 import { constraintMarker, type ConstraintMarker } from '../../twin/constraint';
 import { assetStatus, selectionCamera, vehicleGeofence, type AssetStatus } from '../../twin/derive';
 import { activeRootEvents, constraintRole, eventsOfAsset } from '../context';
-import { bufferLevelBand, equipmentKpis, isChangeover, ownStops, signalRate, vehicleKpis, type EqKpiSet } from '../kpis';
+import { NO_OPERATING_DATA, bufferLevelBand, equipmentKpis, ownStops, signalRate, vehicleKpis, type EqKpiSet } from '../kpis';
+import { assetFindings, catalogView, eventLog, mergeFindings, panelCharts, processView, tileTrends } from './panelData';
+import { signalTableRows, type SignalTableRow } from './signalTable';
 import { assetProfile, type AssetProfile } from '../profile';
 import { basisOf } from '../signals';
 import {
@@ -113,8 +124,20 @@ import type {
 
 // ── Context ──────────────────────────────────────────────────────────────────
 
-/** What the derivation needs from the app besides the simulation: the financial assumptions and configured camera streams. */
-export type IntelContext = { finance: FinanceAssumptions; cameraSources: Record<string, CameraSource> };
+/**
+ * What the derivation needs from the app besides the simulation: the financial assumptions, configured camera streams
+ * and (optional, added) the viewer's chart range (default 8 h).
+ */
+export type IntelContext = {
+  finance: FinanceAssumptions;
+  cameraSources: Record<string, CameraSource>;
+  range?: RangeKey;
+  /**
+   * A live card: the rule findings are the live evaluation (src/intel/rules/live.ts, re-run at most every few simulated
+   * minutes) and the history charts and tile sparklines the live chart set (./live.ts); each says when it was made.
+   */
+  live?: boolean;
+};
 export const DEFAULT_INTEL_CONTEXT: IntelContext = { finance: DEFAULT_FINANCE, cameraSources: {} };
 
 // ── Formatting ───────────────────────────────────────────────────────────────
@@ -154,6 +177,7 @@ const OP_TONE: Record<OperationalState, IntelTone> = {
   starved: 'warning',
   blocked: 'warning',
   planned: 'neutral',
+  changeover: 'neutral',
   disconnected: 'neutral',
   unknown: 'neutral',
 };
@@ -193,6 +217,9 @@ function rankInsights(list: Ranked[], max = 3): IntelInsight[] {
 
 type Sample = { t: number; rate: number; state: MachineState; limited: boolean };
 
+/** The panel's recent-activity window (its "Last 4 h" timeline, buffer and vehicle trends); the minute log holds LOG_MIN ≥ this. */
+const PANEL_WINDOW_MIN = 240;
+
 /** Logged minutes of an asset in [from, to), oldest first (the ring buffer holds the last LOG_MIN minutes). */
 function samples(s: SimState, id: string, from: number, to: number): Sample[] {
   const out: Sample[] = [];
@@ -216,9 +243,7 @@ function opOfSample(s: SimState, id: string, x: Sample, staleFrom: number | null
   if (staleFrom != null && x.t >= staleFrom) return 'unknown';
   if (x.state === 'down') {
     const d = stops.find((r) => r.start <= x.t && (r.end ?? s.minute) > x.t);
-    const r = d ? REASON_BY_CODE[d.reasonCode] : undefined;
-    if (r?.planned || d?.reasonCode === 'CHG_PRODUCT') return 'planned';
-    return r && (r.category === 'Mechanical' || r.category === 'Electrical & control') && d!.reasonCode !== 'SCN_STOP' && d!.reasonCode !== 'SCN_CNV_STOP' ? 'fault' : 'stopped';
+    return stopState(d?.reasonCode);
   }
   if (x.state === 'planned') return 'planned';
   if (CONVEYOR_BY_ID[id]) return x.state === 'starved' ? 'idle' : x.state === 'blocked' ? 'blocked' : 'running';
@@ -279,7 +304,7 @@ type Flow = {
 
 const stoppedNow = (s: SimState, id: string) => {
   const op = operationalState(s, id);
-  return op === 'stopped' || op === 'fault' || op === 'planned';
+  return op === 'stopped' || op === 'fault' || op === 'planned' || op === 'changeover';
 };
 
 function flowOf(s: SimState, stageId: StageId): Flow {
@@ -299,7 +324,8 @@ function flowOf(s: SimState, stageId: StageId): Flow {
 }
 
 const level = (s: SimState, b: BufferDef) => s.buffers[b.id] / b.capacity;
-const bufferWords = (s: SimState, b: BufferDef) => `${b.name} (${b.id}) at ${pct(level(s, b))} of ${int(b.capacity)} tiles`;
+const bufferWords = (s: SimState, b: BufferDef) =>
+  BULK_BUFFERS.has(b.id) ? `${b.name} (${b.id}) at ${pct(level(s, b))} (level only — no level-to-mass calibration)` : `${b.name} (${b.id}) at ${pct(level(s, b))} of ${int(b.capacity)} tiles`;
 
 /** Tiles held in the buffers from a stage's output up to the kiln's input — what the kiln can still fire if the stage stops supplying. */
 function wipToKiln(s: SimState, idx: number) {
@@ -329,8 +355,8 @@ function stageWords(s: SimState, st: ProcessStage): StageState {
   const why = (o: (typeof ops)[number]) => `${o.id}${o.a.reason ? ` · ${lower1(o.a.reason)}` : ''}`;
   const stopped = ops.find((o) => o.op === 'stopped' || o.op === 'fault');
   if (stopped) return { words: `stopped (${why(stopped)})`, held: null, culprit: stopped.id, culpritKind: 'stopped' };
-  const planned = ops.find((o) => o.op === 'planned');
-  if (planned) return { words: `in a planned stop (${why(planned)})`, held: null, culprit: planned.id, culpritKind: 'planned' };
+  const planned = ops.find((o) => o.op === 'planned' || o.op === 'changeover');
+  if (planned) return { words: `in a ${planned.op === 'changeover' ? 'product changeover' : 'planned stop'} (${why(planned)})`, held: null, culprit: planned.id, culpritKind: 'planned' };
   const unknown = ops.find((o) => o.op === 'unknown');
   if (unknown) return { words: `of unknown state (${unknown.id} data stale)`, held: null, culprit: null, culpritKind: null };
   const reduced = ops.find((o) => o.op === 'reduced');
@@ -392,8 +418,8 @@ type X = {
   /** Process stage whose flow the asset belongs to (machines: own stage; conveyors: the stage they feed). */
   flow: Flow | null;
   ideal: number | null;
-  /** Rate as the product has it (the last value received while the feed is stale), tiles/h. */
-  rate: number;
+  /** Rate as the product has it (the last value received while the feed is stale), tiles/h; null = no value received (never 0). */
+  rate: number | null;
   /** The engine marks the stage's last minute as limited by input / output (paced by a neighbour). */
   limitedNow: boolean;
   recent: Recent | null;
@@ -422,7 +448,7 @@ function contextOf(s: SimState, id: string, ctx: IntelContext): X {
   const activeStop = tracked && m?.activeDowntimeId && status?.op !== 'unknown' ? (s.downtime.find((d) => d.id === m.activeDowntimeId) ?? null) : null;
   return {
     activeStop,
-    changeover: status?.op === 'planned' && activeStop != null && isChangeover(activeStop),
+    changeover: status?.op === 'changeover',
     s,
     id,
     now: s.minute,
@@ -439,7 +465,7 @@ function contextOf(s: SimState, id: string, ctx: IntelContext): X {
     health: prof.conditionMonitored ? assess(s, id) : null,
     flow: flowStage ? flowOf(s, flowStage) : null,
     ideal,
-    rate: tracked ? signalRate(s, id) : 0,
+    rate: tracked ? signalRate(s, id) : null,
     limitedNow: tracked ? (minuteAt(s, id, s.minute - 1)?.limited ?? false) : false,
     recent: tracked ? recentStats(s, id, FLOW_WINDOW_MIN, staleSince) : null,
     events: eventsOfAsset(s, id),
@@ -459,7 +485,18 @@ function zoneOf(id: string): IntelHeader['zone'] {
   return z ? { id: z.id, color: z.color } : null;
 }
 
-function header(x: X): IntelHeader {
+/** The brief's 12-stage mapping line of an asset ("Brief stage 7 · Kiln firing"), null for site utilities / support. */
+export function stage12Of(id: string): IntelHeader['stage12'] {
+  const no = stageOfEquipment(id);
+  if (no == null) return null;
+  const st = STAGE_BY_NO[no];
+  return { no, label: `Brief stage ${no} · ${st.name}`, note: st.note };
+}
+
+/** Newest sample time of the asset's simulated catalogue signals (null when it has none). */
+const lastUpdateOf = (rows: SignalTableRow[]) => rows.reduce<number | null>((a, r) => (r.timestamp != null && r.def.availabilityStatus === 'simulated' ? Math.max(a ?? -Infinity, r.timestamp) : a), null);
+
+function header(x: X, rows: SignalTableRow[] = []): IntelHeader {
   const { prof, id, status, op } = x;
   const stageName = prof.monitored ? MONITORED_STAGE_BY_ID[prof.monitored].name : (EQUIPMENT_BY_ID[id]?.stage ?? prof.category);
   let state: IntelHeader['state'];
@@ -471,9 +508,26 @@ function header(x: X): IntelHeader {
     const reason = !x.changeover && (op === 'stopped' || op === 'fault' || op === 'planned') && status.reason ? ` · ${lower1(status.reason)}` : '';
     state = { label: `${base}${reason}`, tone: OP_TONE[op], op };
   }
+  // Assets without operating data say so — never "Simulated": catalogue entries but nothing simulated, or a layout item only.
+  const noData = !status && x.metrics.note === NO_OPERATING_DATA;
   const source: IntelHeader['source'] =
-    x.staleSince != null ? { kind: 'stale', label: `Stale since ${x.clock(x.staleSince)}`, since: x.staleSince } : { kind: 'simulated', label: 'Simulated' };
-  return { title: prof.name, subtitle: `${stageName} · ${id}`, zone: zoneOf(id), state, since: status ? status.since : null, source };
+    x.staleSince != null
+      ? { kind: 'stale', label: `Stale since ${x.clock(x.staleSince)}`, since: x.staleSince }
+      : noData
+        ? catalogFor(id).length
+          ? { kind: 'unavailable', label: 'Unavailable · no operating data' }
+          : { kind: 'reference', label: 'Reference · layout only' }
+        : { kind: 'simulated', label: 'Simulated' };
+  return {
+    title: prof.name,
+    subtitle: `${stageName} · ${id}`,
+    zone: zoneOf(id),
+    state,
+    since: status ? status.since : null,
+    source,
+    lastUpdate: noData ? null : lastUpdateOf(rows),
+    stage12: stage12Of(id),
+  };
 }
 
 // ── Feed (exactly one) ───────────────────────────────────────────────────────
@@ -596,7 +650,8 @@ function machineFacet(x: X): Facet | null {
     idle: ['Running empty', 'neutral'],
     stopped: ['Stopped', 'critical'],
     fault: ['Fault', 'critical'],
-    planned: [x.changeover ? 'Changeover' : 'Planned stop', 'neutral'],
+    planned: ['Planned stop', 'neutral'],
+    changeover: ['Changeover', 'neutral'],
     disconnected: ['Disconnected', 'neutral'],
     unknown: ['Unknown', 'neutral'],
   };
@@ -627,7 +682,7 @@ function materialFacet(x: X): Facet | null {
   const hint = `From ${x.id}'s state and the minute log (limited by input / output) with the levels of the buffers either side.`;
   if (op === 'unknown' || op === 'disconnected') return { key: 'material', label: 'Material', value: 'Unknown', tone: 'neutral', hint: 'The data feed is stale — whether material is being processed is not known.' };
   // Stopped: nothing is processed — the header already says so; an empty "—" chip carries no meaning.
-  if (op === 'stopped' || op === 'fault' || op === 'planned') return null;
+  if (op === 'stopped' || op === 'fault' || op === 'planned' || op === 'changeover') return null;
   if (x.prof.kind === 'conveyor') {
     if (op === 'idle') return { key: 'material', label: 'Material', value: 'Nothing to carry', tone: 'neutral', hint: 'Running empty: the stage feeding the conveyor sends nothing.' };
     if (op === 'blocked') return { key: 'material', label: 'Material', value: 'Accumulating — receiver held', tone: 'warning', hint: 'The receiving stage cannot take tiles (stopped, blocked or full).' };
@@ -647,11 +702,12 @@ function rateWords(x: X): { value: string; tone: IntelTone } | null {
   const op = x.op;
   if (!op || x.ideal == null || x.ideal <= 0) return null;
   const conv = x.prof.kind === 'conveyor';
+  if (x.rate == null) return { value: op === 'stopped' || op === 'fault' ? OPERATIONAL_STATE_LABEL[op] : 'Rate not reported', tone: op === 'stopped' || op === 'fault' ? 'critical' : 'neutral' };
   const ratio = x.rate / x.ideal;
   const share = conv ? `${pct(ratio)} of capacity` : `${pct(ratio)} of ideal`;
   if (op === 'unknown' || op === 'disconnected') return { value: `Last value · ${share}`, tone: 'neutral' };
   if (op === 'stopped' || op === 'fault') return { value: conv ? 'Stopped' : `0 % of ideal · stopped`, tone: 'critical' };
-  if (op === 'planned') return { value: x.changeover ? 'Changeover' : 'Planned stop', tone: 'neutral' };
+  if (op === 'planned' || op === 'changeover') return { value: op === 'changeover' ? 'Changeover' : 'Planned stop', tone: 'neutral' };
   if (conv) return { value: share, tone: 'neutral' };
   if (constrainingHere(x)) return { value: `${share} · constraining`, tone: 'warning' };
   if (op === 'reduced') return { value: `${share} · below its set rate`, tone: 'warning' };
@@ -671,7 +727,7 @@ function rateFacet(x: X): Facet | null {
     value: w.value,
     tone: w.tone,
     hint: conv
-      ? `Tiles carried per hour (${x.id} rate) against the conveyor's nominal capacity of ${int(x.ideal)} tiles/h — a conveyor moves what the next stage takes, so a lower share is not a loss.`
+      ? `Tiles carried per hour (${x.id} rate) against the conveyor's nominal capacity of ${int(x.ideal)} ${conveyorRateUnit(x.id)} — a conveyor moves what the next stage takes, so a lower share is not a loss.`
       : `Rate reported by ${x.id}.rate (${int(x.rate)} tiles/h) against its ideal ${int(x.ideal)} tiles/h. The line is paced by its constraint: a machine below its ideal rate because of its supply or the space downstream has spare capacity — a warning only when it runs below its own set rate or the constraint claim names its stage as the one holding up line output.`,
   };
 }
@@ -743,7 +799,27 @@ function lastSample(s: SimState, stationId: string) {
 
 // Buffers ---------------------------------------------------------------------
 
-type BufferFlow = { buf: BufferDef; level: number; up: ProcessStage | undefined; down: ProcessStage | undefined; inflow: number; outflow: number; net: number; staleNeighbour: boolean };
+type BufferFlow = {
+  buf: BufferDef;
+  level: number;
+  up: ProcessStage | undefined;
+  down: ProcessStage | undefined;
+  /** Rates of the neighbouring stages in tile-equivalents per hour (the thresholds' unit); shown through `show`. */
+  inflow: number;
+  outflow: number;
+  net: number;
+  staleNeighbour: boolean;
+  /** Slip tanks and powder silos: level % only, flows shown in simulated t/h (KG_PER_TILE), never tiles. */
+  bulk: boolean;
+  /** A rate in the buffer's display unit: "9.9 t/h" (simulated, slip / powder) or "1,250 tiles/h". */
+  show: (tilesPerHour: number) => string;
+};
+
+/** Slip tanks (stage 1) and powder silos (stage 2): material in bulk, no tiles. */
+const BULK_BUFFERS = new Set(['BUF-SLIP', 'BUF-SILO']);
+/** A conveyor's rate unit: tile-equivalents for the powder belt (stage 2, catalogue 'tile-eq'), tiles elsewhere. */
+const conveyorRateUnit = (id: string) => (definitionOf(`${id}.tile_count`)?.unit === 'tile-eq' ? 'tile-eq/h' : 'tiles/h');
+const showFlow = (bulk: boolean) => (v: number) => (bulk ? `${((v * KG_PER_TILE) / 1000).toFixed(1)} t/h` : `${int(v)} tiles/h`);
 
 function bufferFlow(x: X): BufferFlow | null {
   const buf = x.prof.bufferId ? BUFFER_BY_ID[x.prof.bufferId] : null;
@@ -751,11 +827,23 @@ function bufferFlow(x: X): BufferFlow | null {
   const i = STAGES.findIndex((st) => st.inputBuffer === buf.id);
   const up = i > 0 ? STAGES[i - 1] : undefined;
   const down = i >= 0 ? STAGES[i] : undefined;
-  const rate = (st: ProcessStage | undefined) => (st ? st.machines.reduce((a, m) => a + signalRate(x.s, m), 0) : 0);
+  // A side without a neighbour carries nothing (0 is a fact there); a neighbour without a rate value leaves the flow unknown.
+  const rate = (st: ProcessStage | undefined): number | null => {
+    if (!st) return 0;
+    let a = 0;
+    for (const m of st.machines) {
+      const r = signalRate(x.s, m);
+      if (r == null) return null;
+      a += r;
+    }
+    return a;
+  };
   const staleNeighbour = [...(up?.machines ?? []), ...(down?.machines ?? [])].some((m) => x.s.feeds[m]?.status === 'stale');
   const inflow = rate(up);
   const outflow = rate(down);
-  return { buf, level: x.s.buffers[buf.id], up, down, inflow, outflow, net: inflow - outflow, staleNeighbour };
+  if (inflow == null || outflow == null) return null;
+  const bulk = BULK_BUFFERS.has(buf.id);
+  return { buf, level: x.s.buffers[buf.id], up, down, inflow, outflow, net: inflow - outflow, staleNeighbour, bulk, show: showFlow(bulk) };
 }
 
 /** The buffer feeds a stage at or before the kiln (an empty buffer here can starve the line constraint). */
@@ -791,11 +879,11 @@ function bufferLevelFacet(x: X): Facet | null {
 function bufferFlowFacet(x: X): Facet | null {
   const b = bufferFlow(x);
   if (!b) return null;
-  const hint = `Filling from ${b.up?.name.toLowerCase() ?? '—'} (${int(b.inflow)} tiles/h) minus drawn by ${b.down?.name.toLowerCase() ?? '—'} (${int(b.outflow)} tiles/h), from their rate signals${b.staleNeighbour ? ' — includes a last value received from a stale feed' : ''}.`;
+  const hint = `Filling from ${b.up?.name.toLowerCase() ?? '—'} (${b.show(b.inflow)}) minus drawn by ${b.down?.name.toLowerCase() ?? '—'} (${b.show(b.outflow)}), from their rate signals${b.bulk ? ` (simulated t/h: tile-equivalent rate × ${KG_PER_TILE.toFixed(2)} kg)` : ''}${b.staleNeighbour ? ' — includes a last value received from a stale feed' : ''}.`;
   if (b.staleNeighbour) return { key: 'rate', label: 'Net flow', value: 'Not confirmed', tone: 'neutral', hint };
   if (b.inflow < 1 && b.outflow < 1) return { key: 'rate', label: 'Net flow', value: 'No flow', tone: 'neutral', hint };
   if (Math.abs(b.net) < 30) return { key: 'rate', label: 'Net flow', value: 'Steady', tone: 'good', hint };
-  return { key: 'rate', label: 'Net flow', value: b.net > 0 ? `Filling · +${int(b.net)} tiles/h` : `Emptying · −${int(-b.net)} tiles/h`, tone: 'neutral', hint };
+  return { key: 'rate', label: 'Net flow', value: b.net > 0 ? `Filling · +${b.show(b.net)}` : `Emptying · −${b.show(-b.net)}`, tone: 'neutral', hint };
 }
 
 // Logistics / raw ---------------------------------------------------------------
@@ -952,7 +1040,7 @@ function eventInsights(x: X): Ranked[] {
             impact = assetLost ? `${assetLost} not made so far` : null;
           } else if (cover) parts.push(`${cap1(cover)}.`);
         }
-        if (e.type === 'below-rate' && x.ideal) parts.push(`Performance loss ≈ ${int(Math.max(0, x.ideal - x.rate))} tiles/h (${m2(Math.max(0, x.ideal - x.rate))} m²/h) below its ideal rate.`);
+        if (e.type === 'below-rate' && x.ideal && x.rate != null) parts.push(`Performance loss ≈ ${int(Math.max(0, x.ideal - x.rate))} tiles/h (${m2(Math.max(0, x.ideal - x.rate))} m²/h) below its ideal rate.`);
       } else if (e.category === 'quality') {
         const excess = row(/^Excess rejects/)?.value;
         const vs = row(/^Rate vs 24 h/)?.value;
@@ -1045,7 +1133,7 @@ function neighbourStaleInsight(x: X): Ranked[] {
 
 /** A planned stop, changeover or maintenance stop in progress (not a fault). */
 function plannedInsight(x: X): Ranked[] {
-  if (x.op !== 'planned' || !x.status) return [];
+  if ((x.op !== 'planned' && x.op !== 'changeover') || !x.status) return [];
   const m = x.s.machines[x.id];
   const d = m?.activeDowntimeId ? x.s.downtime.find((r) => r.id === m.activeDowntimeId) : undefined;
   const code = d?.reasonCode ?? '';
@@ -1065,7 +1153,7 @@ function plannedInsight(x: X): Ranked[] {
         : maint
           ? 'A condition-based maintenance stop: planned time, excluded from the shift plan; the developing fault is cleared when it completes.'
           : 'A planned stop: excluded from planned production time, so it is not a loss against the shift plan.',
-      evidence: [signalEvidence(x, CONVEYOR_BY_ID[x.id] ? 'run_state' : 'state', `State planned since ${x.clock(d?.start ?? x.status.since)}`)],
+      evidence: [signalEvidence(x, CONVEYOR_BY_ID[x.id] ? 'run_state' : 'state', `State ${changeover ? 'changeover' : 'planned'} since ${x.clock(d?.start ?? x.status.since)}`)],
       next: changeover ? REASON_ACTIONS.CHG_PRODUCT : maint ? 'After restart, confirm the vibration returns to the value expected at the load.' : null,
       basis: scen ? 'scenario' : 'rule',
       basisLabel: scen ? `Scenario input · ${SCENARIO_KIND_LABELS.maintenance.toLowerCase()}` : 'Planned-stop record (simulated calendar)',
@@ -1218,7 +1306,7 @@ function conveyorFlowInsight(x: X): Ranked[] {
       title: empty ? 'Running empty' : 'Accumulating',
       observed: `${x.prof.name} has been ${empty ? 'running without tiles' : 'accumulating tiles it cannot hand over'} since ${x.clock(since)} (${dur(x.now - since)}).${neighbour && w ? ` ${cap1(lower1(neighbour.name))} ${empty ? 'feeding it' : 'receiving from it'} is ${w.words}.` : ''}`,
       why: `A conveyor carries what the next stage takes, so no loss arises at the conveyor itself.${holder && holder.assetId !== x.id ? ` The line is held at ${holder.words}${holder.kind === 'planned' ? ' — a scheduled stop' : ' — a possible contributing factor, inferred from states'}.` : ''}`,
-      evidence: [signalEvidence(x, 'run_state', `Run state ${empty ? 'running empty' : 'accumulating'} since ${x.clock(since)}`), signalEvidence(x, 'tile_count', `Carrying ${int(x.rate)} tiles/h`)],
+      evidence: [signalEvidence(x, 'run_state', `Run state ${empty ? 'running empty' : 'accumulating'} since ${x.clock(since)}`), signalEvidence(x, 'tile_count', x.rate != null ? `Carrying ${int(x.rate)} ${conveyorRateUnit(x.id)}` : 'Rate not reported')],
       next: null,
       basis: 'rule',
       basisLabel: 'Flow rule · conveyor state (rule-based)',
@@ -1237,7 +1325,10 @@ function conveyorFlowInsight(x: X): Ranked[] {
 function runningSamples(x: X): SensorReading[] {
   const now = Math.max(0, x.now - 1);
   const out: SensorReading[] = [];
-  for (let t = Math.max(0, now - 180); t <= now; t += 5) if (t > now - 60) out.push(sensorsAt(x.s, x.id, t));
+  for (let t = Math.max(0, now - 180); t <= now; t += 5) {
+    const r = t > now - 60 ? sensorsAt(x.s, x.id, t) : null;
+    if (r) out.push(r);
+  }
   return out.filter((r) => r.running);
 }
 
@@ -1347,12 +1438,13 @@ function conditionInsight(x: X): Ranked[] {
 
 /** 4 · Below its own set rate while not starved / blocked. */
 function rateInsight(x: X): Ranked[] {
-  if (x.op !== 'reduced' || !x.ideal || !x.flow || x.roots.some((e) => e.type === 'below-rate')) return [];
-  const loss = Math.max(0, x.ideal - x.rate);
+  if (x.op !== 'reduced' || !x.ideal || !x.flow || x.rate == null || x.roots.some((e) => e.type === 'below-rate')) return [];
+  const rate = x.rate;
+  const loss = Math.max(0, x.ideal - rate);
   const f = x.flow;
   const kiln = isKilnStage(x);
   // Best case for the stage: the other machines at their ideal rate.
-  const stageBest = f.stage.machines.reduce((a, m) => a + (m === x.id ? x.rate : (OPS_BY_ID[m]?.idealRatePerHour ?? 0)), 0);
+  const stageBest = f.stage.machines.reduce((a, m) => a + (m === x.id ? rate : (OPS_BY_ID[m]?.idealRatePerHour ?? 0)), 0);
   const scen = activeScenario(x.s, (sc) => (sc.kind === 'reduced-rate' && sc.equipmentId === x.id) || (sc.kind === 'bottleneck' && sc.stage === f.stage.id));
   const why = kiln
     ? `Performance loss ≈ ${int(loss)} tiles/h (${m2(loss)} m²/h) below its ideal rate. This is the line constraint — the loss is lost line output.`
@@ -1365,9 +1457,9 @@ function rateInsight(x: X): Ranked[] {
       id: `rate:${x.id}`,
       severity: kiln || stageBest < KILN_IDEAL ? 'warning' : 'info',
       title: 'Running below its set rate',
-      observed: `${x.prof.name} has run at ${pct(x.rate / x.ideal)} of its ideal rate since ${x.clock(x.status!.since)} at its own pace (not starved or blocked): ${int(x.rate)} vs ${int(x.ideal)} tiles/h.`,
+      observed: `${x.prof.name} has run at ${pct(rate / x.ideal)} of its ideal rate since ${x.clock(x.status!.since)} at its own pace (not starved or blocked): ${int(rate)} vs ${int(x.ideal)} tiles/h.`,
       why: `${why} ${scen ? `Cause: rate reduction applied by a scenario (${scen.label}).` : 'Possible contributing factor: speed setpoint lowered or frequent short stops — not distinguishable from the rate signal alone.'}`,
-      evidence: [signalEvidence(x, 'rate', `Rate ${int(x.rate)} tiles/h (ideal ${int(x.ideal)})`), signalEvidence(x, 'state', `State reduced since ${x.clock(x.status!.since)}`)],
+      evidence: [signalEvidence(x, 'rate', `Rate ${int(rate)} tiles/h (ideal ${int(x.ideal)})`), signalEvidence(x, 'state', `State reduced since ${x.clock(x.status!.since)}`)],
       next: `Check the ${x.id} speed setpoint against the recipe and look for repeated short stops in its alarm log.`,
       basis: scen ? 'scenario' : 'rule',
       basisLabel: scen ? 'Scenario input · rate reduction' : 'Rate rule (rule-based)',
@@ -1530,9 +1622,9 @@ function bufferInsight(x: X): Ranked[] {
   const downW = b.down ? stageWords(s, b.down) : null;
   const up = b.up ? lower1(b.up.name) : 'the stage filling it';
   const down = b.down ? lower1(b.down.name) : 'the next stage';
-  const flowWords = `${cap1(up)} supplies ${int(b.inflow)} tiles/h while ${down} draws ${int(b.outflow)} tiles/h (${b.net >= 0 ? '+' : '−'}${int(Math.abs(b.net))} tiles/h).`;
-  const observed = `Level ${pct(f)} (${int(b.level)} of ${int(b.buf.capacity)} tiles). ${flowWords}`;
-  const evidence: IntelEvidence[] = [signalEvidence(x, 'level', `Level ${pct(f)}`), { kind: 'metric', label: `Net ${b.net >= 0 ? '+' : '−'}${int(Math.abs(b.net))} tiles/h` }];
+  const flowWords = `${cap1(up)} supplies ${b.show(b.inflow)} while ${down} draws ${b.show(b.outflow)} (${b.net >= 0 ? '+' : '−'}${b.show(Math.abs(b.net))}${b.bulk ? ', simulated' : ''}).`;
+  const observed = `Level ${pct(f)}${b.bulk ? ' (level only — no level-to-mass calibration)' : ` (${int(b.level)} of ${int(b.buf.capacity)} tiles)`}. ${flowWords}`;
+  const evidence: IntelEvidence[] = [signalEvidence(x, 'level', `Level ${pct(f)}`), { kind: 'metric', label: `Net ${b.net >= 0 ? '+' : '−'}${b.show(Math.abs(b.net))}` }];
   const base = { rule: 'buffer' as const, id: `buffer:${x.id}`, observed, evidence, basis: 'rule' as const, basisLabel: 'Buffer rule · level and net flow (rule-based)', certainty: 'observed' as const };
   const stoppedWords = (w: StageState | null) => (w?.culpritKind === 'stopped' || w?.culpritKind === 'planned' ? w.words : null);
 
@@ -1582,7 +1674,7 @@ function bufferInsight(x: X): Ranked[] {
         ...base,
         severity: ahead ? 'warning' : 'info',
         title: `Not filled — ${up} ${upW!.culpritKind === 'planned' ? 'in a planned stop' : 'stopped'}`,
-        why: `${cover != null ? `It covers ≈ ${dur(cover)} of ${down} at its current ${int(b.outflow)} tiles/h` : `${cap1(down)} is not drawing from it now`}${ahead ? `; then ${down} is starved${feedsKiln ? ' — the kiln, so line output is lost' : ''}` : ''}. ${cap1(up)} is ${upStop}.`,
+        why: `${cover != null ? `It covers ≈ ${dur(cover)} of ${down} at its current ${b.show(b.outflow)}` : `${cap1(down)} is not drawing from it now`}${ahead ? `; then ${down} is starved${feedsKiln ? ' — the kiln, so line output is lost' : ''}` : ''}. ${cap1(up)} is ${upStop}.`,
         next: ahead ? `Restore ${up} (${b.up?.machines.join(', ') ?? '—'}) before the buffer runs out.` : null,
       },
     ];
@@ -1610,7 +1702,7 @@ function bufferInsight(x: X): Ranked[] {
         ...base,
         severity: ahead ? 'warning' : 'info',
         title: `Not filled — ${up} ${upW?.held ? `itself ${upW.held}` : 'sends nothing'}`,
-        why: `${cover != null ? `It covers ≈ ${dur(cover)} of ${down} at its current ${int(b.outflow)} tiles/h` : `${cap1(down)} is not drawing from it now`}${ahead ? `; then ${down} is starved${feedsKiln ? ' — the kiln, so line output is lost' : ''}` : `; behind the kiln, ${down} waiting for tiles loses no line output`}. ${cap1(up)} is ${upW?.words ?? 'not running'} — the line is held further upstream.`,
+        why: `${cover != null ? `It covers ≈ ${dur(cover)} of ${down} at its current ${b.show(b.outflow)}` : `${cap1(down)} is not drawing from it now`}${ahead ? `; then ${down} is starved${feedsKiln ? ' — the kiln, so line output is lost' : ''}` : `; behind the kiln, ${down} waiting for tiles loses no line output`}. ${cap1(up)} is ${upW?.words ?? 'not running'} — the line is held further upstream.`,
         next: null,
       },
     ];
@@ -1620,7 +1712,7 @@ function bufferInsight(x: X): Ranked[] {
         ...base,
         severity: ahead ? 'info' : 'warning',
         title: `Not drawn — ${down} ${downW?.held ? `itself ${downW.held}` : 'takes nothing'}`,
-        why: `${fullMin != null ? `It is full in ≈ ${dur(fullMin)} at the current ${int(b.inflow)} tiles/h; then ${up} is blocked` : `${cap1(up)} is not filling it now`}${ahead ? ` — ahead of the kiln ${up} has spare capacity, so no line output is lost` : fedByKiln ? ' — that is the kiln, so line output is lost' : ' and the blockage moves towards the kiln'}. ${cap1(down)} is ${downW?.words ?? 'not running'} — the line is held further downstream.`,
+        why: `${fullMin != null ? `It is full in ≈ ${dur(fullMin)} at the current ${b.show(b.inflow)}; then ${up} is blocked` : `${cap1(up)} is not filling it now`}${ahead ? ` — ahead of the kiln ${up} has spare capacity, so no line output is lost` : fedByKiln ? ' — that is the kiln, so line output is lost' : ' and the blockage moves towards the kiln'}. ${cap1(down)} is ${downW?.words ?? 'not running'} — the line is held further downstream.`,
         next: null,
       },
     ];
@@ -1745,10 +1837,11 @@ function normalInsight(x: X, others: Ranked[]): Ranked[] {
       const sp = signalValue(s, `${x.id}.speed`);
       const conv = CONVEYOR_BY_ID[x.id];
       if (typeof sp.value === 'number') {
-        parts.push(`running at ${fmt1(sp.value)} m/min (nominal ${conv.speedMpm}), carrying ${int(x.rate)} tiles/h (${pct(x.rate / conv.capacityPerHour)} of capacity)`);
+        const r = x.rate;
+        parts.push(`running at ${fmt1(sp.value)} m/min (nominal ${conv.speedMpm})${r != null ? `, carrying ${int(r)} ${conveyorRateUnit(x.id)} (${pct(r / conv.capacityPerHour)} of capacity)` : ''}`);
         evidence.push(signalEvidence(x, 'speed', `Speed ${fmt1(sp.value)} m/min`));
       }
-    } else if (x.ideal) {
+    } else if (x.ideal && x.rate != null) {
       // The rate itself is the Key figures' rate tile (and the rate trend): said here in words only.
       const paced = pacedBy(x);
       parts.push(`running at ${pct(x.rate / x.ideal)} of ideal${paced ? `, paced by ${paced === 'supply' ? 'its supply' : 'the space downstream'}` : ''}`);
@@ -1775,7 +1868,7 @@ function normalInsight(x: X, others: Ranked[]): Ranked[] {
     const downF = flowing('down', b.down, b.outflow);
     const band = bufferBand(b);
     if (!upF.ok || !downF.ok || band.tone === 'warning') return [];
-    parts.push(`level ${pct(fill)} — ${band.meaning}`, `filling ${int(b.inflow)} and drawn ${int(b.outflow)} tiles/h`);
+    parts.push(`level ${pct(fill)} — ${band.meaning}`, `filling ${b.show(b.inflow)} and drawn ${b.show(b.outflow)}`);
     evidence.push(signalEvidence(x, 'level', `Level ${pct(fill)}`));
     const upName = b.up ? lower1(b.up.name) : 'the stage filling it';
     const downName = b.down ? lower1(b.down.name) : 'the next stage';
@@ -1946,7 +2039,8 @@ function lossOf(x: X): IntelAnalytics['loss'] {
     m2: tiles * M2_PER_TILE,
     reachedLine,
     ...(x.metrics.stale ? { notConfirmed: x.metrics.stale.label } : {}),
-    basis: `Planned production time this shift (${int(t.planned)} min) × ideal rate ${int(x.ideal)} tiles/h − ${int(t.count)} ${x.ip.output.noun} = ${int(tiles)} tiles${eq}. ${reach.words}`,
+    ...(x.ip.output.equivalent ? { unit: 'tile-eq.' } : {}),
+    basis: `Planned production time this shift (${int(t.planned)} min) × ideal rate ${int(x.ideal)} ${x.ip.output.equivalent ? 'tile-eq./h' : 'tiles/h'} − ${int(t.count)} ${x.ip.output.noun} = ${int(tiles)} ${x.ip.output.equivalent ? 'tile-eq.' : 'tiles'}${eq}. ${reach.words}`,
     breakdown: [
       { key: 'stops', label: 'Own stops', tiles: stops, hint: `${int(t.down)} min stopped by its own unplanned stops × ideal rate.` },
       { key: 'waiting', label: 'Waiting on neighbours', tiles: waiting, hint: `${int(t.starved + t.blocked)} min-equivalents starved or blocked × ideal rate.` },
@@ -1959,7 +2053,7 @@ function analytics(x: X): IntelAnalytics | null {
   const spec = x.ip.analytics;
   if (!spec || !x.status) return null;
   const s = x.s;
-  const list = samples(s, x.id, s.minute - LOG_MIN, s.minute);
+  const list = samples(s, x.id, s.minute - PANEL_WINDOW_MIN, s.minute);
   if (!list.length) return null;
   const from = list[0].t;
   const to = s.minute;
@@ -1972,7 +2066,7 @@ function analytics(x: X): IntelAnalytics | null {
     const label =
       op === 'unknown' && x.staleSince != null
         ? 'Unknown (feed stale)'
-        : op === 'planned' && stops.some((d) => d.start <= smp.t && (d.end ?? s.minute) > smp.t && isChangeover(d))
+        : op === 'changeover'
           ? 'Changeover'
           : undefined;
     const key = `${op}|${label ?? ''}`;
@@ -2039,7 +2133,7 @@ function bufferTrend(s: SimState, b: BufferDef): (number | null)[] {
   const log = s.bufferLog[b.id];
   if (!log) return [];
   const out: (number | null)[] = [];
-  for (let t = Math.max(0, s.minute - LOG_MIN); t < s.minute; t += 10) {
+  for (let t = Math.max(0, s.minute - PANEL_WINDOW_MIN); t < s.minute; t += 10) {
     const i = t % LOG_MIN;
     out.push(log.t[i] === t ? Math.round((log.level[i] / b.capacity) * 1000) / 10 : null);
   }
@@ -2055,6 +2149,7 @@ const STATE_INTERP: Record<OperationalState, { tone: IntelTone; label: string }>
   stopped: { tone: 'critical', label: 'Not producing' },
   fault: { tone: 'critical', label: 'Not producing · fault' },
   planned: { tone: 'neutral', label: 'Scheduled stop — not a fault' },
+  changeover: { tone: 'neutral', label: 'Product changeover — setup, not a fault' },
   disconnected: { tone: 'neutral', label: 'No data' },
   unknown: { tone: 'neutral', label: 'Last value — current state unknown' },
 };
@@ -2094,13 +2189,14 @@ function signalRow(x: X, def: SignalDef, cond: ReturnType<typeof conditionTrend>
       }
       if (reading.value == null) return row;
       if (reading.value === 'none') {
-        row.value = 'No active alarm';
-        row.interpretation = { tone: 'good', label: 'No alarm' };
+        // An absent alarm code is not proof of no fault: neutral words, no health verdict.
+        row.value = 'No active alarm code';
+        row.interpretation = { tone: 'neutral', label: 'No code reported' };
         return row;
       }
       const code = String(reading.value);
       row.value = code;
-      row.interpretation = { tone: x.op === 'planned' ? 'neutral' : 'critical', label: `${REASON_BY_CODE[code]?.label ?? code}${x.op === 'planned' ? ' (scheduled)' : ''}${x.status ? ` · since ${x.clock(x.status.since)}` : ''}` };
+      row.interpretation = { tone: x.op === 'planned' || x.op === 'changeover' ? 'neutral' : 'critical', label: `${REASON_BY_CODE[code]?.label ?? code}${x.op === 'planned' || x.op === 'changeover' ? ' (scheduled)' : ''}${x.status ? ` · since ${x.clock(x.status.since)}` : ''}` };
       return row;
     }
     case 'vibration':
@@ -2108,6 +2204,7 @@ function signalRow(x: X, def: SignalDef, cond: ReturnType<typeof conditionTrend>
     case 'motor_current': {
       if (num == null || !a) return row;
       const at = stale ? sensorsAt(s, x.id, Math.max(0, (reading.since ?? s.minute) - 1)) : (x.health?.reading ?? sensorsAt(s, x.id, Math.max(0, s.minute - 1)));
+      if (!at) return row;
       const tr = cond?.[def.name] ?? null;
       row.trend = tr && tr.some((v) => v != null) ? tr : null;
       row.unit = def.unit;
@@ -2160,7 +2257,7 @@ function signalRow(x: X, def: SignalDef, cond: ReturnType<typeof conditionTrend>
       row.interpretation = stale
         ? { tone: 'neutral', label: 'Last value' }
         : num <= 0.01
-          ? { tone: x.op === 'planned' ? 'neutral' : 'critical', label: 'Stopped' }
+          ? { tone: x.op === 'planned' || x.op === 'changeover' ? 'neutral' : 'critical', label: 'Stopped' }
           : Math.abs(num / conv.speedMpm - 1) <= 0.03
             ? { tone: 'good', label: 'At set speed' }
             : { tone: 'neutral', label: `${pct(num / conv.speedMpm)} of set speed` };
@@ -2171,7 +2268,7 @@ function signalRow(x: X, def: SignalDef, cond: ReturnType<typeof conditionTrend>
       if (num == null || !b) return row;
       row.value = num.toFixed(0);
       row.unit = '%';
-      row.limits = `low ${pct(BUFFER_BAND.low)} · high ${pct(BUFFER_BAND.high)} · ${int(s.buffers[b.id])} of ${int(b.capacity)} tiles`;
+      row.limits = `low ${pct(BUFFER_BAND.low)} · high ${pct(BUFFER_BAND.high)}${BULK_BUFFERS.has(b.id) ? ' · level only (no level-to-mass calibration)' : ` · ${int(s.buffers[b.id])} of ${int(b.capacity)} tiles`}`;
       // Read on its side of the kiln — the facet's, the tile's and the insight's band (a full buffer
       // ahead of the kiln, an empty one behind it, is normal balancing).
       const band = bufferLevelBand(b.id, num / 100);
@@ -2259,7 +2356,7 @@ function signals(x: X): IntelSignals {
   for (const def of [...defs].sort((a, b) => order(a.name) - order(b.name))) {
     const basis = basisOf(def.name);
     if (basis === 'placeholder' || basis === 'energy-model') {
-      addNm(NOT_MODELLED_SIGNALS[def.name] ?? { label: def.name.replace(/_/g, ' '), reason: basis === 'placeholder' ? 'no physical model' : 'energy is not monitored in this product' });
+      addNm(NOT_MODELLED_SIGNALS[def.name] ?? { label: def.name.replace(/_/g, ' '), reason: definitionOf(def.id)?.statusNote ?? (basis === 'placeholder' ? 'no physical model' : 'energy is not monitored in this product') });
       continue;
     }
     rows.push(signalRow(x, def, cond));
@@ -2360,20 +2457,49 @@ function askFor(id: string, list: IntelInsight[], fallback = `How is ${id} perfo
 export function deriveEquipmentIntel(s: SimState, id: string, ctx: IntelContext = DEFAULT_INTEL_CONTEXT): EquipmentIntel {
   const x = contextOf(s, id, ctx);
   const camera = cameraFor(id);
-  const list = insights(x);
+  // The rule engine's findings merged with the curated insights: one statement per topic.
+  const live = ctx.live ? liveFindingsFor(s, { kind: 'equipment', equipmentId: id }) : null;
+  const found = live ? live.value : assetFindings(s, id);
+  const merged = mergeFindings(insights(x), found);
+  const list = merged.insights;
+  const sigs = signals(x);
+  // The table keeps the panel's component-specific words ("Vibration · hydraulic power unit") where it has them.
+  const words = new Map(sigs.rows.map((r) => [r.id, r.label]));
+  const rows = signalTableRows(s, id).map((r) => (words.has(r.def.signalId) ? { ...r, label: words.get(r.def.signalId) } : r));
+  const wanted = ctx.range ?? '8h';
+  const tileKeys = x.metrics.kpis.filter((k) => !k.unavailable).map((k) => k.key);
+  // The history charts and the tile sparklines over the same range (a live card: its throttled set).
+  const history = () => {
+    const charts = panelCharts(s, { kind: 'equipment', equipmentId: id }, wanted);
+    return { charts, trends: tileTrends(s, id, tileKeys, charts?.range ?? wanted) };
+  };
+  const hist = ctx.live ? liveCharts(s, `charts:${id}:${wanted}`, tileKeys.join(','), wanted, history) : { value: history(), at: s.minute };
+  const charts = hist.value.charts && hist.at < s.minute ? { ...hist.value.charts, at: hist.at } : hist.value.charts;
+  const range = charts?.range ?? wanted;
+  // The log covers the range up to now (also while the live charts end a few minutes earlier).
+  const window = charts ? windowOf(s, range) : { from: s.minute - 480, to: s.minute };
   return {
     subject: { type: 'equipment', id, profile: x.prof },
-    header: header(x),
+    header: header(x, rows),
     feed: chooseFeed({ equipmentId: id, label: x.prof.name }, camera, EQUIPMENT_TOPICS[id] ?? [], ctx.cameraSources),
     facets: facets(x),
     metrics: x.metrics,
     insights: list,
     analytics: analytics(x),
-    signals: signals(x),
+    signals: sigs,
     events: events(x),
     health: x.health,
     cameraId: camera?.id ?? null,
     ask: askFor(id, list),
+    charts,
+    signalTable: rows,
+    history: (signalId) => seriesOf(s, signalId, range),
+    // An asset without operating data has nothing to evaluate: its catalogue says what is missing (Technical details).
+    findings: found.length && x.metrics.note !== NO_OPERATING_DATA ? (live ? { ...merged.findings, at: live.at } : merged.findings) : null,
+    log: eventLog(s, id, { from: window.from, to: window.to }, found),
+    catalog: catalogView(s, id),
+    process: x.metrics.note === NO_OPERATING_DATA ? null : processView(s, id),
+    tileTrends: hist.value.trends,
   };
 }
 
@@ -2395,11 +2521,11 @@ function vehicleZone(s: SimState, id: string): IntelHeader['zone'] {
 function vehicleAnalytics(s: SimState, v: Vehicle): IntelAnalytics | null {
   const now = s.minute;
   const end = v.despawned != null ? Math.min(now, v.despawned) : now;
-  const legs = v.legs.filter((l) => l.start < end && l.end > now - LOG_MIN).sort((a, b) => a.start - b.start);
+  const legs = v.legs.filter((l) => l.start < end && l.end > now - PANEL_WINDOW_MIN).sort((a, b) => a.start - b.start);
   if (!legs.length) return null;
   // Exact (fractional) leg bounds: a 0.2-min driving leg keeps its 0.2 min — rounding each bound to whole
   // minutes dropped short legs and made 1-min "no route record" slices between consecutive legs.
-  const from = Math.max(now - LOG_MIN, v.spawned, legs[0].start);
+  const from = Math.max(now - PANEL_WINDOW_MIN, v.spawned, legs[0].start);
   const to = end;
   if (to - from < 1) return null;
   /** Gaps shorter than this between consecutive legs are float noise, not a missing route record. */

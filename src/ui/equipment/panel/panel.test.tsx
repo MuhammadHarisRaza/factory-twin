@@ -19,7 +19,8 @@ import type { ReactElement } from 'react';
 import { useApp } from '../../../app/store';
 import { activateScenario, advance, createSim, type SimState } from '../../../sim/engine';
 import { useSim } from '../../../sim/store';
-import { useTwin } from '../../../store';
+import { focusShift, useTwin } from '../../../store';
+import { Toolbar } from '../../Toolbar';
 import { useCopilot } from '../../copilot/store';
 import { useLiveStatus } from '../../feeds/registry';
 import { StagePanel } from '../../twin/StagePanel';
@@ -125,8 +126,8 @@ describe('one panel for every asset and vehicle', () => {
   it('lists what is not modelled once, with the reasons, and never as a tile', () => {
     const out = panel(normal, deriveEquipmentIntel(normal, 'H-KILN'));
     expect(count(out, /<b>Not modelled<\/b>/g)).toBe(1);
-    expect(out).toContain('Firing temperature profile');
-    expect(out).toContain('no thermal model of the kiln');
+    expect(out).toContain('Firing temperature profile (single value)');
+    expect(out).toContain('five simulated zone temperatures');
     expect(out.slice(out.indexOf('class="eqp-kpis"'), out.indexOf('</section>', out.indexOf('class="eqp-kpis"')))).not.toContain('Temperature profile');
     // No kiln wording on another asset.
     for (const id of ['E-PRS2', 'C-BM1', 'J-BOX', 'I-BUF']) expect(text(panel(normal, deriveEquipmentIntel(normal, id))), id).not.toMatch(/Firing temperature|Tiles fired/);
@@ -144,13 +145,15 @@ describe('one panel for every asset and vehicle', () => {
 });
 
 describe('the one feed', () => {
-  it('kiln: the client recording in the bare player — no badge on the picture, the source-details control says what it is', () => {
+  it('kiln: the client recording in the bare player — no badge on the picture, only its honest chip; the source-details control says what it is', () => {
     const m = deriveEquipmentIntel(normal, 'H-KILN');
     expect(m.feed.kind).toBe('recording');
     const out = panel(normal, m);
     expect(out).toContain('class="vp compact bare"');
     expect(out).toContain('class="vp-poster"');
     expect(out).not.toContain('eqp-feed-badge');
+    expect(out).toMatch(/class="eqp-feed-tag k-recording"[^>]*>.*?Recorded footage · not live<\/span>/);
+    expect(text(out)).not.toContain('Live stream');
     expect(out).toContain('aria-label="Source details · recorded footage, not a live feed" aria-expanded="false"');
     expect(out).toContain('title="Recorded footage — not a live feed. Source details"');
     // Nothing plays before the frame is on screen (the still is the file's metadata frame); the details are in the popover, not under the player.
@@ -168,10 +171,11 @@ describe('the one feed', () => {
     expect(stk.feed.kind).toBe('reference');
     const ref = panel(normal, stk);
     expect(ref).not.toContain('eqp-feed-badge');
-    expect(ref).toContain('aria-label="Source details · reference footage, not a live feed"');
+    expect(ref).toContain('Reference footage · not this plant, not live');
+    expect(ref).toContain('aria-label="Source details · reference footage, not this plant, not a live feed"');
   });
 
-  it('a configured stream: "Live stream" and the connected source only while it actually plays', () => {
+  it('a configured stream: "Live stream" only while it actually plays; the data badge stays Simulated', () => {
     const ctx: IntelContext = { finance: useApp.getState().finance, cameraSources: { 'CAM-E1': { url: 'https://gw.example/press.mp4', kind: 'auto' } } };
     const m = deriveEquipmentIntel(normal, 'E-PRS2', ctx);
     expect(m.feed.kind).toBe('live-stream');
@@ -188,7 +192,10 @@ describe('the one feed', () => {
     useLiveStatus.setState({ byCamera: { 'CAM-E1': { state: 'live', at: 0 } } });
     out = panel(normal, m);
     expect(out).toMatch(/>Live stream</);
-    expect(out).toContain('Simulated · camera connected');
+    // Wave 3: the data badge stays Simulated while the stream plays — the stream's state is the feed badge's only.
+    expect(out).not.toContain('camera connected');
+    expect(out).toContain('>Simulated</span>');
+    expect(out).not.toContain('prov-connected');
     useLiveStatus.setState({ byCamera: {} });
     useApp.setState({ cameraSources: {} });
   });
@@ -330,23 +337,25 @@ describe('review fixes: the panel says each figure once', () => {
     // The tile carries the facet's words (one statement of rate vs ideal).
     const tiles = out.slice(out.indexOf('class="eqp-kpis"'), out.indexOf('</section>', out.indexOf('class="eqp-kpis"')));
     expect(text(tiles)).toContain(rateFacet.value.charAt(0).toUpperCase() + rateFacet.value.slice(1));
-    expect(out).not.toContain('data-signal="H-KILN.rate"');
-    expect(out).not.toContain('data-signal="H-KILN.state"');
+    // Wave 3: the signal table is the catalogue (every simulated signal has its row, the rate included).
     expect(out).toContain('data-signal="H-KILN.vibration"');
+    expect(out).toContain('data-signal="H-KILN.rate"');
     // The header says "Simulated"; the Signals heading does not repeat "Simulated · now".
     expect(visible(out)).not.toContain('Simulated · now');
     // "No own stop" is the Stoppages tile's (no analytics cell repeating it).
     expect(visible(out)).not.toMatch(/No own stop/);
     // The rate figure appears in the tile only (the insight says it in words).
     const rate = m.metrics.kpis.find((k) => k.key === 'rate')!.value!;
-    expect(visible(out).split(`${rate} tiles/h`).length - 1).toBeLessThanOrEqual(1);
+    // The tile, and its catalogue row in the signal table (Wave 3) — no third statement (insights say it in words).
+    expect(visible(out).split(`${rate} tiles/h`).length - 1).toBeLessThanOrEqual(2);
+    expect(rate).toBeTruthy();
   });
 
   it('a stop: the stop code is the header’s, the event row an insight presents is collapsed', () => {
     const m = deriveEquipmentIntel(kilnStop, 'H-KILN');
     const out = panel(kilnStop, m);
     expect(m.header.state.label).toMatch(/^Stopped · /);
-    expect(out).not.toContain('data-signal="H-KILN.alarm"');
+    // The alarm code is a catalogue row of the signal table (Wave 3); the header carries the stop reason in words.
     // The insight's chips do not restate the header (run state / stop code).
     const ins = out.slice(out.indexOf('data-insight='), out.indexOf('</section>', out.indexOf('data-insight=')));
     expect(ins).not.toMatch(/State STOPPED|Alarm \/ reason code/);
@@ -397,7 +406,7 @@ describe('review fixes: the panel says each figure once', () => {
   it('a camera view keeps its badge (twin view, simulated); the ⓘ tells a client recording from public reference footage; neutral and planned have their own icons', () => {
     expect(panel(normal, deriveEquipmentIntel(normal, 'E-PRS2'))).toMatch(/class="eqp-feed-badge k-twin-view[^"]*"[^>]*><svg[^>]*lucide-monitor-play/);
     expect(panel(normal, deriveEquipmentIntel(normal, 'H-KILN'))).toContain('title="Recorded footage — not a live feed. Source details"');
-    expect(panel(normal, deriveEquipmentIntel(normal, 'A-STK'))).toContain('title="Reference footage — not a live feed. Source details"');
+    expect(panel(normal, deriveEquipmentIntel(normal, 'A-STK'))).toContain('title="Reference footage — not this plant, not a live feed. Source details"');
     expect(TONE_ICON.planned).toBe(CalendarClock);
     expect(TONE_ICON.neutral).not.toBe(CircleDashed);
   });
@@ -536,16 +545,25 @@ describe('the wide panel: 70 % of the screen, the video across its top', () => {
     expect(WIDE_PANEL_MIN_PX).toBeGreaterThanOrEqual(700);
   });
 
-  it('wide (the default): the feed and facets run across the top, then two columns; the header offers compact', () => {
+  it('wide (the default): the approved card — feed, key figures and process across the top, then two columns; the header offers compact', () => {
     expect(useTwinUi.getState().panelWide).toBe(true);
     const out = at(1680, true, <EquipmentPanel intel={deriveEquipmentIntel(normal, 'H-KILN')} now={normal.minute} />);
     expect(out).toMatch(/class="inspector overlay-panel tw-insp eqp [^"]*eqp-wide/);
     expect(out).toMatch(/<button type="button" class="btn ghost sm icon eqp-width" aria-pressed="true" aria-label="Wide panel"/);
-    // The feed sits before the columns, across the whole panel; no badge on the recording.
+    // The feed sits before the columns, across the whole panel; the recording carries only its honest chip, no badge.
     expect(out.indexOf('class="eqp-feed ')).toBeLessThan(out.indexOf('class="eqp-cols"'));
     expect(out).not.toContain('eqp-feed-badge');
-    expect(sections(out, 'class="eqp-col eqp-col-a"')).toEqual(['Key figures', 'What matters', 'Events']);
-    expect(sections(out, 'class="eqp-col eqp-col-b"')).toEqual(['Last 4 h', 'Signals']);
+    expect(out).toContain('Recorded footage · not live');
+    // Key figures and the firing profile (with the one time-range control) run across the card above the columns.
+    const head = (t: string) => out.indexOf(`>${t}</h3>`);
+    expect(head('Key figures')).toBeGreaterThan(out.indexOf('class="eqp-feed '));
+    expect(head('Firing profile · now')).toBeGreaterThan(head('Key figures'));
+    expect(head('Firing profile · now')).toBeLessThan(out.indexOf('class="eqp-cols"'));
+    expect(out.split('aria-label="Chart time range"').length - 1).toBe(1);
+    // Charts on the left, what matters and events on the right; the signal table across the card under them.
+    // Insights beside events, then the charts (two per row) and the signal table across the full width.
+    expect(sections(out, 'class="eqp-col eqp-col-a"')).toEqual(['What matters']);
+    expect(sections(out, 'class="eqp-col eqp-col-b"').slice(0, 3)).toEqual(['Events &amp; alarms', 'How it has behaved', 'PLC signals']);
     // Continue in and technical details run under both columns.
     expect(out.indexOf('class="eqp-links"')).toBeGreaterThan(out.indexOf('class="eqp-col eqp-col-b"'));
   });
@@ -555,7 +573,7 @@ describe('the wide panel: 70 % of the screen, the video across its top', () => {
     expect(compact).not.toContain('eqp-cols');
     expect(compact).not.toContain('eqp-wide');
     expect(compact).toContain('aria-pressed="false" aria-label="Wide panel"');
-    expect([...compact.matchAll(/<h3 id="[^"]+">([^<]+)<\/h3>/g)].map((m) => m[1]).slice(0, 5)).toEqual(['Key figures', 'What matters', 'Last 4 h', 'Signals', 'Events']);
+    expect([...compact.matchAll(/<h3 id="[^"]+">([^<]+)<\/h3>/g)].map((m) => m[1]).slice(0, 6)).toEqual(['Key figures', 'Firing profile · now', 'What matters', 'How it has behaved', 'PLC signals', 'Events &amp; alarms']);
     const noRoom = at(700, true, <EquipmentPanel intel={deriveEquipmentIntel(normal, 'H-KILN')} now={normal.minute} />);
     expect(noRoom).not.toContain('eqp-cols');
     expect(noRoom).not.toContain('eqp-width');
@@ -567,8 +585,42 @@ describe('the wide panel: 70 % of the screen, the video across its top', () => {
     const st = at(1680, true, <StagePanel id="KILN" />);
     expect(st).toMatch(/class="inspector overlay-panel tw-insp eqp eqp-stage eqp-wide"/);
     expect(st.indexOf('class="eqp-top"')).toBeLessThan(st.indexOf('class="eqp-cols"'));
-    expect(sections(st, 'class="eqp-col eqp-col-a"')).toEqual(['Key figures', 'Equipment']);
-    expect(sections(st, 'class="eqp-col eqp-col-b"')).toEqual(['Open events']);
+    expect(sections(st, 'class="eqp-col eqp-col-a"').filter((x) => x !== 'What matters')).toEqual(['Key figures', 'Equipment']);
+    expect(sections(st, 'class="eqp-col eqp-col-b"')).toEqual(['How it has behaved', 'Open events']);
+  });
+
+  it('a focus beside the wide panel is not shifted again (the view offset centres it); compact keeps the 0.1 shift', () => {
+    useTwinUi.setState({ viewW: 1680, panelWide: true, insetRight: 0 });
+    try {
+      expect(focusShift()).toBe(0);
+      useTwinUi.setState({ panelWide: false });
+      expect(focusShift()).toBe(0.1);
+      useTwinUi.setState({ panelWide: true, viewW: 700 });
+      expect(focusShift()).toBe(0.1);
+      useTwinUi.setState({ insetRight: 1100 });
+      expect(focusShift()).toBe(0);
+    } finally {
+      useTwinUi.setState({ viewW: 0, panelWide: true, insetRight: 0 });
+    }
+  });
+
+  it('showing the zone list from the rail makes the panel compact for now only; hiding it brings back the chosen width', () => {
+    useTwinUi.getState().setPanelWide(false, false);
+    expect(useTwinUi.getState().panelWide).toBe(false);
+    useTwinUi.getState().restorePanelWidth();
+    expect(useTwinUi.getState().panelWide).toBe(true);
+  });
+
+  it('the rail’s zone-list button says the list is folded away beside the wide panel (showing it makes the panel compact)', () => {
+    useTwin.setState({ zonePanel: true, selected: 'H-KILN', vehicle: null, stage: null });
+    try {
+      const wide = at(1680, true, <Toolbar />);
+      expect(wide).toMatch(/class="tw-tool "[^>]*aria-pressed="false" aria-label="Show zones &amp; views panel"/);
+      const compact = at(1680, false, <Toolbar />);
+      expect(compact).toMatch(/class="tw-tool on"[^>]*aria-pressed="true" aria-label="Hide zones &amp; views panel"/);
+    } finally {
+      useTwin.setState({ selected: null });
+    }
   });
 
   it('stylesheet: the twin grid gives the panel 70 % of the screen and folds the zone and live lists; the feed is capped, letterboxed', async () => {
@@ -578,5 +630,10 @@ describe('the wide panel: 70 % of the screen, the video across its top', () => {
     const p = await readText('./panel.css');
     expect(p).toMatch(/\.eqp-wide \.eqp-b \{\s*container-type: size;/);
     expect(p).toMatch(/\.eqp-wide \.eqp-feed \.vp-frame,\s*\.eqp-wide \.eqp-feed \.feed-media \{\s*max-height: 80cqh;/);
+    expect(p).toMatch(/\.eqp-wide \.eqp-feed \.feed-img,\s*\.eqp-wide \.eqp-feed \.vp-poster img,\s*\.eqp-wide \.eqp-feed \.vp-still \{\s*object-fit: contain;/);
+    // An embed's keyboard Pause / Resume is drawn only while it has focus (no visible controls otherwise).
+    const v = await readText('../../../video/video.css');
+    expect(v).toMatch(/\.vp-toggle \{[^}]*clip-path: inset\(50%\);[^}]*opacity: 0;/);
+    expect(v).toMatch(/\.vp-toggle:focus-visible \{\s*clip-path: none;\s*opacity: 1;/);
   });
 });

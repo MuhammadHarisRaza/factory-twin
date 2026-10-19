@@ -4,9 +4,12 @@
  * it, the integrity checks evaluated from the data (the ten of §10 plus constraint data freshness), the count reconciliation and the three
  * largest OEE losses.
  */
+import { useState } from 'react';
 import { ArrowDown, CircleCheck, CircleSlash, Clock, TriangleAlert, type LucideIcon } from 'lucide-react';
 import { TARGET } from '../../model/plant';
 import { formatClock } from '../../sim/time';
+import { RankedBars, TimeSeriesChart, type TimeSeries } from '../../ui/kit/charts';
+import type { Metric } from '../../sim/oee';
 import { fmt1, fmtInt, fmtPct } from '../../ui/kit/format';
 import { KpiStatusText, ProvenanceBadge } from '../../ui/kit/Page';
 import { MetricText, StatusBadge, type Tone } from '../../ui/kit/Status';
@@ -14,7 +17,7 @@ import type { ProductionTab } from '../ProductionPage';
 import { Block } from './common';
 import type { CheckStatus, IntegrityCheck, reconciliationView } from './integrity';
 import { FinanceNote, LossCards } from './LossCards';
-import { OEE_DEFINITIONS, type OeeData, type OeeView } from './oee';
+import { OEE_DEFINITIONS, type OeeData, type OeeTrend, type OeeView, type PartialOee, type StageOeeRow } from './oee';
 import { useProductionUi } from './ui';
 
 const CHECK: Record<CheckStatus, { label: string; tone: Tone; icon: LucideIcon }> = {
@@ -33,7 +36,12 @@ export function OeeTab({ d, onTab }: { d: OeeData; onTab: (t: ProductionTab) => 
   const passed = d.checks.filter((c) => c.status === 'pass').length;
   return (
     <>
-      <OeeSummary v={d.v} periodLabel={d.p.label} />
+      <OeeSummary v={d.v} periodLabel={d.p.label} partial={d.partial} />
+
+      <div className="prod-2col">
+        <OeeTrendBlock t={d.trend} periodLabel={d.p.label} />
+        <StageComparison rows={d.stages} periodLabel={d.p.label} />
+      </div>
 
       <div className="work">
         <Block
@@ -75,7 +83,7 @@ export function OeeTab({ d, onTab }: { d: OeeData; onTab: (t: ProductionTab) => 
 
 // ── OEE summary ───────────────────────────────────────────────────────────────
 
-function OeeSummary({ v, periodLabel }: { v: OeeView; periodLabel: string }) {
+function OeeSummary({ v, periodLabel, partial }: { v: OeeView; periodLabel: string; partial: PartialOee | null }) {
   const r = v.oee;
   const gap = v.gapPts;
   // A stale kiln / sorting feed: the same "Not confirmed" status as the Line OEE KPI, never a target verdict.
@@ -112,6 +120,11 @@ function OeeSummary({ v, periodLabel }: { v: OeeView; periodLabel: string }) {
           <span className="prod-oee-target">Target {fmtPct(TARGET.oeeTarget, 0)}</span>
           {status && <KpiStatusText status={status} />}
           {r.status !== 'ok' && r.issue && <span className="muted">{r.issue}</span>}
+          {partial && (
+            <p className="prod-oee-partial" role="note">
+              <StatusBadge tone="neutral" icon={CircleSlash} label={partial.label} /> {partial.formula} = <b className="num">{fmtPct(partial.value)}</b> — not an OEE figure.
+            </p>
+          )}
           {v.staleNote && (
             <p className="prod-oee-stale" role="note">
               {v.staleNote}
@@ -152,6 +165,117 @@ function OeeSummary({ v, periodLabel }: { v: OeeView; periodLabel: string }) {
         <ul className="prod-interp">
           {v.interpretation.map((t) => (
             <li key={t}>{t}</li>
+          ))}
+        </ul>
+      )}
+    </Block>
+  );
+}
+
+// ── OEE trend ────────────────────────────────────────────────────────────────
+
+type SeriesKey = 'oee' | 'availability' | 'performance' | 'quality';
+const SERIES: { key: SeriesKey; label: string; color: string }[] = [
+  { key: 'oee', label: 'OEE', color: 'var(--series-1)' },
+  { key: 'availability', label: 'Availability', color: 'var(--series-3)' },
+  { key: 'performance', label: 'Performance', color: 'var(--series-4)' },
+  { key: 'quality', label: 'Quality', color: 'var(--series-5)' },
+];
+
+function OeeTrendBlock({ t, periodLabel }: { t: OeeTrend; periodLabel: string }) {
+  const [on, setOn] = useState<Record<SeriesKey, boolean>>({ oee: true, availability: false, performance: false, quality: false });
+  const per = t.granularity === 'hour' ? 'hour' : 'shift';
+  const series: TimeSeries[] = SERIES.filter((x) => on[x.key]).map((x) => ({
+    id: x.key,
+    label: x.label,
+    color: x.color,
+    step: true,
+    t: t.points.map((p) => p.t),
+    v: t.points.map((p) => (p[x.key] == null ? null : p[x.key]! * 100)),
+  }));
+  if (on.oee && t.partials > 0)
+    series.push({ id: 'partial', label: 'Partial A × P (quality input missing)', color: 'var(--text-2)', dashed: true, step: true, t: t.points.map((p) => p.t), v: t.points.map((p) => (p.partialOee == null ? null : p.partialOee * 100)) });
+  return (
+    <Block
+      title="OEE trend"
+      subtitle={`Line OEE per ${per} · ${periodLabel} · %`}
+      actions={
+        <div className="seg" role="group" aria-label="Series">
+          {SERIES.map((x) => (
+            <button key={x.key} type="button" aria-pressed={on[x.key]} className={on[x.key] ? 'on' : ''} onClick={() => setOn((o) => ({ ...o, [x.key]: !o[x.key] }))}>
+              {x.label}
+            </button>
+          ))}
+        </div>
+      }
+      note={
+        <span>
+          Each {per} is computed like the period figure (A × P × Q at the kiln, Q at sorting). A {per} without a valid figure is a gap
+          {t.gaps ? ` (${t.gaps} here)` : ''}, never 0 %.{t.partials ? ` Where quality is missing the dashed line is A × P only — partial, not OEE.` : ''}
+        </span>
+      }
+    >
+      {series.length ? (
+        <TimeSeriesChart
+          label={`Line OEE per ${per}`}
+          from={t.from}
+          to={t.to}
+          unit="%"
+          yMin={0}
+          yMax={100}
+          height={200}
+          formatValue={(v) => `${v.toFixed(1)}`}
+          series={series}
+          refLines={on.oee ? [{ value: TARGET.oeeTarget * 100, label: `Target ${fmtPct(TARGET.oeeTarget, 0)}`, kind: 'target' }] : []}
+          emptyReason="No OEE value in this period yet"
+        />
+      ) : (
+        <p className="muted">Select at least one series.</p>
+      )}
+    </Block>
+  );
+}
+
+// ── Stage comparison ─────────────────────────────────────────────────────────
+
+const metricPct = (m: Metric) => (m.status === 'ok' ? fmtPct(m.value) : m.status === 'invalid' ? 'Invalid' : 'Unavailable');
+
+function StageComparison({ rows, periodLabel }: { rows: StageOeeRow[]; periodLabel: string }) {
+  const bars = rows.flatMap((r) =>
+    r.machines.filter((m) => m.oee.status === 'ok').map((m) => ({ key: m.id, label: <span>{r.stageName} · <span className="mono">{m.id}</span></span>, value: m.oee.value! })),
+  );
+  const missing = rows.flatMap((r) => r.machines.filter((m) => m.oee.status !== 'ok').map((m) => ({ r, m })));
+  const notMeaningful = rows.filter((r) => !r.meaningful);
+  const material = rows.filter((r) => r.meaningful && r.note);
+  return (
+    <Block
+      title="OEE by stage"
+      subtitle={`Each machine’s own OEE, grouped by monitored stage · ${periodLabel}`}
+      note={
+        <span>
+          Asset-level figures: they are not added up and downtime is not counted twice across stages — the line loss is counted once, at the kiln.
+          {material.length ? ` ${material.map((r) => r.stageName).join(' and ')}: ${material[0].note!.toLowerCase()}.` : ''}
+        </span>
+      }
+    >
+      {bars.length ? (
+        <RankedBars rows={[...bars].sort((a, b) => a.value - b.value)} format={(v) => fmtPct(v)} valueHeader="OEE" labelHeader="Stage · machine" showCumulative={false} />
+      ) : (
+        <p className="muted">No machine OEE in this period yet.</p>
+      )}
+      {(missing.length > 0 || notMeaningful.length > 0) && (
+        <ul className="prod-oee-na">
+          {missing.map(({ r, m }) => (
+            <li key={m.id}>
+              {r.stageName} · <span className="mono">{m.id}</span> — {metricPct(m.oee)}
+              {m.oee.issue ? ` (${m.oee.issue})` : ''}
+              {m.partial ? ` · ${m.partial.label}: ${m.partial.formula} = ${fmtPct(m.partial.value)}` : ''}
+            </li>
+          ))}
+          {notMeaningful.map((r) => (
+            <li key={r.stage}>
+              {r.stageName} — {r.note}
+            </li>
           ))}
         </ul>
       )}

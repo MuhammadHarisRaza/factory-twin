@@ -26,6 +26,8 @@ import type { FlowKind } from '../data/types';
 import { viewShortcut } from './ZonePanel';
 import { QUICK_VIEWS } from './twin/quickViews';
 import { useTip } from './twin/Tip';
+import { useTwinUi } from './twin/uiStore';
+import { useWideSubjectPanel } from './twin/wideSubject';
 
 const LAYER_ICONS: Record<LayerId, LucideIcon> = {
   roof: House,
@@ -181,6 +183,10 @@ export function Toolbar() {
   const toggle = useTwin((s) => s.toggle);
   const zonePanel = useTwin((s) => s.zonePanel);
   const setZonePanel = useTwin((s) => s.setZonePanel);
+  // Beside the wide subject panel the zone list is folded away: the button says so, and showing the list
+  // switches the panel to its compact width.
+  const wide = useWideSubjectPanel();
+  const zonesShown = zonePanel && !wide;
   const [views, setViews] = useState<DOMRect | null>(null);
   const [alerts, setAlerts] = useState<DOMRect | null>(null);
   const alertFilter = useTwin((s) => s.alertFilter);
@@ -190,13 +196,23 @@ export function Toolbar() {
   return (
     <div className="tw-rail overlay-panel" role="toolbar" aria-orientation="vertical" aria-label="View and layer controls">
       <button
-        className={`tw-tool ${zonePanel ? 'on' : ''}`}
-        onClick={() => setZonePanel(!zonePanel)}
-        aria-pressed={zonePanel}
-        aria-label={zonePanel ? 'Hide zones & views panel' : 'Show zones & views panel'}
+        className={`tw-tool ${zonesShown ? 'on' : ''}`}
+        onClick={() => {
+          if (wide) {
+            // Showing the list beside a wide panel makes the panel compact for now — not a saved width choice.
+            useTwinUi.getState().setPanelWide(false, false);
+            setZonePanel(true);
+          } else {
+            setZonePanel(!zonePanel);
+            // Hiding the list again brings back the width the viewer chose.
+            if (zonePanel) useTwinUi.getState().restorePanelWidth();
+          }
+        }}
+        aria-pressed={zonesShown}
+        aria-label={zonesShown ? 'Hide zones & views panel' : 'Show zones & views panel'}
         {...tip.bind('zones', 'right')}
       >
-        {zonePanel ? <PanelLeftClose size={17} /> : <PanelLeftOpen size={17} />}
+        {zonesShown ? <PanelLeftClose size={17} /> : <PanelLeftOpen size={17} />}
       </button>
       <button
         className={`tw-tool ${views ? 'on' : ''}`}
@@ -247,7 +263,7 @@ export function Toolbar() {
         </div>
       ))}
       {tip.render((key) => {
-        if (key === 'zones') return <b>{zonePanel ? 'Hide' : 'Show'} zones & views panel</b>;
+        if (key === 'zones') return <b>{zonesShown ? 'Hide zones & views panel' : wide ? 'Show zones & views panel (the panel turns compact)' : 'Show zones & views panel'}</b>;
         if (key === 'views') return <b>Camera views · keys 1–0</b>;
         if (key === 'alerts')
           return (

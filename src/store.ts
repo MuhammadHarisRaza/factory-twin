@@ -6,6 +6,8 @@ import { EQUIPMENT_BY_ID } from './data/equipment';
 import type { PresetId, Vec3 } from './data/types';
 import { MONITORED_STAGE_BY_ID } from './model/plant';
 import type { MonitoredStageId } from './model/types';
+import { useTwinUi } from './ui/twin/uiStore';
+import { widePanelFits } from './ui/twin/panelWidth';
 
 /**
  * Which status markers the 3D model shows: every alert, only serious and critical ones, or none
@@ -59,10 +61,12 @@ export type BoundsLike = { min: XYZ; max: XYZ };
 /**
  * Camera pose that frames an asset's bounding box (plain numbers, no three.js at runtime): the bounding
  * sphere fills ~85 % of the vertical field of view, the current compass direction is kept (buildings are
- * entered from the south, where the cutaway walls are low) and the asset sits left of centre, clear of
- * the inspector panel. An empty box behaves like THREE.Box3 (centre and size zero).
+ * entered from the south, where the cutaway walls are low) and, with `shiftFactor` (the compact panel),
+ * the asset sits left of centre, clear of the inspector panel. Beside the wide panel the factor is 0: the
+ * scene's view offset (Scene.tsx ViewInset) already centres the view in the strip left of the panel.
+ * An empty box behaves like THREE.Box3 (centre and size zero).
  */
-export function focusPose(box: BoundsLike, cam: { x: number; z: number; tx: number; tz: number }): { pos: Vec3; target: Vec3 } {
+export function focusPose(box: BoundsLike, cam: { x: number; z: number; tx: number; tz: number }, shiftFactor = 0.1): { pos: Vec3; target: Vec3 } {
   const { min, max } = box;
   const empty = max.x < min.x || max.y < min.y || max.z < min.z;
   const center: XYZ = empty ? { x: 0, y: 0, z: 0 } : { x: (min.x + max.x) / 2, y: (min.y + max.y) / 2, z: (min.z + max.z) / 2 };
@@ -92,13 +96,27 @@ export function focusPose(box: BoundsLike, cam: { x: number; z: number; tx: numb
     normalise();
   }
   const elevation = (34 * Math.PI) / 180;
-  // Shift the framing so the asset sits left of centre, clear of the inspector panel.
-  const shift = distance * 0.1;
+  // Shift the framing so the asset sits left of centre, clear of the (compact) inspector panel.
+  const shift = distance * shiftFactor;
   const target: Vec3 = [center.x + dz * shift, center.y * 0.55, center.z - dx * shift];
   const out = Math.cos(elevation) * distance;
   const pos: Vec3 = [target[0] + dx * out, Math.max(3, target[1] + Math.sin(elevation) * distance), target[2] + dz * out];
   return { pos, target };
 }
+
+/**
+ * The framing shift for a focus that opens the subject panel: none when the panel will be wide (its
+ * insetRight is only measured after it opens, so the viewer's choice and the fit decide), else 0.1.
+ */
+export function focusShift(): number {
+  const ui = useTwinUi.getState();
+  const wide = ui.insetRight > 0 || (ui.panelWide && typeof window !== 'undefined' && typeof window.innerWidth === 'number' && widePanelFits(window.innerWidth, ui.viewW));
+  return wide ? 0 : 0.1;
+}
+
+/** The last framing of an asset or stage: what it framed, with which shift, under which camera request. */
+let lastFocus: { id: string; shift: number; nonce: number } | null = null;
+export const lastFocusPose = () => lastFocus;
 
 type CameraRequest = {
   pos: Vec3;
@@ -198,8 +216,10 @@ export const useTwin = create<TwinState>((set, get) => ({
         : { min: { ...b.min }, max: { ...b.max } };
     }
     if (box) {
-      const { pos, target } = focusPose(box, minimapCamera);
+      const shift = focusShift();
+      const { pos, target } = focusPose(box, minimapCamera, shift);
       set((s) => ({ camera: { pos, target, nonce: s.camera.nonce + 1 }, zone: st.zone }));
+      lastFocus = { id, shift, nonce: get().camera.nonce };
     } else set({ zone: st.zone });
   },
   setAlertFilter: (alertFilter) => set({ alertFilter }),
@@ -231,8 +251,10 @@ export const useTwin = create<TwinState>((set, get) => ({
   focusEquipment: (id) => {
     const box = equipmentBounds.get(id);
     if (!box) return;
-    const { pos, target } = focusPose(box, minimapCamera);
+    const shift = focusShift();
+    const { pos, target } = focusPose(box, minimapCamera, shift);
     set((s) => ({ camera: { pos, target, nonce: s.camera.nonce + 1 } }));
+    lastFocus = { id, shift, nonce: get().camera.nonce };
   },
   reset: () => {
     set({ selected: null, zone: null, vehicle: null, follow: false, stage: null });

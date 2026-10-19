@@ -424,7 +424,23 @@ export type ScenarioKind =
   | 'maintenance'
   | 'conveyor-stop'
   | 'signal-loss'
-  | 'restricted-entry';
+  | 'restricted-entry'
+  /** A process value runs away from its setpoint (src/sim/process.ts); beyond its warning band it raises the reject weights of the defects that originate at its stage. */
+  | 'process-deviation'
+  /** A telemetry fault on one asset or signal (quality flag, frozen value, counter reset, spike, gap, command without feedback). */
+  | 'data-quality';
+
+/**
+ * What a 'data-quality' scenario does to the telemetry of its asset (src/sim/telemetry.ts). Production is
+ * unchanged, except for 'command-no-feedback', which holds the machine stopped while its run command stays on.
+ * - bad-quality: samples carry quality 'bad';
+ * - frozen: the value and its timestamp stop updating (quality is judged from the age);
+ * - counter-reset: the asset's counters restart from 0 at the scenario start (a one-off event);
+ * - spike: implausible readings outside the engineering range every few minutes;
+ * - gap: no samples at all while active;
+ * - command-no-feedback: run command on, no running feedback.
+ */
+export type DataQualityMode = 'bad-quality' | 'frozen' | 'counter-reset' | 'spike' | 'gap' | 'command-no-feedback';
 
 export type ScenarioActivation = {
   id: string;
@@ -441,6 +457,14 @@ export type ScenarioActivation = {
   /** Vehicle the scenario acts on (restricted-zone entry). */
   vehicleId?: string;
   count?: number;
+  /** 'process-deviation': the PV id (PROCESS_SIGNALS, role 'pv'); 'data-quality': the one signal affected (all of the asset's when absent). */
+  signalId?: string;
+  /** 'process-deviation': offset of the PV from its setpoint, engineering units (signed). */
+  offset?: number;
+  /** 'process-deviation': minutes over which the offset ramps in (0 / absent = a step). */
+  rampMin?: number;
+  /** 'data-quality': the telemetry fault. */
+  mode?: DataQualityMode;
   label: string;
 };
 
@@ -461,11 +485,14 @@ export type FeedRuntime = {
   lastState?: MachineState;
   lastCount?: number;
   lastRate?: number;
+  /** Every signal of the asset as last received (signal id → reading), served while the feed is stale. */
+  last?: Record<string, { value: number | string | null; text: string }>;
 };
 
 /**
  * State shown for an asset, derived only from signal logic or scenarios:
- * a planned stop is not a fault, starvation/blockage are caused elsewhere, and an asset whose
+ * a planned stop is not a fault, starvation/blockage are caused elsewhere, a product changeover is
+ * 'changeover' (setup — still an availability loss, unlike a planned stop), and an asset whose
  * data feed is stale is 'unknown' rather than assumed to be running.
  */
 export type OperationalState =
@@ -477,6 +504,7 @@ export type OperationalState =
   | 'starved'
   | 'blocked'
   | 'planned'
+  | 'changeover'
   | 'disconnected'
   | 'unknown';
 
@@ -656,7 +684,7 @@ export type OpEvent = {
   /** Set when this event is a consequence of another (e.g. kiln starved because a conveyor stopped). */
   consequenceOf?: string;
   /**
-   * Impact accumulated minute by minute while the condition is active (see src/sim/impact.ts):
+   * Impact accumulated minute by minute while the condition is active (see accumulate() in src/sim/events.ts):
    * asset-level losses, minutes the line constraint was held up because of this event, and the
    * quality / logistics quantities of the event window.
    */

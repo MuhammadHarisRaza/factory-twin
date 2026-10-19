@@ -140,9 +140,9 @@ function CameraRig() {
     // Distance at which the site's bounding circle fills the narrower field of view.
     const radius = Math.hypot(SITE.x[1] - SITE.x[0], SITE.z[1] - SITE.z[0]) / 2;
     const vFov = (camera.fov * Math.PI) / 180;
-    // Fitted into the part of the view a wide panel leaves uncovered (ViewInset centres it there).
-    const visibleW = Math.max(size.width * 0.1, size.width - useTwinUi.getState().insetRight);
-    const hFov = 2 * Math.atan(Math.tan(vFov / 2) * (visibleW / size.height));
+    // Beside the wide panel ViewInset centres the fitted site in the strip left of it (a fit to that
+    // narrow strip would need more than the orbit's maxDistance and put the site past the fog).
+    const hFov = 2 * Math.atan(Math.tan(vFov / 2) * (size.width / size.height));
     const distance = (radius / Math.sin(Math.min(vFov, hFov) / 2)) * 0.82;
     const dir = new Vector3(...VIEWS.full.pos).sub(new Vector3(...VIEWS.full.target)).normalize();
     startFlight(SITE_CENTER.clone().add(dir.multiplyScalar(distance)), SITE_CENTER.clone());

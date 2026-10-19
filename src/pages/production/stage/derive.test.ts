@@ -127,7 +127,7 @@ describe('monitoring derivations on the simulation', () => {
         const ms = MONITORED_STAGE_BY_ID[id];
         const t = stageTrend(s, ms, p);
         expect(t.granularity).toBe(key === '7d' ? 'shift' : 'hour');
-        const total = t.buckets.reduce((a, b) => a + b.output, 0);
+        const total = t.buckets.reduce((a, b) => a + (b.output ?? 0), 0);
         expect(total).toBeCloseTo(stageIO(s, id, p).output ?? 0, 6);
       }
     }

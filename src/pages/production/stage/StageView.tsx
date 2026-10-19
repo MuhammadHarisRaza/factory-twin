@@ -6,7 +6,7 @@
  * state through derive.ts.
  */
 import { useState } from 'react';
-import { ArrowLeft, Box, ChevronLeft, ChevronRight } from 'lucide-react';
+import { ArrowLeft, ArrowRight, Box, ChevronLeft, ChevronRight } from 'lucide-react';
 import { openEquipment, useApp } from '../../../app/store';
 import { CAMERA_BY_ID, MONITORED_STAGES, MONITORED_STAGE_BY_ID } from '../../../model/plant';
 import type { MonitoredStage, MonitoredStageId } from '../../../model/types';
@@ -23,11 +23,14 @@ import { Segmented } from '../../../ui/kit/Panel';
 import { OPERATIONAL_STATE, StatusBadge } from '../../../ui/kit/Status';
 import { ContextVideo } from '../../../video/ContextVideo';
 import { Block, canDrill } from '../common';
+import { openMaterialFlow } from '../ui';
+import { MASS_DISCLOSURE, NO_CALIBRATION, isMaterialAsset, tileEqToT } from '../units';
 import {
   ASSET_KIND_LABEL,
   bottleneckView,
   bufferName,
   countCell,
+  isMaterialStage,
   rateShare,
   stageEvents,
   sinceLabel,
@@ -159,6 +162,9 @@ function IoStrip({ row, periodLabel }: { row: StageRow; periodLabel: string }) {
   const w = wipShare(io);
   const good = countCell(ms, 'good', io);
   const rejected = countCell(ms, 'rejected', io);
+  const material = isMaterialStage(ms);
+  // The stage's input buffer holds slip or powder (BUF-SLIP, BUF-SILO): % only.
+  const bulkBuffer = ms.wipBufferId === 'BUF-SLIP' || ms.wipBufferId === 'BUF-SILO';
   return (
     <div className="prod-io-strip">
       <div className="mini-kpis" role="group" aria-label={`${ms.name} — inputs and outputs`}>
@@ -210,28 +216,69 @@ function IoStrip({ row, periodLabel }: { row: StageRow; periodLabel: string }) {
         </div>
         <div className="mini-kpi" title="Expected = ideal rate × planned running time (planned stops excluded)">
           <span>Rate vs expected</span>
-          <b>
-            {fmtInt(io.ratePerHour)}
-            <small>{ms.unit}/h</small>
-          </b>
+          {io.ratePerHour == null ? (
+            <b className="stg-nm">Not measured</b>
+          ) : material ? (
+            // Slip / powder: t/h — a disclosed conversion of tile-equivalents, never tiles/h.
+            <b>
+              {fmt1(tileEqToT(io.ratePerHour))}
+              <small>t/h</small>
+            </b>
+          ) : (
+            <b>
+              {fmtInt(io.ratePerHour)}
+              <small>{ms.unit}/h</small>
+            </b>
+          )}
           <em>
-            {io.expectedPerHour != null ? `expected ${fmtInt(io.expectedPerHour)}/h${share != null ? ` · ${fmtPct(share, 0)}` : ''}` : 'No expected rate for this stage'}
+            {io.expectedPerHour != null
+              ? `expected ${material ? `${fmt1(tileEqToT(io.expectedPerHour))} t/h` : `${fmtInt(io.expectedPerHour)}/h`}${share != null ? ` · ${fmtPct(share, 0)}` : ''}`
+              : 'No expected rate for this stage'}
+            {material ? ` · ${MASS_DISCLOSURE}` : ''}
             {row.staleMark ? ' · not confirmed' : ''}
           </em>
         </div>
         <div className="mini-kpi">
           <span>{ms.id === 'WH' ? 'Stock now' : 'Input buffer now'}</span>
-          <b>
-            {io.wip != null ? fmtInt(io.wip) : '—'}
-            <small>{ms.unit}</small>
-          </b>
+          {ms.id === 'WH' ? (
+            io.wip != null ? (
+              <b>
+                {fmtInt(io.wip)}
+                <small>{ms.unit}</small>
+              </b>
+            ) : (
+              <b className="stg-nm">Not measured</b>
+            )
+          ) : !ms.wipBufferId ? (
+            <b className="muted">—</b>
+          ) : w == null ? (
+            <b className="stg-nm">Level not available</b>
+          ) : bulkBuffer ? (
+            // Slip tanks / powder silos: a level percentage only — no level-to-mass calibration is configured.
+            <b>
+              {fmtPct(w, 0)}
+              <small>level</small>
+            </b>
+          ) : (
+            <b>
+              {fmtInt(io.wip)}
+              <small>{ms.unit}</small>
+            </b>
+          )}
           <em>
             {ms.id === 'WH'
               ? 'Pallets in stock (incl. awaiting put-away)'
               : ms.wipBufferId
-                ? `${bufferName(ms.wipBufferId)}${w != null ? ` · ${fmtPct(w, 0)} full` : ''}`
+                ? bulkBuffer
+                  ? `${bufferName(ms.wipBufferId)} · ${NO_CALIBRATION.toLowerCase()}`
+                  : `${bufferName(ms.wipBufferId)}${w != null ? ` · ${fmtPct(w, 0)} full` : ''}`
                 : 'No input buffer at this stage'}
           </em>
+          {ms.wipBufferId && (
+            <button type="button" className="row-link" onClick={() => openMaterialFlow(ms.wipBufferId)} title="Level, trend, time to empty / full and inflow vs outflow of this buffer">
+              Material flow <ArrowRight size={11} aria-hidden />
+            </button>
+          )}
         </div>
       </div>
       {row.cause && (
@@ -252,6 +299,7 @@ function IoStrip({ row, periodLabel }: { row: StageRow; periodLabel: string }) {
 
 function EquipmentBlock({ row, onAsset }: { row: StageRow; onAsset: (id: string) => void }) {
   const { ms } = row;
+  const material = isMaterialStage(ms);
   const assets = [...row.equipment, ...row.conveyors];
   const columns: Column<AssetView>[] = [
     {
@@ -279,14 +327,24 @@ function EquipmentBlock({ row, onAsset }: { row: StageRow; onAsset: (id: string)
       key: 'rate',
       header: 'Rate now',
       numeric: true,
-      title: 'Current output (machines) or transported tiles (conveyors) vs ideal rate / nominal capacity',
+      title: 'Current output (machines) or transported tiles (conveyors) vs ideal rate / nominal capacity · slip and powder in t/h (simulated conversion)',
       render: (a) =>
         a.rate == null ? (
-          <span className="muted">{a.reading ?? '—'}</span>
+          a.reading ? <span className="muted">{a.reading}</span> : <span className="stg-nm">Not measured</span>
+        ) : isMaterialAsset(a.id) ? (
+          // Ball mills, spray dryer, powder belt: dry-body equivalent t/h (a disclosed conversion of tile-equivalents).
+          <span className="num" title={`${MASS_DISCLOSURE}${a.feed.status === 'stale' ? ' · last value received before the feed went stale' : ''}`}>
+            {fmt1(tileEqToT(a.rate))}
+            {a.nominal != null && <span className="muted"> / {fmt1(tileEqToT(a.nominal))}</span>}
+            <span className="muted"> t/h</span>
+            {a.feed.status === 'stale' && <span className="muted"> (last value)</span>}
+            <span className="sub">{MASS_DISCLOSURE}</span>
+          </span>
         ) : (
           <span className="num" title={a.feed.status === 'stale' ? 'Last value received before the feed went stale' : undefined}>
             {fmtInt(a.rate)}
-            <span className="muted"> / {fmtInt(a.nominal)} tiles/h</span>
+            {a.nominal != null && <span className="muted"> / {fmtInt(a.nominal)}</span>}
+            <span className="muted"> tiles/h</span>
             {a.feed.status === 'stale' && <span className="muted"> (last value)</span>}
           </span>
         ),
@@ -351,7 +409,15 @@ function EquipmentBlock({ row, onAsset }: { row: StageRow; onAsset: (id: string)
               { label: 'Good', value: point(ms.good) },
               { label: 'Rejected', value: point(ms.rejected) },
               { label: 'Work in progress', value: ms.id === 'WH' ? 'Warehouse stock (pallets)' : ms.wipBufferId ? `${bufferName(ms.wipBufferId)} (${ms.wipBufferId})` : 'No input buffer' },
-              { label: 'Unit', value: ms.unit === 'pallets' ? 'Pallets (palletised tiles ÷ tiles per pallet)' : 'Tiles (tile-equivalent upstream of pressing)' },
+              {
+                label: 'Unit',
+                value:
+                  ms.unit === 'pallets'
+                    ? 'Pallets (palletised tiles ÷ tiles per pallet)'
+                    : material
+                      ? `Tile-equivalents of slip / powder; rates in t/h (${MASS_DISCLOSURE}); buffer levels in % only (${NO_CALIBRATION.toLowerCase()})`
+                      : 'Tiles',
+              },
               { label: 'Standalone OEE', value: ms.oeeMeaningful ? 'Meaningful — see Analysis → Equipment OEE' : 'Not meaningful for a transfer stage' },
             ]}
           />

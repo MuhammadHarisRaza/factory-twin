@@ -204,19 +204,45 @@ they are recordings, not live, with overlays from the recording system rather th
 `<ContextVideo context={{ equipmentId, stage, topic }}/>` picks the clips for a context (`src/video/topics.ts`)
 and shows them in one player (`src/video/VideoPlayer.tsx`). Nothing loads before the player is on screen; then the
 clip starts by itself, muted and looping (the provider's embed — YouTube privacy-enhanced player — or the MP4), pauses
-when scrolled out of view and resumes when it is back. The picture has no playback controls (no play bar, timeline or
-duration; the embeds are asked to hide theirs); a click or Space / Enter on it pauses and resumes it. Viewers who set
-reduced motion or data saving, and browsers that refuse autoplay, get the poster with a play button instead; sound
-only plays for a clip started from that poster, one player at a time. Errors reported by the YouTube player
+when scrolled out of view and resumes when it is back. The picture has no visible playback controls (no play bar,
+timeline or duration; the embeds are asked to hide theirs); a click on it pauses and resumes it — from the keyboard,
+Space / Enter on an MP4, and on an embed a Pause / Resume button reached with Tab (drawn only while focused) — and a
+paused clip shows a small *Paused* tag and stays paused (its host keeps it). This player's own out-of-view pause and
+a pause of a muted clip in a hidden page (browsers pause muted / video-only media there) are resumed when the clip is
+visible again;
+any other pause (a media key, the OS) counts as the viewer's. Viewers who set reduced motion
+or data saving, and browsers that refuse autoplay (a refused `play()`, a YouTube embed that reports it blocked or
+stays unstarted), get the poster with a play button instead; sound only plays for a clip started from that poster,
+one player at a time. Errors reported by the YouTube player
 (removed clip, embedding disabled) and slow loads fall back to the poster with a link to the source. In the Factory
 Twin's subject panel (equipment, vehicle, stage) the video has no badge on the picture; its ⓘ (tooltip *Recorded
-footage — not a live feed* / *Reference footage — …*) opens the source details. Camera views keep their badge
+footage — not a live feed* / *Reference footage — not this plant, not a live feed*) opens the source details. Camera views keep their badge
 (*Twin view · simulated*, the stream's state). The panel is wide by default (`src/ui/twin/panelWidth.ts`): 70 % of
 the screen width (always leaving 200 px of the 3D view), the feed across its top, two columns of sections under it,
 the zone and live lists folded away, and the scene's view centred in the strip beside it (`Scene.tsx` ViewInset);
-its header button switches to the compact column, remembered per browser. Every player
-is labelled *Process reference video* or *Illustrative equipment footage* with provider, publisher and licence,
-and states that it is not this plant, not live and not evidence. Each entry records how it was verified.
+its header button switches to the compact column, remembered per browser (showing the zone list from the rail
+makes it compact until the list is hidden again). Outside the twin
+panel every page uses the compact player: its caption shows the provenance badge (*Reference video* / *Recorded
+footage*, whose tooltip says not this plant / not a live feed), the registry label (*Recorded camera footage*,
+*Process reference video* or *Illustrative equipment footage*), the provider and publisher and a source link; a
+recording also shows its not-live note under the clip. The full player (no page uses it yet) adds the description,
+licence, attribution and the not-this-plant / not-live / not-evidence note. The twin panel's bare player shows no
+label on the picture: its ⓘ tooltip names the footage (*not a live feed*; a reference clip also *not this plant*),
+and the source details list the title, publisher, licence and the note. Each entry records how it was verified.
+
+## Signals, telemetry and insight rules (PLC data layer)
+
+Layered so a real adapter can replace the simulation without touching the UI:
+
+| Layer | Module | Role |
+|---|---|---|
+| Signal catalogue | `src/model/catalog/` (see `docs/SIGNALS.md`) | 342 typed signal definitions across the twelve production stages (`STAGES_12`; stage 8 is the kiln outfeed storage, stage 9 polishing is not present and flagged for configuration). Each has an availability class (Core candidate / Conditional / External integration) and a status (simulated / not modelled / unavailable — never connected). `sourceTag` is always null. |
+| Process model | `src/sim/process.ts`, `src/model/catalog/process.ts` | Simulated setpoints and process values (kiln zones, spray dryer, dryer, presses, glaze), derived t/h flows (`KG_PER_TILE`, a stated assumption), cycle time, run commands. Scenario kinds `process-deviation` and `data-quality`. |
+| Telemetry | `src/model/telemetry.ts` (`TelemetrySource` interface), `src/sim/telemetry.ts` (`simulatedSource`) | Current reads with quality and timestamp, history for 15 min / 1 h / 8 h (minute log, `LOG_MIN = 480`) and 24 h / 7 d (hourly), state timelines. Missing is null, never 0. |
+| Calculations | `src/calc/` | Pure, tested functions returning `Calc<T>` (value or reason): rates, counter reset/rollover, cycle time, availability, reject rate / FPY / z-test, buffer trend and time to empty/full, mass only from a configured level calibration, state durations, fault recurrence, MTBF/MTTR, freshness, setpoint deviation, units. |
+| Insight rules | `src/intel/rules/` | 29 rules in six families (production, flow, process, reliability, quality, data). Each declares its required signals; missing, stale or bad inputs give "not evaluated" with the signal named. Rule-based or Statistical (z-tests), never AI. Thresholds are editable in Events › Detection rules (`useRuleThresholds`). |
+
+Views: the equipment panel (key figures, range-aware charts, searchable signal table, rule findings, events & alarms), Production › Material flow and OEE trend, Quality › Compare, Events › Reliability and Data & connectivity, Overview insight feed / state mix / data coverage, guided demos E–H.
 
 ## Conveyors, cameras, feeds
 

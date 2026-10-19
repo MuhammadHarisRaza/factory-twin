@@ -4,13 +4,18 @@ import { LINE } from '../../model/plant';
 import { resolvePeriod, type PeriodKey } from '../../sim/metrics';
 import { useSimValue } from '../../sim/store';
 import { DataTable, type Column } from '../../ui/kit/DataTable';
-import { fmtInt, fmtPct } from '../../ui/kit/format';
+import { fmt1, fmtInt, fmtPct } from '../../ui/kit/format';
 import { EmptyState } from '../../ui/kit/Page';
 import { MetricText, OperationalStatus, StatusBadge } from '../../ui/kit/Status';
 import { Block, Verdict, m2 } from './common';
 import { machineLosses } from './derive';
 import { conveyorRows, machineRows, type ConveyorRow, type MachineRow } from './equipment';
 import { LossBars } from './LossBars';
+import { MASS_DISCLOSURE, isMaterialAsset, tileEqToT } from './units';
+import { M2_PER_TILE } from '../../model/plant';
+
+/** m² of tiles, or — for slip / powder machines — t of dry-body equivalent (a disclosed conversion of tile-equivalents). */
+const massOr = (id: string, m2v: number) => (isMaterialAsset(id) ? `${fmt1(tileEqToT(m2v / M2_PER_TILE))} t` : `${fmtInt(m2v)} m²`);
 import { equipmentContribution, lossLedger } from './loss';
 
 const STOPPED = new Set(['stopped', 'fault']);
@@ -153,11 +158,25 @@ function MachineTable({ rows, selected, onAsset, lineLoss }: { rows: MachineRow[
       ),
       sort: (r) => r.mm.oee.oee.value,
     },
-    { key: 'out', header: 'Output m²', numeric: true, render: (r) => fmtInt(r.outputM2), sort: (r) => r.outputM2 },
+    {
+      key: 'out',
+      header: 'Output',
+      numeric: true,
+      title: `m² for tiles; slip / powder machines in t of dry-body equivalent (${MASS_DISCLOSURE})`,
+      render: (r) => massOr(r.id, r.outputM2),
+      sort: (r) => r.outputM2,
+    },
     { key: 'down', header: 'Downtime', numeric: true, title: 'Unplanned downtime, minutes', render: (r) => `${fmtInt(r.downMin)} min`, sort: (r) => r.downMin },
     { key: 'st', header: 'Starved', numeric: true, title: 'Share of planned time waiting for material', render: (r) => fmtPct(r.starvedShare, 0), sort: (r) => r.starvedShare },
     { key: 'bl', header: 'Blocked', numeric: true, title: 'Share of planned time unable to discharge', render: (r) => fmtPct(r.blockedShare, 0), sort: (r) => r.blockedShare },
-    { key: 'own', header: 'Own lost m²', numeric: true, title: 'Down + starved + blocked minutes × ideal rate — asset level, not additive', render: (r) => fmtInt(r.ownLostM2), sort: (r) => r.ownLostM2 },
+    {
+      key: 'own',
+      header: 'Own lost',
+      numeric: true,
+      title: 'Down + starved + blocked minutes × ideal rate — asset level, not additive (slip / powder machines in t, simulated conversion)',
+      render: (r) => massOr(r.id, r.ownLostM2),
+      sort: (r) => r.ownLostM2,
+    },
     {
       key: 'line',
       header: 'Line loss m²',

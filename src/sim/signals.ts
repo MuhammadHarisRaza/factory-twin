@@ -2,19 +2,22 @@
  * Current simulated value of every configured signal (SIGNALS in src/model/plant.ts).
  *
  * Pure and deterministic: the value is derived from the simulation state only —
- * machine runtime for state / counters / rate / alarm, buffer fill for levels, the
+ * machine runtime for state / counters / rate / alarm, buffer fill for levels (also the level signals
+ * of the buffers without equipment, on their host conveyor — HOSTED_BUFFER_LEVELS), the
  * hourly quality buckets for inspection counters, logistics state for gate / dock /
  * vehicle-zone signals, and the energy model (src/sim/energy.ts) for power and gas.
- * Process temperatures and pressure have no physical model in this release: they are
- * bounded, smoothly varying values from `noise01`, nudged by the relevant machine
- * states so they stay plausible. A
- * future read-only gateway would supply the same signal ids with real values.
+ * The process analogs of the original signal list (kiln, spray dryer and dryer temperatures,
+ * powder moisture, air header pressure, water tank level) have no model behind them and read
+ * null ('Not modelled'); the simulated process values are the PROCESS_SIGNALS read through
+ * src/sim/process.ts and src/sim/telemetry.ts. A stale feed serves the snapshot of every signal
+ * of the asset taken when it went stale, so nothing live leaks through.
+ * A future read-only gateway would supply the same signal ids with real values.
  */
-import { BUFFERS, CONVEYOR_BY_ID, DOCKS, GEOFENCES, INSPECTION_STATIONS, REASON_BY_CODE } from '../model/plant';
+import { CONVEYOR_BY_ID, DOCKS, GEOFENCES, INSPECTION_STATIONS, OPS_BY_ID, REASON_BY_CODE, bufferOfLevelSignal } from '../model/plant';
 import type { MachineState } from '../model/types';
 import { findDowntime, type SimState } from './engine';
 import { internalActivity } from './metrics';
-import { noise01 } from './rng';
+import { smoothNoise } from './rng';
 import { CONSUMERS, powerNow } from './energy';
 import { HEALTH_BY_ID, sensorsAt } from './health';
 
@@ -46,62 +49,67 @@ const num = (v: number, digits = 0): SignalReading => ({
 });
 const NONE: SignalReading = { value: null, text: '—' };
 
-/** Smooth bounded noise in [0, 1): smoothstep between knots every `period` minutes. */
-function smooth(seed: number, key: string, t: number, period: number) {
-  const k = Math.floor(t / period);
-  const f = (t % period) / period;
-  const a = noise01(seed, key, k);
-  const b = noise01(seed, key, k + 1);
-  return a + (b - a) * (f * f * (3 - 2 * f));
+/** Signals of the original list with no model behind them: they never carry a value (shown as 'Not modelled'). */
+export const PLACEHOLDER_SIGNAL_IDS: ReadonlySet<string> = new Set([
+  'H-KILN.temp_firing',
+  'H-KILN.temp_preheat',
+  'D-TWR.temp_inlet',
+  'D-TWR.powder_moisture',
+  'F-DRY.temp_deck',
+  'A-COMP.header_pressure',
+  'A-WTR.tank_level',
+]);
+
+/**
+ * Belt / roller speed of a running conveyor read at the start of minute `at` (m/min, ±2 % around nominal);
+ * the live reading uses at = s.minute, a history sample of minute t uses at = t + 1.
+ */
+export const conveyorSpeed = (seed: number, id: string, at: number) => (CONVEYOR_BY_ID[id]?.speedMpm ?? 0) * (0.98 + 0.04 * smoothNoise(seed, `spd:${id}`, at, 10));
+
+/** Sum of the energy model's current power over all consumers (null when no consumer has a bucket yet). */
+function sitePower(s: SimState, key: 'elec' | 'thermal') {
+  let kw = 0;
+  let any = false;
+  for (const c of CONSUMERS) {
+    const p = powerNow(s, c.id);
+    if (!p) continue;
+    kw += p[key];
+    any = true;
+  }
+  return any ? kw : null;
 }
 
-const isStopped = (s: SimState, id: string) => {
-  const st = s.machines[id]?.state;
-  return st === 'down' || st === 'planned';
-};
-
-/** Simulated analog value for the energy / process signals. */
+/** Simulated analog value for the energy / condition signals; the placeholder process analogs have none. */
 function analog(s: SimState, equipmentId: string, name: string): SignalReading | null {
-  const t = s.minute;
-  const n = (period = 15) => smooth(s.seed, `sig:${equipmentId}.${name}`, t, period);
+  if (PLACEHOLDER_SIGNAL_IDS.has(`${equipmentId}.${name}`)) return NONE;
   if (name === 'vibration' || name === 'temperature' || name === 'motor_current') {
     if (!HEALTH_BY_ID[equipmentId]) return null;
     const r = sensorsAt(s, equipmentId, Math.max(0, s.minute - 1));
+    if (!r) return NONE;
     return name === 'vibration' ? num(r.vibration, 2) : name === 'temperature' ? num(r.temperature, 1) : num(r.current, 0);
   }
   if (name === 'energy_kwh') {
+    const map = s.energy[equipmentId];
+    if (!map?.size) return NONE;
     let kwh = 0;
-    for (const b of s.energy[equipmentId]?.values() ?? []) kwh += b.elec + b.thermal;
+    for (const b of map.values()) kwh += b.elec + b.thermal;
     return num(kwh);
   }
   switch (`${equipmentId}.${name}`) {
-    case 'H-KILN.temp_firing':
-      // Kiln thermal mass: a stop only lowers the firing zone slightly.
-      return num((isStopped(s, 'H-KILN') ? 1150 : 1182) + 20 * n());
-    case 'H-KILN.temp_preheat':
-      return num((isStopped(s, 'H-KILN') ? 610 : 645) + 45 * n());
-    case 'D-TWR.temp_inlet':
-      return num((isStopped(s, 'D-TWR') ? 430 : 545) + 35 * n());
-    case 'D-TWR.powder_moisture':
-      return num(5.6 + 0.8 * n(20), 2);
-    case 'F-DRY.temp_deck':
-      return num((isStopped(s, 'F-DRY') ? 165 : 192) + 22 * n());
-    case 'A-COMP.header_pressure':
-      return num(6.8 + 0.6 * n(10), 2);
-    case 'A-COMP.active_power':
-      return num(powerNow(s, 'A-COMP').elec);
+    case 'A-COMP.active_power': {
+      const p = powerNow(s, 'A-COMP');
+      return p ? num(p.elec) : NONE;
+    }
     case 'A-SUB.active_power': {
       // Site electrical demand from the energy model (sum of all consumers).
-      const kw = CONSUMERS.reduce((a, c) => a + powerNow(s, c.id).elec, 0);
-      return num(kw);
+      const kw = sitePower(s, 'elec');
+      return kw == null ? NONE : num(kw);
     }
     case 'A-GAS.gas_flow': {
       // Natural gas at ~10.5 kWh/Nm³ (LHV) for the kiln, hot-air generator and dryer, from the energy model.
-      const kwTh = CONSUMERS.reduce((a, c) => a + powerNow(s, c.id).thermal, 0);
-      return num(kwTh / 10.5);
+      const kwTh = sitePower(s, 'thermal');
+      return kwTh == null ? NONE : num(kwTh / 10.5);
     }
-    case 'A-WTR.tank_level':
-      return num(55 + 30 * n(120), 1);
     default:
       return null;
   }
@@ -126,38 +134,31 @@ export function signalValue(s: SimState, signalId: string): SignalReading {
   if (dot < 0) return NONE;
   const equipmentId = signalId.slice(0, dot);
   const f = s.feeds[equipmentId];
-  if (f?.status === 'stale') return { ...staleValue(s, signalId, f.since), quality: 'stale', since: f.since };
+  if (f?.status === 'stale') return { ...staleValue(s, signalId), quality: 'stale', since: f.since };
   return liveValue(s, signalId);
 }
 
-/** Value as last received before a feed went stale. */
-function staleValue(s: SimState, signalId: string, since: number): SignalReading {
-  const dot = signalId.indexOf('.');
-  const equipmentId = signalId.slice(0, dot);
-  const name = signalId.slice(dot + 1);
-  const f = s.feeds[equipmentId];
-  switch (name) {
-    case 'state':
-      return f.lastState ? { value: f.lastState, text: STATE_TEXT[f.lastState] } : NONE;
-    case 'run_state':
-      return f.lastState ? { value: f.lastState, text: CONVEYOR_STATE_TEXT[f.lastState] } : NONE;
-    case 'count_total':
-    case 'tile_count':
-      return f.lastCount != null ? num(f.lastCount) : NONE;
-    case 'rate':
-      return f.lastRate != null ? num(f.lastRate) : NONE;
-    case 'speed':
-      return f.lastState === 'down' ? num(0, 1) : num(CONVEYOR_BY_ID[equipmentId]?.speedMpm ?? 0, 1);
-    case 'vibration':
-    case 'temperature':
-    case 'motor_current': {
-      if (!HEALTH_BY_ID[equipmentId]) return NONE;
-      const r = sensorsAt(s, equipmentId, Math.max(0, since - 1));
-      return name === 'vibration' ? num(r.vibration, 2) : name === 'temperature' ? num(r.temperature, 1) : num(r.current, 0);
-    }
-    default:
-      return liveValue(s, signalId);
+/**
+ * Value as last received before a feed went stale: the snapshot of every signal of the asset taken when
+ * the feed stopped (snapshotSignals). A signal missing from the snapshot has no value, never a live one.
+ */
+function staleValue(s: SimState, signalId: string): SignalReading {
+  const equipmentId = signalId.slice(0, signalId.indexOf('.'));
+  const last = s.feeds[equipmentId]?.last?.[signalId];
+  return last ? { value: last.value, text: last.text } : NONE;
+}
+
+/**
+ * Current reading of every configured signal of an asset, taken when a feed goes stale or a data-quality
+ * scenario freezes / resets its values: what a gateway would still hold as the last values received.
+ */
+export function snapshotSignals(s: SimState, equipmentId: string): Record<string, { value: number | string | null; text: string }> {
+  const out: Record<string, { value: number | string | null; text: string }> = {};
+  for (const id of OPS_BY_ID[equipmentId]?.signals ?? []) {
+    const r = liveValue(s, id);
+    out[id] = { value: r.value, text: r.text };
   }
+  return out;
 }
 
 const CONVEYOR_STATE_TEXT: Record<MachineState, string> = {
@@ -174,6 +175,9 @@ function liveValue(s: SimState, signalId: string): SignalReading {
   const equipmentId = signalId.slice(0, dot);
   const name = signalId.slice(dot + 1);
   const m = s.machines[equipmentId];
+  // Buffer levels: `<equipmentId>.level`, and the hosted level signals of the buffers without equipment.
+  const buffer = bufferOfLevelSignal(signalId);
+  if (buffer) return num((s.buffers[buffer.id] / buffer.capacity) * 100, 1);
 
   switch (name) {
     case 'state':
@@ -185,7 +189,7 @@ function liveValue(s: SimState, signalId: string): SignalReading {
       return m ? { value: m.state, text: CONVEYOR_STATE_TEXT[m.state] } : NONE;
     case 'speed': {
       const c = CONVEYOR_BY_ID[equipmentId];
-      return c && m ? num(m.state === 'down' ? 0 : c.speedMpm * (0.98 + 0.04 * smooth(s.seed, `spd:${equipmentId}`, s.minute, 10)), 1) : NONE;
+      return c && m ? num(m.state === 'down' ? 0 : conveyorSpeed(s.seed, equipmentId, s.minute), 1) : NONE;
     }
     case 'rate':
       return m ? num(m.ratePerHour) : NONE;
@@ -194,10 +198,6 @@ function liveValue(s: SimState, signalId: string): SignalReading {
       const ev = m.activeDowntimeId ? findDowntime(s, m.activeDowntimeId) : undefined;
       if (!ev || REASON_BY_CODE[ev.reasonCode].planned) return { value: 'none', text: 'No active alarm' };
       return { value: ev.reasonCode, text: ev.reasonCode };
-    }
-    case 'level': {
-      const b = BUFFERS.find((x) => x.equipmentId === equipmentId);
-      return b ? num((s.buffers[b.id] / b.capacity) * 100, 1) : NONE;
     }
     case 'count_inspected':
     case 'count_rejected': {

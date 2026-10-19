@@ -9,6 +9,14 @@
 .eqp {
   --eqp-x: 14px;
 }
+/* The body takes focus (the list a keyboard user opened the panel from folded away; a click in it): a ring for keyboard users only. */
+.eqp-b:focus:not(:focus-visible) {
+  outline: none;
+}
+.eqp-b:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: -2px;
+}
 
 /* ── Header ──────────────────────────────────────────────────────────────── */
 
@@ -69,7 +77,8 @@
 .eqp-state.critical {
   color: #f3c0c0;
 }
-.eqp-since {
+.eqp-since,
+.eqp-upd {
   font-size: var(--fs-11);
   color: var(--text-3);
 }
@@ -1376,6 +1385,12 @@ button.eqp-chip:hover {
 .eqp-wide .eqp-feed .feed-media {
   max-height: 80cqh;
 }
+/* Capped below 16 : 9 the box is wider than the picture: stream frames and posters are letterboxed too, not cropped. */
+.eqp-wide .eqp-feed .feed-img,
+.eqp-wide .eqp-feed .vp-poster img,
+.eqp-wide .eqp-feed .vp-still {
+  object-fit: contain;
+}
 .eqp-cols {
   display: grid;
   grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
@@ -1409,4 +1424,1089 @@ button.eqp-chip:hover {
   .eqp-h-status {
     margin-top: 6px;
   }
+}
+
+/* ── Wave 3 · charts, signal table, rule findings, events filter (tokens only) ───────────────────────────────── */
+
+.eqp-charts {
+  display: grid;
+  gap: var(--s-3);
+}
+.eqp-charts-bar {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--s-2);
+}
+.eqp-chart {
+  margin: 0;
+  padding: var(--s-2) 0 var(--s-1);
+  border-top: 1px solid var(--line);
+  scroll-margin: 40px;
+  transition: background var(--t-base) var(--ease);
+}
+.eqp-chart:focus {
+  outline: none;
+}
+.eqp-chart.on {
+  background: var(--accent-soft);
+  box-shadow:
+    calc(-1 * var(--eqp-x)) 0 0 var(--accent-soft),
+    var(--eqp-x) 0 0 var(--accent-soft);
+}
+.eqp-chart-h {
+  display: flex;
+  align-items: baseline;
+  gap: var(--s-2);
+  margin-bottom: var(--s-1);
+  font-size: var(--fs-12);
+  color: var(--text-1);
+}
+.eqp-chart-h b {
+  font-weight: var(--fw-medium);
+}
+.eqp-chart-h .unit {
+  color: var(--text-3);
+  font-size: var(--fs-11);
+}
+.eqp-chart-m {
+  margin: var(--s-1) 0 0;
+  font-size: var(--fs-11);
+  line-height: 1.4;
+  color: var(--text-3);
+}
+.eqp-chart-m .note {
+  color: var(--text-2);
+}
+.eqp-chart-facts {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--s-1) var(--s-4);
+  margin: var(--s-1) 0 0;
+  font-size: var(--fs-11);
+}
+.eqp-chart-facts > div {
+  display: flex;
+  gap: var(--s-1);
+}
+.eqp-chart-facts dt {
+  color: var(--text-3);
+}
+.eqp-chart-facts dd {
+  margin: 0;
+  color: var(--text-1);
+}
+.eqp-chart-empty,
+.eqp-chart-nc,
+.eqp-rf-none {
+  margin: 0;
+  font-size: var(--fs-12);
+  color: var(--text-3);
+}
+.eqp-chart-nc b {
+  color: var(--text-2);
+  font-weight: var(--fw-medium);
+}
+
+/* Signal table */
+.eqp-st-tools {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--s-2);
+  margin-bottom: var(--s-2);
+}
+.eqp-st-search {
+  display: flex;
+  align-items: center;
+  gap: var(--s-1);
+  flex: 1 1 160px;
+  min-width: 0;
+  padding: 0 var(--s-2);
+  border: 1px solid var(--line-2);
+  border-radius: var(--r-1);
+  background: var(--bg-1);
+  color: var(--text-3);
+}
+.eqp-st-search input {
+  flex: 1;
+  min-width: 0;
+  height: 26px;
+  border: 0;
+  background: transparent;
+  color: var(--text-1);
+  font: inherit;
+  font-size: var(--fs-12);
+}
+.eqp-st-search input:focus {
+  outline: none;
+}
+.eqp-st-search:focus-within {
+  box-shadow: 0 0 0 2px var(--focus);
+}
+.eqp-st-cats {
+  flex-wrap: wrap;
+}
+.eqp-st-head,
+.eqp-st-b {
+  display: grid;
+  grid-template-columns: minmax(0, 1.6fr) minmax(64px, auto) minmax(84px, auto) 56px minmax(0, 0.8fr) 14px;
+  align-items: center;
+  column-gap: var(--s-2);
+}
+.eqp-st-head {
+  padding: 0 0 var(--s-1);
+  border-bottom: 1px solid var(--line-2);
+  font-size: var(--fs-11);
+  color: var(--text-3);
+}
+.eqp-st-head span:nth-child(2) {
+  text-align: right;
+}
+.eqp-st-rows {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+}
+.eqp-st-r {
+  border-bottom: 1px solid var(--line);
+  scroll-margin: 40px;
+  transition: background var(--t-base) var(--ease);
+}
+.eqp-st-r:focus {
+  outline: none;
+}
+.eqp-st-r.on {
+  background: var(--accent-soft);
+  box-shadow:
+    calc(-1 * var(--eqp-x)) 0 0 var(--accent-soft),
+    var(--eqp-x) 0 0 var(--accent-soft);
+}
+.eqp-st-b {
+  width: 100%;
+  padding: 5px 0;
+  border: 0;
+  background: transparent;
+  color: inherit;
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+}
+.eqp-st-b:focus-visible {
+  outline: none;
+  box-shadow: inset 2px 0 0 var(--accent);
+}
+.eqp-st-b .lab {
+  min-width: 0;
+  font-size: var(--fs-12);
+  color: var(--text-2);
+  overflow-wrap: anywhere;
+}
+.eqp-st-b .val {
+  font-size: var(--fs-13);
+  font-weight: var(--fw-medium);
+  color: var(--text-1);
+  text-align: right;
+  white-space: nowrap;
+}
+.eqp-st-b .val small {
+  margin-left: 3px;
+  font-size: var(--fs-11);
+  font-weight: var(--fw-regular);
+  color: var(--text-3);
+}
+.eqp-st-r.na .lab,
+.eqp-st-r.na .val {
+  color: var(--text-3);
+}
+.eqp-st-b .age,
+.eqp-st-b .cat {
+  font-size: var(--fs-11);
+  color: var(--text-3);
+}
+.eqp-st-b .status {
+  font-size: var(--fs-11);
+}
+.eqp-st-b .chev {
+  color: var(--text-3);
+  transition: transform var(--t-fast) var(--ease);
+}
+.eqp-st-b[aria-expanded='true'] .chev {
+  transform: rotate(180deg);
+}
+.eqp-st-d {
+  display: grid;
+  gap: var(--s-2);
+  padding: 0 0 var(--s-2) var(--s-2);
+  font-size: var(--fs-12);
+  color: var(--text-2);
+}
+.eqp-st-d p {
+  margin: 0;
+}
+.eqp-st-d dl {
+  display: grid;
+  grid-template-columns: max-content minmax(0, 1fr);
+  gap: 2px var(--s-3);
+  margin: 0;
+}
+.eqp-st-d dl > div {
+  display: contents;
+}
+.eqp-st-d dt {
+  color: var(--text-3);
+}
+.eqp-st-d dd {
+  margin: 0;
+  color: var(--text-1);
+  overflow-wrap: anywhere;
+}
+.eqp-st-nohist {
+  color: var(--text-3);
+}
+.eqp-st-more {
+  margin-top: var(--s-1);
+  padding: 4px 0;
+  border: 0;
+  background: transparent;
+  color: var(--accent);
+  font: inherit;
+  font-size: var(--fs-12);
+  cursor: pointer;
+}
+.eqp-st-more:focus-visible {
+  outline: 2px solid var(--focus);
+}
+@media (max-width: 520px) {
+  .eqp-st-head {
+    display: none;
+  }
+  .eqp-st-b {
+    grid-template-columns: minmax(0, 1fr) auto auto 14px;
+  }
+  .eqp-st-b .age,
+  .eqp-st-b .cat {
+    display: none;
+  }
+}
+
+/* Rule findings */
+.eqp-rfs {
+  display: grid;
+  gap: var(--s-2);
+}
+.eqp-rf-m {
+  margin: 0;
+  font-size: var(--fs-11);
+  color: var(--text-3);
+}
+.eqp-rf-sub h4 {
+  margin: 0 0 var(--s-1);
+  font-size: var(--fs-12);
+  font-weight: var(--fw-medium);
+  color: var(--text-2);
+}
+.eqp-rf-sub ul {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: grid;
+  gap: var(--s-1);
+  font-size: var(--fs-12);
+  color: var(--text-2);
+}
+.eqp-rf-sub .muted,
+.eqp-meas .eqp-chip {
+  color: var(--text-3);
+}
+
+/* Header stage mapping, tile time context, events filter and log, catalogue counts */
+.eqp-stage12 {
+  color: var(--text-3);
+}
+.eqp-kpi .l .w {
+  color: var(--text-3);
+  font-weight: var(--fw-regular);
+}
+.eqp-ev-filter {
+  margin-bottom: var(--s-2);
+}
+.eqp-ev-filter small {
+  color: var(--text-3);
+}
+.eqp-log .kind {
+  color: var(--text-3);
+}
+.eqp-log .src {
+  display: block;
+  font-size: var(--fs-11);
+  color: var(--text-3);
+}
+.eqp-log div.eqp-ev-h {
+  cursor: default;
+}
+.eqw-cat-counts {
+  list-style: none;
+  margin: 0 0 var(--s-2);
+  padding: 0;
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--s-1) var(--s-3);
+  font-size: var(--fs-12);
+  color: var(--text-2);
+}
+
+/* ==========================================================================
+   The approved equipment card (Card.dc.html): card surfaces, a glowing header,
+   the feed across the card, hero key figures, the process block (kiln zone
+   profile, deviation gauges, level gauge), insight cards, the PLC signal table
+   with availability chips, the legend and an accented Ask Copilot. Tokens of
+   src/styles.css (--card-*, --eq-*). Status always keeps its words and icon.
+   ========================================================================== */
+
+.eqp.overlay-panel {
+  background: var(--card-bg);
+  border-color: var(--card-line-2);
+  border-radius: 14px;
+  box-shadow:
+    0 24px 60px #00000099,
+    0 0 0 1px #ff8a3d14;
+}
+
+/* Header */
+.eqp .eqp-h {
+  background: var(--card-head);
+  border-bottom-color: var(--card-line);
+  border-radius: 14px 14px 0 0;
+}
+.eqp .eqp-zone {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-width: 26px;
+  height: 26px;
+  border-radius: 8px;
+  color: #1a0f06;
+  font-weight: 700;
+  font-size: var(--fs-14);
+  box-shadow: 0 0 16px color-mix(in srgb, var(--zone, var(--eq-heat)) 45%, transparent);
+}
+.eqp .eqp-h-title h2 {
+  font-size: 17px;
+}
+.eqp.eqp-wide .eqp-h-title h2 {
+  font-size: 19px;
+}
+.eqp-h-id {
+  flex: none;
+  font-size: 12.5px;
+  color: var(--text-3);
+}
+.eqp .eqp-h-sub {
+  font-size: 12.5px;
+  color: #8e9aa6;
+}
+.eqp .eqp-h .eqp-state {
+  gap: 7px;
+  padding: 4px 11px;
+  border-radius: 999px;
+  background: var(--bg-3);
+  font-size: var(--fs-13);
+}
+.eqp .eqp-h .eqp-state.good {
+  background: var(--eq-green-soft);
+  color: var(--eq-green-text);
+  box-shadow: 0 0 14px var(--eq-green-glow);
+}
+.eqp .eqp-h .eqp-state.good svg {
+  color: var(--eq-green);
+}
+.eqp .eqp-h .eqp-state.warning,
+.eqp .eqp-h .eqp-state.serious {
+  background: #3a2a0c;
+  color: var(--eq-amber-text);
+  box-shadow: 0 0 14px var(--eq-amber-glow);
+}
+.eqp .eqp-h .eqp-state.critical {
+  background: #3a1612;
+  color: var(--eq-red-text);
+  box-shadow: 0 0 14px var(--eq-red-glow);
+}
+.eqp .eqp-h .eqp-src {
+  height: 22px;
+  padding: 0 10px;
+  border-radius: 999px;
+  font-size: 11px;
+  font-weight: var(--fw-semibold);
+  letter-spacing: 0.05em;
+  text-transform: uppercase;
+}
+.eqp .eqp-h .prov-simulated {
+  border-color: var(--eq-sim-line);
+  color: var(--eq-amber-text);
+}
+.eqp .eqp-since,
+.eqp .eqp-upd {
+  font-size: var(--fs-12);
+  color: #8e9aa6;
+}
+
+/* Body: each section a card on the card, the gaps between them showing the card surface. */
+.eqp .eqp-b {
+  padding-bottom: 6px;
+}
+.eqp .eqp-sec {
+  margin: 0 var(--eqp-x) 14px;
+  padding: 13px 16px 14px;
+  border: 1px solid var(--card-line);
+  border-radius: 12px;
+  background: var(--card-head);
+}
+.eqp .eqp-sec-h {
+  align-items: center;
+  flex-wrap: wrap;
+}
+.eqp .eqp-sec-h h3 {
+  font-size: 14.5px;
+  font-weight: var(--fw-semibold);
+  letter-spacing: 0;
+  text-transform: none;
+  color: var(--text-1);
+}
+.eqp .eqp-top {
+  padding: 16px var(--eqp-x) 14px;
+}
+.eqp .eqp-feed-frame {
+  border-radius: 12px;
+  background: #05080b;
+  box-shadow: 0 0 0 1px var(--card-line-2);
+}
+.eqp.eqp-wide .eqp-feed .vp-frame,
+.eqp.eqp-wide .eqp-feed .feed-media {
+  max-height: min(400px, 80cqh);
+}
+/* The one honest chip on recorded / reference footage. */
+.eqp-feed-tag {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  height: 24px;
+  padding: 0 10px;
+  border-radius: 999px;
+  background: #000000aa;
+  backdrop-filter: blur(6px);
+  font-size: var(--fs-12);
+  color: var(--text-1);
+  white-space: nowrap;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.eqp-feed-tag svg {
+  flex: none;
+  color: var(--eq-blue);
+}
+.eqp-feed.docked .eqp-feed-tag {
+  background: var(--bg-2);
+  backdrop-filter: none;
+}
+
+/* Hero key figures: 6 across wide, 2–3 per row compact; a coloured top strip by status, a glow on warning / critical. */
+.eqp .eqp-kpis {
+  grid-template-columns: repeat(auto-fill, minmax(132px, 1fr));
+  gap: 10px;
+  border: 0;
+  border-radius: 0;
+  background: none;
+  overflow: visible;
+}
+.eqp .eqp-kpis > :last-child:nth-child(odd) {
+  grid-column: auto;
+}
+.eqp.eqp-wide .eqp-kpis {
+  grid-template-columns: repeat(auto-fit, minmax(150px, 1fr));
+  gap: 12px;
+}
+.eqp .eqp-kpi {
+  --t: var(--eq-blue);
+  --t-text: var(--eq-blue-text);
+  gap: 4px;
+  padding: 11px 13px 12px;
+  border: 1px solid var(--card-line);
+  border-top: 3px solid var(--t);
+  border-radius: 12px;
+  background: var(--card-tile);
+}
+.eqp .eqp-kpi.t-good {
+  --t: var(--eq-green);
+  --t-text: var(--eq-green-text);
+}
+.eqp .eqp-kpi.t-warning,
+.eqp .eqp-kpi.t-serious {
+  --t: var(--eq-amber);
+  --t-text: var(--eq-amber-text);
+  border-color: #ffb02e66;
+  border-top-color: var(--t);
+  box-shadow: 0 0 22px var(--eq-amber-glow);
+}
+.eqp .eqp-kpi.t-critical {
+  --t: var(--eq-red);
+  --t-text: var(--eq-red-text);
+  border-color: #ff5f4a66;
+  border-top-color: var(--t);
+  box-shadow: 0 0 22px var(--eq-red-glow);
+}
+.eqp .eqp-kpi.t-planned {
+  --t: var(--planned);
+  --t-text: #c9c3f5;
+}
+.eqp .eqp-kpi.t-na {
+  --t: var(--text-4);
+  border-style: dashed;
+  border-top-style: solid;
+}
+.eqp .eqp-kpi .l {
+  font-size: var(--fs-12);
+  letter-spacing: 0.02em;
+  color: #9aa6b2;
+  white-space: normal;
+}
+.eqp-kpi-row {
+  display: flex;
+  align-items: flex-end;
+  justify-content: space-between;
+  gap: 8px;
+  min-width: 0;
+}
+.eqp .eqp-kpi .v {
+  font-size: 26px;
+  font-weight: 700;
+  letter-spacing: -0.01em;
+  line-height: 1.15;
+}
+.eqp.eqp-wide .eqp-kpi .v {
+  font-size: 30px;
+}
+.eqp .eqp-kpi .v small {
+  margin-left: 5px;
+  font-size: var(--fs-13);
+  color: #9aa6b2;
+}
+.eqp .eqp-kpi .v.na-v {
+  font-size: var(--fs-13);
+  font-weight: var(--fw-regular);
+}
+.eqp-kpi-spark {
+  flex: none;
+  margin-bottom: 4px;
+}
+.eqp-kpi-spark path {
+  fill: none;
+  stroke: var(--t);
+  stroke-width: 2;
+  stroke-linejoin: round;
+  stroke-linecap: round;
+}
+.eqp .eqp-kpi .s {
+  font-size: var(--fs-12);
+  font-weight: var(--fw-medium);
+  color: var(--t-text);
+}
+.eqp .eqp-kpi .s svg {
+  color: var(--t);
+}
+.eqp .eqp-kpi .sub {
+  color: #74808c;
+}
+
+/* Process now: the zone profile, the deviation gauges, the level gauge. */
+.eqp-proc {
+  display: grid;
+  gap: 16px;
+}
+.eqp-wide .eqp-proc.k-zones {
+  grid-template-columns: minmax(0, 1.5fr) minmax(0, 1fr);
+  align-items: center;
+}
+.eqp-wide .eqp-proc.k-pairs.has-level {
+  grid-template-columns: minmax(0, 1fr) minmax(0, 1.4fr);
+  align-items: start;
+}
+.eqp-zones {
+  display: block;
+  width: 100%;
+  height: auto;
+  max-height: 260px;
+  overflow: visible;
+}
+.eqp-zones .grid {
+  stroke: #1f2830;
+}
+.eqp-zones .axis {
+  stroke: var(--card-line-2);
+}
+.eqp-zones .tick {
+  font-size: 11px;
+  fill: #74808c;
+}
+.eqp-zones .heat {
+  fill: var(--eq-heat);
+  fill-opacity: 0.12;
+}
+.eqp-zones .spl {
+  fill: none;
+  stroke: #d6dce2;
+  stroke-width: 1.6;
+  stroke-dasharray: 6 5;
+}
+.eqp-zones .zone {
+  --z: var(--eq-green);
+}
+.eqp-zones .zone.t-warning {
+  --z: var(--eq-amber);
+}
+.eqp-zones .zone.t-critical {
+  --z: var(--eq-red);
+}
+.eqp-zones .zone.t-neutral {
+  --z: var(--text-3);
+}
+.eqp-zones .zband {
+  fill: var(--eq-green);
+  fill-opacity: 0.12;
+}
+.eqp-zones .glow {
+  fill: var(--z);
+  fill-opacity: 0.22;
+}
+.eqp-zones .dot {
+  fill: var(--z);
+}
+.eqp-zones .hollow {
+  fill: none;
+  stroke: var(--text-3);
+  stroke-width: 1.5;
+  stroke-dasharray: 2 2;
+}
+.eqp-zones .pvl {
+  font-size: 13px;
+  font-weight: 600;
+  fill: var(--text-1);
+}
+.eqp-zones .zn {
+  font-size: 11.5px;
+  fill: #b4bec8;
+}
+.eqp-gauges ul {
+  list-style: none;
+  display: grid;
+  gap: 10px;
+  margin: 0;
+  padding: 0;
+}
+.eqp-wide .eqp-proc.k-pairs:not(.has-level) .eqp-gauges ul {
+  grid-template-columns: repeat(auto-fill, minmax(340px, 1fr));
+  column-gap: 28px;
+}
+.eqp-gauge {
+  --g: var(--eq-green);
+  display: grid;
+  grid-template-columns: minmax(96px, 0.9fr) minmax(80px, 1.4fr) 88px;
+  gap: 10px;
+  align-items: center;
+  font-size: 12.5px;
+  cursor: help;
+}
+.eqp-gauge.t-warning {
+  --g: var(--eq-amber);
+}
+.eqp-gauge.t-critical {
+  --g: var(--eq-red);
+}
+.eqp-gauge.t-neutral {
+  --g: var(--text-3);
+}
+.eqp-gauge-l {
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+}
+.eqp-gauge-l .n {
+  color: #b4bec8;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.eqp-gauge-l .pv {
+  font-size: var(--fs-11);
+  color: #74808c;
+}
+.eqp-gauge-bar {
+  position: relative;
+  height: 10px;
+  border-radius: 5px;
+  background: #1f2830;
+}
+.eqp-gauge-bar .band {
+  position: absolute;
+  top: 0;
+  height: 10px;
+  border-radius: 5px;
+  background: #3ee08a33;
+}
+.eqp-gauge-bar .sp {
+  position: absolute;
+  left: calc(50% - 1px);
+  top: -3px;
+  width: 2px;
+  height: 16px;
+  background: #d6dce2;
+}
+.eqp-gauge-bar .mk {
+  position: absolute;
+  top: -2px;
+  width: 14px;
+  height: 14px;
+  margin-left: -7px;
+  border-radius: 7px;
+  background: var(--g);
+  box-shadow: 0 0 10px var(--g);
+}
+/* Beyond the bar's scale: a square at its end (shape, not only colour). */
+.eqp-gauge-bar .mk.off {
+  border-radius: 2px;
+}
+.eqp-gauge-d {
+  justify-content: flex-end;
+  font-size: 12.5px;
+  font-weight: var(--fw-semibold);
+  color: var(--text-2);
+}
+.eqp-gauge.t-good .eqp-gauge-d {
+  color: var(--eq-green-text);
+}
+.eqp-gauge.t-warning .eqp-gauge-d {
+  color: var(--eq-amber-text);
+}
+.eqp-gauge.t-critical .eqp-gauge-d {
+  color: var(--eq-red-text);
+}
+.eqp-gauges .eqp-fine {
+  font-size: 11.5px;
+  color: #74808c;
+}
+.eqp-level {
+  --g: var(--eq-green);
+  display: grid;
+  gap: 8px;
+  cursor: help;
+}
+.eqp-level.t-warning {
+  --g: var(--eq-amber);
+}
+.eqp-level.t-neutral {
+  --g: var(--text-3);
+}
+.eqp-level-h {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 10px;
+}
+.eqp-level-h .n {
+  color: #b4bec8;
+}
+.eqp-level-h .v {
+  font-size: 28px;
+  font-weight: 700;
+  color: var(--text-1);
+}
+.eqp-level-h .v small {
+  margin-left: 4px;
+  font-size: var(--fs-13);
+  font-weight: var(--fw-regular);
+  color: #9aa6b2;
+}
+.eqp-level-bar {
+  position: relative;
+  height: 18px;
+  border-radius: 6px;
+  background: #1f2830;
+}
+.eqp-level-bar .fill {
+  position: absolute;
+  inset: 0 auto 0 0;
+  border-radius: 6px;
+  background: var(--g);
+  opacity: 0.8;
+  box-shadow: 0 0 12px color-mix(in srgb, var(--g) 40%, transparent);
+}
+.eqp-level-bar .lim {
+  position: absolute;
+  top: -4px;
+  width: 2px;
+  height: 26px;
+  margin-left: -1px;
+  background: #d6dce2;
+}
+.eqp-level-bar .lim.low {
+  background: var(--eq-amber);
+}
+.eqp-level-f {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: space-between;
+  gap: 4px 12px;
+  font-size: var(--fs-12);
+  color: var(--text-2);
+}
+.eqp-level-f .status {
+  white-space: normal;
+}
+
+/* Charts as cards in the left column. */
+.eqp .eqp-chart {
+  padding: 12px 14px 10px;
+  border: 1px solid var(--card-line);
+  border-radius: 10px;
+  background: var(--card-bg);
+}
+.eqp .eqp-chart.on {
+  box-shadow: 0 0 0 1px var(--accent-line);
+}
+.eqp .eqp-chart-h {
+  font-size: var(--fs-14);
+}
+
+/* Insight and finding cards: a solid severity pill (icon + word), the evidence in mono chips. */
+.eqp .eqp-ins {
+  --i: var(--card-line-2);
+  padding: 12px 14px;
+  border: 1px solid color-mix(in srgb, var(--i) 40%, transparent);
+  border-radius: 12px;
+  background: var(--card-bg);
+  box-shadow: 0 0 0 1px color-mix(in srgb, var(--i) 14%, transparent);
+}
+.eqp .eqp-ins.good {
+  --i: var(--eq-green);
+}
+.eqp .eqp-ins.neutral {
+  --i: var(--eq-blue);
+}
+.eqp .eqp-ins.warning,
+.eqp .eqp-ins.serious {
+  --i: var(--eq-amber);
+}
+.eqp .eqp-ins.critical {
+  --i: var(--eq-red);
+}
+.eqp .eqp-ins .eqp-sev {
+  gap: 5px;
+  padding: 2px 9px;
+  border-radius: 999px;
+  background: var(--i);
+  color: #120c04;
+  font-size: 10.5px;
+  font-weight: 700;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+}
+.eqp .eqp-ins .eqp-sev svg {
+  color: currentColor;
+}
+.eqp .eqp-ins-h h4 {
+  font-size: var(--fs-14);
+}
+.eqp .eqp-ins .obs {
+  font-size: var(--fs-13);
+  color: #c9d1d9;
+}
+.eqp .eqp-chip {
+  border-color: var(--card-line-2);
+  border-radius: 6px;
+  background: var(--card-sunk);
+  font-family: var(--mono);
+  font-size: 11.5px;
+  color: #b4bec8;
+}
+.eqp button.eqp-chip {
+  color: var(--eq-blue-text);
+}
+.eqp .eqp-ins .next b {
+  font-weight: var(--fw-regular);
+  color: #9aa6b2;
+}
+.eqp .eqp-ins .next b::after {
+  content: ' ·';
+}
+.eqp .eqp-rf-m {
+  font-size: var(--fs-11);
+  color: #74808c;
+}
+.eqp .eqp-ins-list,
+.eqp .eqp-rfs {
+  gap: 12px;
+}
+.eqp .eqp-ins-list + .eqp-rfs {
+  margin-top: 12px;
+}
+.eqp .eqp-rf-sub:has(> .eqp-nm-b) {
+  padding: 10px 14px;
+  border: 1px dashed var(--card-line-2);
+  border-radius: 10px;
+}
+
+/* Events & alarms */
+.eqp .eqp-ev {
+  border-bottom-color: #1f2830;
+}
+
+/* PLC signal table: Signal · Value · Unit · Quality · Age · Category · Availability */
+.eqp .eqp-st-head,
+.eqp .eqp-st-b {
+  grid-template-columns: minmax(0, 2fr) minmax(64px, 1fr) 64px minmax(84px, 1fr) 60px minmax(0, 1fr) 96px 14px;
+}
+.eqp .eqp-st-head {
+  border-bottom-color: var(--card-line-2);
+}
+.eqp .eqp-st-r {
+  border-bottom-color: #1a2229;
+}
+.eqp .eqp-st-b .val {
+  font-family: var(--mono);
+  font-size: 12.5px;
+}
+.eqp-st-b .unit {
+  font-size: var(--fs-12);
+  color: #9aa6b2;
+}
+.eqp-cls {
+  justify-self: start;
+  padding: 1px 7px;
+  border: 1px solid transparent;
+  border-radius: 5px;
+  font-size: 11px;
+  white-space: nowrap;
+}
+.eqp-cls.c-core {
+  background: var(--eq-blue-soft);
+  color: var(--eq-blue-text);
+}
+.eqp-cls.c-conditional {
+  border: 1px dashed var(--eq-sim-line);
+  color: var(--eq-amber-text);
+}
+.eqp-cls.c-external {
+  border-color: var(--eq-violet-line);
+  color: var(--eq-violet-text);
+}
+.eqp-st-more .show {
+  color: var(--eq-blue-text);
+  text-decoration: underline;
+}
+.eqp .eqp-st-search {
+  border-color: var(--card-line-2);
+  background: var(--card-sunk);
+}
+@container (max-width: 640px) {
+  .eqp .eqp-st-head {
+    display: none;
+  }
+  .eqp .eqp-st-b {
+    grid-template-columns: minmax(0, 1fr) auto 44px auto 14px;
+  }
+  .eqp .eqp-st-b .age,
+  .eqp .eqp-st-b .cat,
+  .eqp .eqp-st-b .eqp-cls {
+    display: none;
+  }
+}
+
+/* Wide columns: cards side by side, no hairline between them. */
+.eqp.eqp-wide .eqp-cols {
+  grid-template-columns: minmax(0, 1.25fr) minmax(0, 1fr);
+}
+.eqp.eqp-wide .eqp-col-a .eqp-sec {
+  margin-right: 8px;
+}
+.eqp.eqp-wide .eqp-col-b .eqp-sec {
+  margin-left: 8px;
+}
+.eqp.eqp-wide .eqp-col-b {
+  border-left: 0;
+}
+
+/* Continue in · technical details (one line, collapsed) · legend */
+.eqp .eqp-links {
+  border-top: 0;
+}
+.eqp .eqp-tech {
+  margin: 0 var(--eqp-x) 10px;
+  padding: 0 16px 2px;
+  border: 1px solid var(--card-line);
+  border-radius: 12px;
+  background: var(--card-head);
+}
+.eqp-legend {
+  margin: 0 var(--eqp-x) 10px;
+  font-size: 11.5px;
+  line-height: 1.7;
+  color: #74808c;
+}
+
+/* Action bar: Ask Copilot accented. */
+.eqp .eqp-bar {
+  gap: 10px;
+  padding: 10px var(--eqp-x) 12px;
+  border-top-color: var(--card-line);
+  background: var(--card-head);
+  border-radius: 0 0 14px 14px;
+}
+.eqp .eqp-act {
+  height: 36px;
+  border-color: var(--card-line-2);
+  border-radius: 8px;
+  background: #18212a;
+  font-size: 13.5px;
+}
+.eqp .eqp-act.accent {
+  border-color: var(--eq-blue-line);
+  background: var(--eq-blue-soft);
+  color: var(--text-1);
+}
+.eqp .eqp-act.accent:hover {
+  border-color: var(--eq-blue);
+}
+
+@container (max-width: 320px) {
+  .eqp .eqp-kpi .v {
+    font-size: 22px;
+  }
+  .eqp .eqp-sec {
+    padding: 11px 12px 12px;
+  }
+  .eqp-gauge {
+    grid-template-columns: minmax(80px, 1fr) minmax(60px, 1fr) 76px;
+    gap: 6px;
+  }
+}
+
+/* Wide card: charts two per row (timelines and event strips span the row), so no column runs empty. */
+.eqp-chart-grid {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+.eqp-wide .eqp-chart-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 14px;
+  align-items: start;
+}
+.eqp-wide .eqp-chart-cell.span {
+  grid-column: 1 / -1;
+}
+.eqp-chart-cell {
+  min-width: 0;
 }

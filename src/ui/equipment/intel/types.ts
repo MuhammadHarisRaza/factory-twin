@@ -8,14 +8,21 @@
  * does not have is listed as "not modelled", never filled with a plausible number.
  *
  * Section order (fixed header · scrolling body · persistent action bar):
- *   header → feed (one) → facets (what state is it in) → metrics (3–5 tiles) → insights (what matters)
- *   → analytics (how has it behaved) → signals (PLC-style) → events → technical details (collapsed)
+ *   header → feed (one) → facets (what state is it in) → metrics (4–6 tiles) → insights + rule findings (what
+ *   matters) → charts over the viewer's range (how has it behaved) → signals (catalogue table) → events & alarms
+ *   → technical details (collapsed). Wave 3 adds `charts`, `signalTable`, `history`, `findings`, `log`, `catalog`
+ *   (optional, equipment only) and the header's `lastUpdate` / `stage12` and data-badge kinds.
  */
-import type { OpEvent, OperationalState } from '../../../model/types';
+import type { AlertSeverity, OpEvent, OperationalState } from '../../../model/types';
+import type { RangeKey, TelemetrySeries } from '../../../model/telemetry';
+import type { RuleFinding } from '../../../intel/rules/types';
 import type { HealthAssessment } from '../../../sim/health';
 import type { VideoRef } from '../../../video/types';
 import type { EqKpiSet } from '../kpis';
 import type { AssetProfile } from '../profile';
+import type { ChartSpec } from './charts';
+import type { IntelProcess } from './panelData';
+import type { SignalTableRow } from './signalTable';
 
 /** Semantic tone (always shown with words and an icon, never colour alone). */
 export type IntelTone = 'good' | 'warning' | 'critical' | 'neutral';
@@ -33,9 +40,19 @@ export type IntelHeader = {
   state: { label: string; tone: IntelTone; op: OperationalState | null };
   /** Minute the current state began (null when unknown / not modelled). */
   since: number | null;
-  /** Where the data comes from: the simulation, a stale (simulated) feed, or a connected source. */
-  source: { kind: 'simulated' | 'stale' | 'connected'; label: string; since?: number | null };
+  /**
+   * Where the data comes from: the simulation, a stale (simulated) feed, a connected source (never produced in this
+   * release), no operating data at all ('unavailable': the asset has catalogue entries but nothing is simulated), or
+   * a 3D-layout reference without any data ('reference'). A configured camera stream never changes it.
+   */
+  source: { kind: IntelSourceKind; label: string; since?: number | null };
+  /** Optional (added): plant minute of the newest sample of the asset's simulated signals ("Updated hh:mm"); null = none. */
+  lastUpdate?: number | null;
+  /** Optional (added): the brief's 12-stage mapping of the asset ("Brief stage 7 · Kiln firing"), null for support assets. */
+  stage12?: { no: number; label: string; note: string } | null;
 };
+
+export type IntelSourceKind = 'simulated' | 'stale' | 'connected' | 'unavailable' | 'reference';
 
 // ── Feed (exactly one) ───────────────────────────────────────────────────────
 
@@ -179,6 +196,8 @@ export type IntelAnalytics = {
     breakdown?: { key: 'stops' | 'waiting' | 'pace'; label: string; tiles: number; hint: string }[];
     /** Optional (added): the not-confirmed mark of the figure while a feed it rests on is stale (as `stops`). */
     notConfirmed?: string;
+    /** Optional (added): the unit of `tiles` — 'tile-eq.' for slip and powder (never 'tiles'); default 'tiles'. */
+    unit?: string;
   } | null;
   /**
    * Optional (added): a few extra compact facts with figures ("Starved · last 60 min 12 %", "Mean rate · 4 h",
@@ -235,6 +254,63 @@ export type IntelEvents = {
   total: number;
 };
 
+// ── Wave 3: charts over a range, catalogue signals, rule findings, the event log ─────────────────────
+
+/** The chart set of the panel (intel/charts.ts) for the viewer's range. */
+export type IntelCharts = {
+  /** The range the specs cover (the viewer's choice, or the closest shorter one the data serves). */
+  range: RangeKey;
+  /** Ranges the data cannot serve, with the reason. */
+  disabled: Partial<Record<RangeKey, string>>;
+  specs: ChartSpec[];
+  /** Numeric catalogue signals without a chart (not modelled / unavailable). */
+  notCharted: { signalId: string; name: string; status: string }[];
+  /** [from, to) of the range. */
+  window: { from: number; to: number };
+  /** Plant minute the charts were computed at when it is a live card's earlier result (src/ui/equipment/intel/live.ts); absent = now. */
+  at?: number;
+};
+
+
+/** The rule engine's findings for the asset after merging with the curated insights. */
+export type IntelFindings = {
+  /** Every finding of the scope (fired / clear / insufficient-data) except the fired ones a curated insight already says. */
+  shown: RuleFinding[];
+  /** Fired findings dropped because a curated insight above says the same (by rule topic). */
+  merged: { ruleId: string; insightId: string }[];
+  /** Plant minute of the evaluation when it is a live view's (src/intel/rules/live.ts: up to LIVE_FINDINGS_MIN minutes old); absent = evaluated now. */
+  at?: number;
+};
+
+
+/** One entry of the Events & alarms log besides the event records: an alarm, a state transition or a data-quality event. */
+export type IntelLogKind = 'alarm' | 'state' | 'data';
+export type IntelLogEntry = {
+  id: string;
+  kind: IntelLogKind;
+  /** Plant minute it started / happened. */
+  t: number;
+  /** End of a spell (null: still open; undefined: an instant). */
+  end?: number | null;
+  severity: AlertSeverity;
+  title: string;
+  detail?: string;
+  /** Where it comes from ("Alarm code · H-KILN.alarm (simulated)", "State signal · stop records", "Rule DQ-STALE"). */
+  source: string;
+  /** The event record it belongs to (opens it), if any. */
+  eventId?: string;
+};
+
+/** The catalogue view of Technical details. */
+export type IntelCatalog = {
+  /** Signals per availability class × status of the asset. */
+  counts: { cls: string; status: string; n: number }[];
+  /** Rule thresholds that apply to the asset: value in force and whether it is the default. */
+  thresholds: { ruleId: string; rule: string; key: string; label: string; value: string; source: 'default' | 'configured' | 'event rule' }[];
+  /** Calculation definitions the panel's figures rest on. */
+  definitions: { label: string; text: string }[];
+};
+
 // ── The whole model ──────────────────────────────────────────────────────────
 
 export type EquipmentIntel = {
@@ -259,4 +335,20 @@ export type EquipmentIntel = {
    * (the copilot answers an event by its id), otherwise about the asset by its id.
    */
   ask?: { prompt: string; eventId?: string };
+  /** Optional (added, equipment only): charts over the viewer's range (§6B). */
+  charts?: IntelCharts | null;
+  /** Optional (added, equipment only): the catalogue signal table rows (§6C). */
+  signalTable?: SignalTableRow[];
+  /** Optional (added): history of one signal over the charts' range, for the signal detail (null: none). */
+  history?: (signalId: string) => TelemetrySeries | null;
+  /** Optional (added): rule findings for the asset, merged with the curated insights (§6D). */
+  findings?: IntelFindings | null;
+  /** Optional (added): alarms, state transitions and data-quality entries over the charts' range (§6E). */
+  log?: IntelLogEntry[];
+  /** Optional (added): catalogue view for Technical details (§6G). */
+  catalog?: IntelCatalog | null;
+  /** Optional (added, equipment only): the process now — kiln zone profile, PV / SP deviation gauges, a buffer's level gauge. */
+  process?: IntelProcess | null;
+  /** Optional (added, equipment only): sparkline values per key-figure tile over the charts' range (tiles a simulated signal backs). */
+  tileTrends?: Record<string, (number | null)[]>;
 };

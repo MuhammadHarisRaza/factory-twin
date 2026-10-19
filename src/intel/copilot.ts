@@ -230,7 +230,7 @@ export const eventQuestionsFor = (id: string) => [
 // ── Formatting ────────────────────────────────────────────────────────────────
 
 const pct = (f: number | null | undefined, d = 1) => (f == null || !Number.isFinite(f) ? '—' : `${(f * 100).toFixed(d)} %`);
-const int = (n: number) => Math.round(n).toLocaleString('en-GB');
+const int = (n: number | null | undefined) => (n == null || !Number.isFinite(n) ? '—' : Math.round(n).toLocaleString('en-GB'));
 /** Tiles → "1,234 m²". */
 const m2 = (tiles: number) => `${Math.round(tiles * M2_PER_TILE).toLocaleString('en-GB')} m²`;
 /** Area already in m² → "1,234 m²". */
@@ -258,7 +258,7 @@ const nameOf = (id: string) => EQUIPMENT_BY_ID[id]?.name ?? CONVEYOR_BY_ID[id]?.
 
 /** An operational state in a sentence ("is running", "is in fault"), in the words of OPERATIONAL_STATE_LABEL. */
 const stateIs = (op: OperationalState) =>
-  op === 'fault' ? 'in fault' : op === 'planned' ? 'in a planned stop' : op === 'unknown' ? 'in an unknown state' : low1(OPERATIONAL_STATE_LABEL[op]);
+  op === 'fault' ? 'in fault' : op === 'planned' ? 'in a planned stop' : op === 'changeover' ? 'in a product changeover' : op === 'unknown' ? 'in an unknown state' : low1(OPERATIONAL_STATE_LABEL[op]);
 /** The asset's data feed when it is stale — its state is then unknown — else null. */
 const staleFeed = (s: SimState, id: string): FeedRuntime | null => (s.feeds[id]?.status === 'stale' ? s.feeds[id] : null);
 /** "state unknown — data feed stale since 10:50 (last value: running)". */
@@ -960,8 +960,8 @@ function bottleneckAnswer(c: Ctx): CopilotAnswer {
   const cur = bn.stages.find((r) => r.stage === claim.processStage) ?? bn.current;
   const machines = STAGE_BY_ID[cur.stage].machines;
   const at = bn.stages.indexOf(cur);
-  const up = traced ? bn.stages.filter((r, i) => i < at && r.blockedShare > HELD_UP_SHARE).map((r) => r.name.toLowerCase()) : [];
-  const down = traced ? bn.stages.filter((r, i) => i > at && r.starvedShare > HELD_UP_SHARE).map((r) => r.name.toLowerCase()) : [];
+  const up = traced ? bn.stages.filter((r, i) => i < at && (r.blockedShare ?? 0) > HELD_UP_SHARE).map((r) => r.name.toLowerCase()) : [];
+  const down = traced ? bn.stages.filter((r, i) => i > at && (r.starvedShare ?? 0) > HELD_UP_SHARE).map((r) => r.name.toLowerCase()) : [];
   const kilnName = STAGE_BY_ID[LINE.designConstraint].name.toLowerCase();
   // Active events on the named stage's machines (the records that may explain it).
   const onStage = activeEvents(s)
@@ -998,7 +998,7 @@ function bottleneckAnswer(c: Ctx): CopilotAnswer {
         traced ? likely(`every minute ${kilnName} waits on ${claim.name.toLowerCase()} is output lost for the whole line`, 'the kiln is the designed constraint') : null,
       ],
       hypotheses: [
-        traced && !onStage.length && cur.downShare < HELD_UP_SHARE
+        traced && !onStage.length && (cur.downShare ?? 0) < HELD_UP_SHARE
           ? possible(`${claim.name.toLowerCase()} is running below its ideal rate or stopping briefly`, 'no stop or event explains it; the stage state shares alone cannot tell a slow machine from short stops')
           : null,
       ],

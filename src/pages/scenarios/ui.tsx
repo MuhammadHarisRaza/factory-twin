@@ -91,6 +91,13 @@ const WS_ICON: Record<WorkspaceId, LucideIcon> = {
   copilot: MessageSquareText,
 };
 
+/** Names of the workspace tabs a "Show me" button can open (ids as the workspaces define them). */
+export const TAB_LABEL: Partial<Record<WorkspaceId, Record<string, string>>> = {
+  production: { oee: 'OEE & losses', material: 'Material flow' },
+  quality: { compare: 'Compare' },
+  events: { reliability: 'Reliability', data: 'Data & connectivity' },
+};
+
 export function targetLabel(t: ShowTarget, s?: SimState) {
   switch (t.type) {
     case 'equipment':
@@ -104,7 +111,7 @@ export function targetLabel(t: ShowTarget, s?: SimState) {
     case 'copilot':
       return 'Ask the copilot';
     default:
-      return WS_LABEL[t.id];
+      return t.tab ? `${WS_LABEL[t.id]} › ${TAB_LABEL[t.id]?.[t.tab] ?? t.tab}` : WS_LABEL[t.id];
   }
 }
 

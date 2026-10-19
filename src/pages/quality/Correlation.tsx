@@ -8,11 +8,13 @@
 import type { MachineState, OpEvent } from '../../model/types';
 import { openEquipment } from '../../app/store';
 import { DEFECTS, STAGE_BY_ID } from '../../model/plant';
+import { LOG_MIN } from '../../sim/engine';
 import { EVENT_TYPE_LABEL } from '../../sim/events';
 import { formatClock, formatDuration } from '../../sim/time';
 import { fmtInt, fmtPct } from '../../ui/kit/format';
 import { MACHINE_STATE, MachineStatus } from '../../ui/kit/Status';
 import type { Correlation, StateAt } from './derive';
+import { openCompare } from './compareFocus';
 import { PRODUCT_BY_SKU } from './lookup';
 
 const STATE_ORDER: MachineState[] = ['running', 'reduced', 'starved', 'blocked', 'down', 'planned'];
@@ -22,7 +24,7 @@ export function EventCorrelation({ corr, onOpenEvent }: { corr: Correlation; onO
     <div className="qd-corr">
       <p className="qd-note">
         Window {formatClock(corr.from)} – {formatClock(corr.to)} ({formatDuration(corr.to - corr.from + 1)}) ·{' '}
-        {corr.minuteResolution ? 'per-minute counters' : 'hourly counters (window older than the 4-hour minute log)'}
+        {corr.minuteResolution ? 'per-minute counters' : `hourly counters (window older than the ${LOG_MIN / 60}-hour minute log)`}
       </p>
       {corr.mix.length ? (
         <table className="table qd-mix">
@@ -70,7 +72,7 @@ export function EventCorrelation({ corr, onOpenEvent }: { corr: Correlation; onO
                       .join(' · ')}
                   </span>
                 ) : (
-                  <span className="muted">state not in the 4-hour minute log</span>
+                  <span className="muted">state not in the {LOG_MIN / 60}-hour minute log</span>
                 )}
               </li>
             ))}
@@ -102,7 +104,10 @@ export function EventCorrelation({ corr, onOpenEvent }: { corr: Correlation; onO
           <span>
             {corr.batches.map((b) => (
               <span key={b.id} className="qd-corr-batch">
-                <span className="mono">{b.id}</span> <span className="dim">{PRODUCT_BY_SKU[b.sku]?.name ?? b.sku} · {b.records} rec.</span>
+                <button type="button" className="row-link mono" onClick={() => openCompare(b.id)} title={`Compare batch ${b.id} with the rest (Quality › Compare)`}>
+                  {b.id}
+                </button>{' '}
+                <span className="dim">{PRODUCT_BY_SKU[b.sku]?.name ?? b.sku} · {b.records} rec.</span>
               </span>
             ))}
           </span>
@@ -114,7 +119,7 @@ export function EventCorrelation({ corr, onOpenEvent }: { corr: Correlation; onO
 
 /** Machine states at a record's minute (origin-stage machines and the sorting line). */
 export function RecordStates({ states, time }: { states: StateAt[]; time: number }) {
-  if (!states.some((x) => x.state != null)) return <p className="muted">Machine states at {formatClock(time)} are unavailable — the per-minute state log keeps the last 4 hours only.</p>;
+  if (!states.some((x) => x.state != null)) return <p className="muted">Machine states at {formatClock(time)} are unavailable — the per-minute state log keeps the last {LOG_MIN / 60} hours only.</p>;
   return (
     <div className="qd-corr-row">
       <span className="qd-k">Machine states at {formatClock(time)}</span>

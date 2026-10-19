@@ -1,4 +1,5 @@
 import { Fragment } from 'react';
+import { pureIcon } from '../kit/icon';
 import { Boxes, Check, Hourglass, LocateFixed, Truck, Warehouse, X } from 'lucide-react';
 import { useTwin } from '../../store';
 import { ZONE_BY_ID } from '../../data/layout';
@@ -20,7 +21,7 @@ const opColor = (op: OperationalState) => OP_COLOR_HEX[toneToColor(OPERATIONAL_S
 /** One machine or conveyor row in a tooltip: id, operational state, since, reason, stale feed. */
 function AssetTipRow({ a }: { a: AssetStatus }) {
   const os = OPERATIONAL_STATE[a.op];
-  const Icon = os.icon;
+  const Icon = pureIcon(os.icon);
   return (
     <div className="tw-tip-row">
       <span className={`status ${os.tone}`}>
@@ -100,7 +101,7 @@ function StageStrip() {
       <div className="tw-line-chips">
         {data.stages.map((st, i) => {
           const color = st.worst ? opColor(st.worst) : OP_COLOR_HEX.grey;
-          const Icon = st.worst ? OPERATIONAL_STATE[st.worst].icon : st.def.key === 'RAW' ? Boxes : Warehouse;
+          const Icon = pureIcon(st.worst ? OPERATIONAL_STATE[st.worst].icon : st.def.key === 'RAW' ? Boxes : Warehouse);
           const on = selected
             ? st.machines.some((m) => m.id === selected) || st.conveyors.some((c) => c.id === selected)
             : stage

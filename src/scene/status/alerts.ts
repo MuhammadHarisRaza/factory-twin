@@ -46,13 +46,13 @@ export const sharedSeverities = perVersion(activeSeverities);
 /** Severity of an operational-state marker when no event record carries one. */
 export function stateSeverity(op: OperationalState): AlertSeverity {
   if (op === 'fault' || op === 'stopped') return 'serious';
-  if (op === 'planned') return 'info';
+  if (op === 'planned' || op === 'changeover') return 'info';
   return 'warning';
 }
 
 /** Severity of a stop / state marker on an asset: its active stop event, else its state. */
 export const stopMarkerSeverity = (sev: AssetSeverity | undefined, op: OperationalState): AlertSeverity =>
-  op === 'planned' ? 'info' : (sev?.stop ?? stateSeverity(op));
+  op === 'planned' || op === 'changeover' ? 'info' : (sev?.stop ?? stateSeverity(op));
 
 /** Condition pin: its condition event, else the assessment level (alarm critical · warning serious · watch warning). */
 export const conditionSeverity = (sev: AssetSeverity | undefined, level: 'watch' | 'warning' | 'alarm'): AlertSeverity =>

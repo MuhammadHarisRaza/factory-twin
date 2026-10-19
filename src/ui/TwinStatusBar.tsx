@@ -5,6 +5,7 @@
  * Each chip states its status in words and opens the workspace that explains it.
  */
 import { CircleCheck, CircleDashed, Gauge, OctagonX, ScanSearch, Siren, Target, TriangleAlert, type LucideIcon } from 'lucide-react';
+import { pureIcon } from './kit/icon';
 import { WORKSPACE_BY_ID, openView, type WorkspaceId } from '../app/store';
 import { overviewKpis, type KpiId, type KpiModel } from '../intel/kpis';
 import { resolvePeriod } from '../sim/metrics';
@@ -42,9 +43,10 @@ export function TwinStatusBar() {
 
   return (
     <div className="tw-kpis" role="group" aria-label={`Factory status · ${d.p.label} (simulated)`}>
-      {d.chips.map(({ id, icon: Icon, short, workspace, tab, k }) => {
+      {d.chips.map(({ id, icon, short, workspace, tab, k }) => {
+        const Icon = pureIcon(icon);
         const tone = k.status?.tone;
-        const StatusIcon = tone ? TONE_ICON[tone] : null;
+        const StatusIcon = tone ? pureIcon(TONE_ICON[tone]) : null;
         return (
           <button
             key={id}

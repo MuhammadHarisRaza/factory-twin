@@ -20,7 +20,7 @@ describe('standalone frame stills (input of the inspection-image rasteriser)', (
   });
 
   it('renders a self-contained SVG (namespace, pixel size, embedded styles, no CSS variables)', async () => {
-    const frame = frameForRecord(vis, 'FT-6060-GRY-P')!;
+    const frame = frameForRecord(vis, 'FT-6060-GRY-R')!;
     const annotated = await frameStillMarkup(frame, { annotated: true, crop: true, size: 320 });
     expect(annotated.startsWith('<svg')).toBe(true);
     expect(annotated).toContain('xmlns="http://www.w3.org/2000/svg"');

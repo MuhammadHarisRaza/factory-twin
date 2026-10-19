@@ -49,6 +49,32 @@
   --chart-grid: #ffffff10;
   --chart-axis: #ffffff26;
 
+  /* Equipment card (the Factory Twin's selected-asset panel): card surfaces and the vivid accents with their glows */
+  --card-bg: #10161c;
+  --card-head: #131b23;
+  --card-tile: #131b23;
+  --card-line: #222c36;
+  --card-line-2: #2c3742;
+  --card-sunk: #0c1116;
+  --eq-green: #3ee08a;
+  --eq-green-text: #8ff0b8;
+  --eq-green-soft: #123524;
+  --eq-green-glow: #2fd07a33;
+  --eq-amber: #ffb02e;
+  --eq-amber-text: #ffcf6e;
+  --eq-amber-glow: #ffb02e22;
+  --eq-red: #ff5f4a;
+  --eq-red-text: #ff9d8c;
+  --eq-red-glow: #ff5f4a22;
+  --eq-blue: #4fb6ff;
+  --eq-blue-text: #9fd4ff;
+  --eq-blue-soft: #163049;
+  --eq-blue-line: #3d6f99;
+  --eq-violet-line: #5a4a7e;
+  --eq-violet-text: #d3c4f5;
+  --eq-heat: #ff7a2e;
+  --eq-sim-line: #b8862e;
+
   /* Type */
   --sans: 'IBM Plex Sans', system-ui, -apple-system, 'Segoe UI', sans-serif;
   --mono: 'IBM Plex Mono', ui-monospace, Menlo, monospace;

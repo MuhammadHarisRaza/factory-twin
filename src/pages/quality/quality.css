@@ -708,3 +708,67 @@
     transition: none;
   }
 }
+
+/* ── Compare tab ────────────────────────────────────────────────────────── */
+
+.qc-bar {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--s-3);
+  font-size: var(--fs-12);
+}
+.qc .table .sub,
+.qc td .sub {
+  display: block;
+  font-size: var(--fs-11);
+  color: var(--text-3);
+}
+.qc-assoc {
+  display: grid;
+  grid-template-columns: minmax(0, 5fr) minmax(0, 6fr);
+  gap: var(--s-4);
+  align-items: start;
+}
+.qc-findings {
+  display: flex;
+  flex-direction: column;
+  gap: var(--s-3);
+  min-width: 0;
+}
+.qc-finding {
+  border-left: 2px solid var(--warning);
+  padding: 2px 0 2px var(--s-3);
+  font-size: var(--fs-12);
+}
+.qc-finding header {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px;
+}
+.qc-finding p {
+  margin: 4px 0 0;
+}
+.qc-scatter {
+  display: flex;
+  flex-direction: column;
+  gap: var(--s-2);
+  min-width: 0;
+}
+.qc-pv {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--s-2);
+  font-size: var(--fs-12);
+}
+.qc-pv .select {
+  height: 26px;
+  max-width: 260px;
+}
+@media (max-width: 1180px) {
+  .qc-assoc {
+    grid-template-columns: minmax(0, 1fr);
+  }
+}

@@ -16,9 +16,12 @@ import {
   TriangleAlert,
   CalendarClock,
   Info,
+  RefreshCcw,
   type LucideIcon,
 } from 'lucide-react';
+import { memo } from 'react';
 import type { AlertSeverity, EventStatus, FeedStatus, MachineState, OperationalState, SourceStatus } from '../../model/types';
+
 import type { Metric } from '../../sim/oee';
 import { fmtMetric } from './format';
 
@@ -56,15 +59,19 @@ export const SOURCE_STATUS: Record<SourceStatus, { label: string; tone: Tone; ic
   connected: { label: 'Connected', tone: 'good', icon: CircleCheck },
 };
 
-/** Icon + label status. Colour is never the only carrier of meaning. */
-export function StatusBadge({ tone, icon: Icon, label, size = 13 }: { tone: Tone; icon: LucideIcon; label: string; size?: number }) {
+/**
+ * Icon + label status. Colour is never the only carrier of meaning. Memoised (its props are a few primitives and an
+ * icon): the badges of rows and chips re-rendered every simulated minute mostly say the same.
+ */
+export const StatusBadge = memo(function StatusBadge({ tone, icon: Icon, label, size = 13 }: { tone: Tone; icon: LucideIcon; label: string; size?: number }) {
   return (
     <span className={`status ${tone}`}>
       <Icon size={size} strokeWidth={2.2} aria-hidden />
       {label}
     </span>
   );
-}
+});
+
 
 export const MachineStatus = ({ state }: { state: MachineState }) => <StatusBadge {...MACHINE_STATE[state]} />;
 export const SeverityBadge = ({ severity }: { severity: AlertSeverity }) => <StatusBadge {...SEVERITY[severity]} />;
@@ -101,6 +108,7 @@ export const OPERATIONAL_STATE: Record<OperationalState, { label: string; tone: 
   starved: { label: 'Starved', tone: 'warning', icon: CirclePause },
   blocked: { label: 'Blocked', tone: 'warning', icon: CircleSlash },
   planned: { label: 'Planned stop', tone: 'neutral', icon: CalendarClock },
+  changeover: { label: 'Setup / changeover', tone: 'neutral', icon: RefreshCcw },
   disconnected: { label: 'Disconnected', tone: 'neutral', icon: Unplug },
   unknown: { label: 'Unknown — data stale', tone: 'neutral', icon: CircleHelp },
 };

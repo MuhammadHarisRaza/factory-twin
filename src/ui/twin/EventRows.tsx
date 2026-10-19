@@ -3,6 +3,7 @@
  * list and the equipment workspace. Each row opens THE event record (Events & Reports,
  * where its report and PDF live); a secondary action shows the affected object in 3D.
  */
+import { memo } from 'react';
 import { FileText, LocateFixed } from 'lucide-react';
 import { openEvent } from '../../app/store';
 import { INSPECTION_STATIONS } from '../../model/plant';
@@ -49,9 +50,24 @@ export function EventPills({ ev }: { ev: OpEvent }) {
   );
 }
 
-/** Live-list row: opens the event; the locate button frames its object in 3D. */
-export function LiveEventRow({ ev, now, on, onLocate }: { ev: OpEvent; now: number; on: boolean; onLocate: () => void }) {
+/**
+ * Everything a live row shows of its event record. The record is mutated in place by the simulation, so the list
+ * passes this text and the row re-renders only when it (or the selection mark) changes.
+ */
+export const liveRowShown = (ev: OpEvent, now: number) =>
+  [ev.title, ev.severity, ev.status, eventSubject(ev), ev.end == null ? `ongoing ${formatDuration(now - ev.start)}` : `cleared ${formatClock(ev.end)}`, ev.source, ev.start, eventTarget(ev)?.id ?? ''].join('\n');
+
+/** Live-list row: opens the event; the locate button frames its object in 3D (`onLocate` gets the event). */
+export const LiveEventRow = memo(
+  function LiveEventRow({ ev, now, on, onLocate }: { ev: OpEvent; now: number; on: boolean; onLocate: (ev: OpEvent) => void; shown: string }) {
+    return <LiveEventRowView ev={ev} now={now} on={on} onLocate={() => onLocate(ev)} />;
+  },
+  (a, b) => a.ev === b.ev && a.shown === b.shown && a.on === b.on && a.onLocate === b.onLocate,
+);
+
+function LiveEventRowView({ ev, now, on, onLocate }: { ev: OpEvent; now: number; on: boolean; onLocate: () => void }) {
   const target = eventTarget(ev);
+
   return (
     <div className={`tw-evrow ${on ? 'on' : ''}`}>
       <button className="tw-row" onClick={() => openEvent(ev.id)} title={`Open ${ev.id} in Events & Reports (report, evidence, lifecycle)`}>

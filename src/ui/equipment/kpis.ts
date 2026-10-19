@@ -8,7 +8,7 @@
  * Headline figures that already exist as shared KPIs (first-pass quality, truck dwell, delayed
  * trucks) come from src/intel/kpis.ts so they read the same everywhere.
  */
-import { BUFFERS, DEFECTS, DOCKS, INSPECTION_STATIONS, LINE, M2_PER_TILE, MONITORED_STAGE_BY_ID, OPS_BY_ID, REASON_BY_CODE, STAGES, STAGE_BY_ID, TILES_PER_PALLET } from '../../model/plant';
+import { BUFFERS, BUFFER_LEVEL_SIGNAL, CONVEYOR_BY_ID, DEFECTS, DOCKS, INSPECTION_STATIONS, LINE, M2_PER_TILE, MONITORED_STAGE_BY_ID, OPS_BY_ID, REASON_BY_CODE, STAGES, STAGE_BY_ID, TILES_PER_PALLET } from '../../model/plant';
 import type { DefectCategory, MonitoredStageId, StageId } from '../../model/types';
 import type { SimState } from '../../sim/engine';
 import type { Metric } from '../../sim/oee';
@@ -33,6 +33,9 @@ import {
 import { phaseLabel, type TruckRuntime } from '../../sim/logistics';
 import { formatClock, formatDuration } from '../../sim/time';
 import type { Tone } from '../kit/Status';
+import { counterRate, rejectRate, seriesToSamples, setpointDeviation, timeToEmpty, timeToFull, trendSlope } from '../../calc';
+import { KG_PER_TILE, KILN_ZONES, PROCESS_SIGNAL_BY_ID, TILES_PER_CARTON, definitionOf } from '../../model/catalog';
+import { readSignal, seriesOf } from '../../sim/telemetry';
 import { feedWord, outputMachines } from '../flow/derive';
 import { vehicleGeofence } from '../twin/derive';
 import { assetProfile, type AssetProfile } from './profile';
@@ -53,6 +56,11 @@ export type EqKpi = {
   unavailable?: string;
   /** True when the parameter does not exist in the simulation at all (vs. "no data in this period yet"). */
   notModelled?: boolean;
+  /**
+   * Optional (added): the tile's own time context when it differs from the set's scope — "now", "last 60 min",
+   * "last value 10:20" (instantaneous readings next to shift figures).
+   */
+  window?: string;
 };
 
 export type EqKpiSet = {
@@ -100,6 +108,8 @@ export const NOT_MODELLED = {
   rawStock: 'Not in the model: stockpile quantities are not tracked; raw-material supply never limits the simulated line.',
   incomingQuality: 'Not in the model: no incoming-material inspection is recorded.',
   qcCounts: 'Not in the model: the QC bench takes manual samples and has no tile counters.',
+  siloMass: 'Not in the model: the mass in the silos needs a level-to-mass calibration (D-SILO.powder_mass) — none is configured, so only the level % is shown.',
+  tankMass: 'Not in the model: the slip volume / mass needs a level-to-mass calibration — none is configured, so only the level % is shown.',
 } as const;
 
 /** Set-level note for assets without any simulated operation. */
@@ -144,10 +154,13 @@ function markTiles(kpis: EqKpi[], mark: StaleMark | null, keep: readonly string[
   return kpis.map((k) => (k.unavailable || k.value == null || keep.includes(k.key) || staleWorded(k.status) ? k : { ...k, status: NOT_CONFIRMED }));
 }
 
-/** A rate signal as the product has it: the frozen last value received while the asset's feed is stale. */
-export function signalRate(s: SimState, id: string): number {
+/**
+ * A rate signal as the product has it: the frozen last value received while the asset's feed is stale; null when
+ * no value was received (a stale feed with no last rate, an asset without a rate) — never a zero standing in.
+ */
+export function signalRate(s: SimState, id: string): number | null {
   const f = s.feeds[id];
-  return f?.status === 'stale' ? (f.lastRate ?? 0) : (s.machines[id]?.ratePerHour ?? 0);
+  return f?.status === 'stale' ? (f.lastRate ?? null) : (s.machines[id]?.ratePerHour ?? null);
 }
 
 /** A shared headline KPI (src/intel/kpis.ts) as a tile: same value, unit, target and status. */
@@ -209,6 +222,8 @@ function rateKpi(s: SimState, prof: AssetProfile, claim: ConstraintClaim, label 
   const stale = f?.status === 'stale';
   const rate = signalRate(s, id);
   const op = operationalState(s, id);
+  const hint = `Output rate reported by ${id}.rate (simulated PLC signal) against the asset's ideal rate. The line is paced by its constraint: a machine running below its ideal rate because of its supply or the space downstream has spare capacity — not a loss in itself. A warning only while the constraint analysis attributes lost line output to this stage now, or while the asset runs below its own set rate.${stale ? ' The feed is stale: this is the last value received.' : ''}`;
+  if (rate == null) return noData('rate', label, stale ? 'The feed went stale before a rate was received.' : `No value of ${id}.rate received.`, hint);
   const ratio = ideal > 0 ? rate / ideal : null;
   const share = ratio != null ? `${pct0(ratio)} % of ideal` : null;
   // The process stage the trace ended at — the rule of the constraint marker, the 3D outline and the
@@ -220,6 +235,7 @@ function rateKpi(s: SimState, prof: AssetProfile, claim: ConstraintClaim, label 
   if (stale) status = { tone: 'neutral', label: `Last value · ${clockOf(f.since, s.minute)}` };
   else if (op === 'stopped' || op === 'fault') status = { tone: 'critical', label: OPERATIONAL_STATE_LABEL[op] };
   else if (op === 'planned') status = { tone: 'neutral', label: 'Planned stop' };
+  else if (op === 'changeover') status = { tone: 'neutral', label: 'Changeover' };
   else if (constraining) status = { tone: 'warning', label: withShare('Constraining output') };
   else if (op === 'reduced') status = { tone: 'warning', label: withShare(OPERATIONAL_STATE_LABEL.reduced) };
   else if (op === 'starved' || op === 'blocked' || op === 'idle') status = { tone: 'neutral', label: OPERATIONAL_STATE_LABEL[op] };
@@ -230,8 +246,9 @@ function rateKpi(s: SimState, prof: AssetProfile, claim: ConstraintClaim, label 
     value: int(rate),
     unit: 'tiles/h',
     sub: ideal ? `ideal ${int(ideal)} tiles/h` : undefined,
+    window: stale ? undefined : 'now',
     status,
-    hint: `Output rate reported by ${id}.rate (simulated PLC signal) against the asset's ideal rate. The line is paced by its constraint: a machine running below its ideal rate because of its supply or the space downstream has spare capacity — not a loss in itself. A warning only while the constraint analysis attributes lost line output to this stage now, or while the asset runs below its own set rate.${stale ? ' The feed is stale: this is the last value received.' : ''}`,
+    hint,
   };
 }
 
@@ -274,6 +291,198 @@ function backlogKpi(s: SimState, stage: StageId): EqKpi | null {
   };
 }
 
+// ── Process signals as tiles (wave 3: equipment-specific figures from the catalogue's simulated signals) ──
+
+const NFD = [0, 1, 2, 3].map((d) => new Intl.NumberFormat('en-GB', { minimumFractionDigits: d, maximumFractionDigits: d }));
+const fmtD = (v: number, d: number) => NFD[Math.max(0, Math.min(3, d))].format(v).replace(/^-/, '−');
+const digitsOf = (signalId: string, fallback = 1) => PROCESS_SIGNAL_BY_ID[signalId]?.digits ?? fallback;
+
+/** Disclosure of every t/h figure derived from a tile-equivalent rate (simulated, KG_PER_TILE). */
+export const MASS_FLOW_HINT = `Simulated t/h: tile-equivalent rate × ${KG_PER_TILE.toFixed(2)} kg per tile-equivalent (KG_PER_TILE, a simulation assumption — not a weighed flow).`;
+
+/**
+ * The current reading of a catalogue signal as a tile: the value with its unit and "now"; a stale feed's last value
+ * says so; a bad-quality reading, a missing value or a signal the demo does not simulate is unavailable with the
+ * reason — never a number standing in.
+ */
+function readingKpi(s: SimState, signalId: string, key: string, label: string, hint: string, o: { digits?: number; sub?: string; window?: string } = {}): EqKpi {
+  const d = definitionOf(signalId);
+  if (!d || d.availabilityStatus !== 'simulated') return noData(key, label, d?.statusNote ?? `${signalId} is not simulated in this demo.`, hint);
+  const r = readSignal(s, signalId);
+  if (r.quality === 'bad') return noData(key, label, `Bad-quality reading of ${signalId}${r.note ? ` (${r.note})` : ''} — not shown as a figure.`, hint);
+  if (typeof r.value !== 'number' || r.quality === 'missing') return noData(key, label, r.note ?? `No value of ${signalId} received.`, hint);
+  const stale = r.quality === 'stale';
+  return {
+    key,
+    label,
+    value: fmtD(r.value, o.digits ?? digitsOf(signalId)),
+    unit: r.unit ?? d.unit ?? undefined,
+    sub: o.sub,
+    window: stale && r.timestamp != null ? `last value ${clockOf(r.timestamp, s.minute)}` : (o.window ?? 'now'),
+    status: stale && r.timestamp != null ? { tone: 'neutral', label: `Last value · ${clockOf(r.timestamp, s.minute)}` } : null,
+    hint: `${hint} Simulated signal ${signalId}.`,
+  };
+}
+
+/** A process value against its setpoint: PV now, SP in the sub line, the band it is in (words) as the status. */
+function pvSpKpi(s: SimState, pvId: string, key: string, label: string): EqKpi {
+  const d = definitionOf(pvId);
+  const spId = d?.setpointSignalId ?? null;
+  const spec = PROCESS_SIGNAL_BY_ID[pvId];
+  const warn = d?.warningHigh != null && spec?.nominal != null ? d.warningHigh - spec.nominal : null;
+  const alarm = d?.alarmHigh != null && spec?.nominal != null ? d.alarmHigh - spec.nominal : null;
+  const hint = `${d?.description ?? label} Compared with its setpoint${spId ? ` ${spId}` : ''}${warn != null ? `: warning beyond ±${fmtD(warn, digitsOf(pvId))} ${d?.unit ?? ''}, alarm beyond ±${fmtD(alarm ?? warn, digitsOf(pvId))} ${d?.unit ?? ''}` : ''}.`;
+  const k = readingKpi(s, pvId, key, label, hint);
+  if (k.unavailable || !spId) return k;
+  const sp = readSignal(s, spId);
+  const pv = readSignal(s, pvId);
+  const spV = typeof sp.value === 'number' && sp.quality !== 'bad' ? sp.value : null;
+  const dev = setpointDeviation(typeof pv.value === 'number' ? pv.value : null, spV, warn != null && alarm != null ? { warn, alarm } : undefined);
+  const sub = spV != null ? `SP ${fmtD(spV, digitsOf(pvId))} ${d?.unit ?? ''}`.trim() : 'setpoint not reported';
+  if (k.status) return { ...k, sub };
+  if (dev.status !== 'ok') return { ...k, sub };
+  const delta = `${dev.value.abs >= 0 ? '+' : '−'}${fmtD(Math.abs(dev.value.abs), digitsOf(pvId))}`;
+  const status: EqKpi['status'] =
+    dev.value.level === 'alarm' ? { tone: 'critical', label: `${delta} · beyond alarm band` } : dev.value.level === 'warning' ? { tone: 'warning', label: `${delta} · beyond warning band` } : { tone: 'good', label: `${delta} · within band` };
+  return { ...k, sub, status };
+}
+
+/** Least-squares trend of a level signal over the last 60 minutes of minute data (%/h). */
+function levelTrend(s: SimState, levelId: string) {
+  const x = seriesOf(s, levelId, { from: s.minute - 60, to: s.minute, stepMin: 1 });
+  return x ? trendSlope(seriesToSamples(x, x.t[0] ?? 0), { minSamples: 20, minSpanMin: 30 }) : null;
+}
+
+/** Rate of a cumulative counter over the last 60 minutes (per hour); unavailable with the reason. */
+function counterKpi(s: SimState, signalId: string, key: string, label: string, unit: string, hint: string): EqKpi {
+  const d = definitionOf(signalId);
+  if (!d || d.availabilityStatus !== 'simulated') return noData(key, label, d?.statusNote ?? `${signalId} is not simulated in this demo.`, hint);
+  const x = seriesOf(s, signalId, { from: s.minute - 61, to: s.minute, stepMin: 1 });
+  const r = x ? counterRate(seriesToSamples(x, x.t[0] ?? 0)) : null;
+  if (!r || r.status !== 'ok') return noData(key, label, r ? r.reason : `No history of ${signalId}.`, hint);
+  return { key, label, value: fmtD(r.value.perHour, r.value.perHour < 10 ? 1 : 0), unit, window: 'last 60 min', hint: `${hint} From the counter ${signalId} (resets and rollovers handled).` };
+}
+
+/** The state of an asset in words as a tile (packing: "line state"). */
+function stateKpi(s: SimState, id: string, label = 'Line state'): EqKpi {
+  const op = operationalState(s, id);
+  const tone: Tone = op === 'running' ? 'good' : op === 'stopped' || op === 'fault' ? 'critical' : op === 'reduced' || op === 'starved' || op === 'blocked' ? 'warning' : 'neutral';
+  return {
+    key: 'state',
+    label,
+    value: op === 'unknown' ? 'Unknown' : OPERATIONAL_STATE_LABEL[op],
+    window: 'now',
+    status: op === 'unknown' ? { tone: 'neutral', label: 'Data stale' } : { tone, label: tone === 'good' ? 'Producing' : tone === 'critical' ? 'Not producing' : tone === 'warning' ? 'Not at full output' : 'Not scheduled' },
+    hint: `Operating state of ${id} from its simulated state signal (unknown while the feed is stale).`,
+  };
+}
+
+/** Kiln zones within their warning band now (n of 5), from the simulated zone PV / SP pairs. */
+function kilnZonesKpi(s: SimState, id: string): EqKpi {
+  const hint = 'Zone temperatures (preheating, firing, peak firing, rapid and final cooling) against their setpoints; a zone counts as within band while |PV − SP| is inside its warning band.';
+  let read = 0;
+  let within = 0;
+  const off: string[] = [];
+  const unread: number[] = [];
+  for (const z of KILN_ZONES) {
+    const pvId = `${id}.zone${z.no}_temp_pv`;
+    const d = definitionOf(pvId);
+    const spec = PROCESS_SIGNAL_BY_ID[pvId];
+    if (!d || d.availabilityStatus !== 'simulated' || !d.setpointSignalId || spec?.nominal == null || d.warningHigh == null || d.alarmHigh == null) continue;
+    const pv = readSignal(s, pvId);
+    const sp = readSignal(s, d.setpointSignalId);
+    const dev =
+      pv.quality === 'bad' || pv.quality === 'stale'
+        ? null
+        : setpointDeviation(typeof pv.value === 'number' ? pv.value : null, typeof sp.value === 'number' ? sp.value : null, { warn: d.warningHigh - spec.nominal, alarm: d.alarmHigh - spec.nominal });
+    if (!dev || dev.status !== 'ok') {
+      unread.push(z.no);
+      continue;
+    }
+    read++;
+    if (dev.value.level === 'within') within++;
+    else off.push(`zone ${z.no} ${dev.value.abs >= 0 ? '+' : '−'}${fmtD(Math.abs(dev.value.abs), 0)} °C`);
+  }
+  if (!read) return noData('zones', 'Zones within band', 'No usable zone-temperature reading now (bad quality, stale or not producing).', hint);
+  // Of the zones readable now: a bad / stale / missing zone reading is named, never counted as within band.
+  const notRead = unread.length ? `zone${unread.length > 1 ? 's' : ''} ${unread.join(', ')} not readable` : null;
+  return {
+    key: 'zones',
+    label: 'Zones within band',
+    value: `${within} / ${read}`,
+    unit: read < KILN_ZONES.length ? `read of ${KILN_ZONES.length}` : undefined,
+    sub: [off.length ? off.join(' · ') : read === KILN_ZONES.length ? 'all zones on setpoint' : null, notRead].filter(Boolean).join(' · ') || undefined,
+    window: 'now',
+    status: within === read ? { tone: notRead ? 'neutral' : 'good', label: notRead ? 'Read zones within band' : 'All zones within band' } : { tone: 'warning', label: `${read - within} outside the warning band` },
+    hint: `${hint}${notRead ? ` ${notRead[0].toUpperCase()}${notRead.slice(1)} now (bad quality, stale or no value).` : ''}`,
+  };
+}
+
+/** Alarm codes of the shift (unplanned stops carry their alarm code) and the code active now — never "no fault". */
+function alarmsKpi(s: SimState, id: string, p: Period): EqKpi {
+  const st = ownStops(s, id, p);
+  const unplanned = st.count - st.changeovers;
+  const r = readSignal(s, `${id}.alarm`);
+  const active = typeof r.value === 'string' && r.value !== 'none' && r.quality !== 'missing';
+  return {
+    key: 'alarms',
+    label: 'Alarms',
+    value: String(unplanned),
+    unit: unplanned === 1 ? 'alarm stop' : 'alarm stops',
+    window: 'shift',
+    sub: active ? `active now: ${r.text}` : r.quality === 'stale' ? 'alarm signal stale' : 'no active alarm code now',
+    status: active ? { tone: 'critical', label: 'Alarm active' } : null,
+    hint: `Unplanned stops of ${id} in the period (each carries its alarm / stop code on ${id}.alarm) and the code reported now. No active code is not proof that the machine is fault-free.`,
+  };
+}
+
+/** Level %, its 60-min trend and the time to empty / full at that trend — % basis for slip tanks and powder silos. */
+function levelKpis(s: SimState, levelId: string, bulk: boolean, band: ReturnType<typeof bufferLevelBand> | null, levelHint: string): EqKpi[] {
+  const lv = readSignal(s, levelId);
+  const level = typeof lv.value === 'number' && lv.quality !== 'bad' && lv.quality !== 'missing' ? lv.value : null;
+  const out: EqKpi[] = [
+    level == null
+      ? noData('level', 'Level', lv.note ?? `No usable value of ${levelId}.`, levelHint)
+      : {
+          key: 'level',
+          label: 'Level',
+          value: fmtD(level, 0),
+          unit: '%',
+          window: lv.quality === 'stale' && lv.timestamp != null ? `last value ${clockOf(lv.timestamp, s.minute)}` : 'now',
+          sub: bulk ? 'level only · no mass calibration' : undefined,
+          status: band?.concern ? { tone: 'warning', label: band.label } : null,
+          hint: levelHint,
+        },
+  ];
+  const tr = levelTrend(s, levelId);
+  const trendHint = `Least-squares slope of the minute samples of ${levelId} over the last 60 min.`;
+  if (!tr || tr.status !== 'ok') {
+    out.push(noData('trend', 'Level trend', tr ? tr.reason : 'No level history.', trendHint));
+    return out;
+  }
+  out.push({ key: 'trend', label: 'Level trend', value: `${tr.value >= 0 ? '+' : '−'}${fmtD(Math.abs(tr.value), 1)}`, unit: '%/h', window: 'last 60 min', hint: trendHint });
+  const basis = bulk ? ' · % basis' : '';
+  const ttHint = `A linear extrapolation of the 60-min level trend from the current level${bulk ? ' — on a % basis: without a level-to-mass calibration no tonnes are derived' : ''}. Not a forecast.`;
+  if (Math.abs(tr.value) < 0.5) out.push({ key: 'time-to', label: `Time to empty / full${basis}`, value: 'Steady', sub: 'trend under 0.5 %/h', window: 'at the 60-min trend', hint: ttHint });
+  else {
+    const c = tr.value < 0 ? timeToEmpty(level, tr.value) : timeToFull(level, tr.value);
+    const label = `${tr.value < 0 ? 'Time to empty' : 'Time to full'}${basis}`;
+    out.push(
+      c.status === 'ok'
+        ? {
+            key: 'time-to',
+            label,
+            value: c.value < 1 ? (tr.value < 0 ? 'Empty' : 'Full') : formatDuration(c.value),
+            window: 'at the 60-min trend',
+            status: tr.value < 0 && c.value < 60 && band?.ahead ? { tone: 'warning', label: 'Runs empty within 1 h' } : null,
+            hint: ttHint,
+          }
+        : noData('time-to', label, c.reason, ttHint),
+    );
+  }
+  return out;
+}
+
 // ── Process machines, by stage ─────────────────────────────────────────────
 
 function machineKpis(s: SimState, prof: AssetProfile, p: Period, claim: ConstraintClaim): EqKpi[] {
@@ -283,59 +492,105 @@ function machineKpis(s: SimState, prof: AssetProfile, p: Period, claim: Constrai
   const stage = mm.stage;
   const avail = () =>
     metricKpi('availability', 'Availability', mm.oee.availability, `Operating time ÷ planned production time of ${id} in the period (the same machine metrics as Production).`, 'of planned time');
+  /** Tile-equivalents of slip / powder as simulated tonnes (disclosed), never tiles. */
+  const massOut = (key: string, label: string, what: string): EqKpi => ({
+    key,
+    label,
+    value: fmtD((t.count * KG_PER_TILE) / 1000, 1),
+    unit: 't',
+    sub: `${int(t.count)} tile-eq. · simulated mass`,
+    hint: `${what} in the period: ${id}.count_total (tile-equivalents) × ${KG_PER_TILE.toFixed(2)} kg per tile-equivalent. ${MASS_FLOW_HINT}`,
+  });
   switch (stage) {
     case 'PREP':
       return [
-        countKpi('output', 'Slip output', t.count, `Slip milled in the period, in tile-equivalents (${id}.count_total).`, 'tile-eq.'),
-        rateKpi(s, prof, claim),
+        readingKpi(s, `${id}.slip_flow`, 'rate', 'Slip output', `Slip discharged by the mill as dry-body mass. ${MASS_FLOW_HINT}`, { sub: 'simulated t/h (tile-eq. × kg)' }),
+        massOut('output', 'Slip milled', 'Slip milled'),
+        readingKpi(s, `${id}.mill_speed`, 'speed', 'Mill speed', 'Drum speed of the ball mill (drive).'),
         avail(),
         stopsKpi(s, id, p),
-        na('slip-density', 'Slip density', NOT_MODELLED.slipDensity, 'Process parameter of the milled slip.'),
       ];
     case 'SPRAY':
       return [
-        countKpi('output', 'Powder output', t.count, `Powder sent to the silos in the period, in tile-equivalents (${id}.count_total).`, 'tile-eq.'),
-        rateKpi(s, prof, claim, 'Output rate'),
-        avail(),
-        stopsKpi(s, id, p),
-        na('moisture', 'Powder moisture', NOT_MODELLED.powderMoisture, 'Residual moisture of the spray-dried powder.'),
+        readingKpi(s, `${id}.powder_flow`, 'rate', 'Powder output', `Granulate produced by the spray dryer. ${MASS_FLOW_HINT}`, { sub: 'simulated t/h (tile-eq. × kg)' }),
+        pvSpKpi(s, `${id}.outlet_temp_pv`, 'outlet', 'Outlet temperature'),
+        pvSpKpi(s, `${id}.powder_moisture_pv`, 'moisture', 'Powder moisture'),
+        massOut('output', 'Powder made', 'Powder sent to the silos'),
+        stopsKpi(s, id, p, 'Downtime'),
       ];
-    case 'PRESS':
+    case 'PRESS': {
+      const cyc = readingKpi(s, `${id}.cycle_time`, 'cycle', 'Cycle time', 'Time of one press cycle (fill, press, de-air, eject), mean over the minute, against the target cycle time of the die / product.');
+      const tgt = readSignal(s, `${id}.cycle_time_target`);
+      const cycle =
+        cyc.unavailable || typeof tgt.value !== 'number'
+          ? cyc
+          : (() => {
+              const c = readSignal(s, `${id}.cycle_time`);
+              const over = typeof c.value === 'number' ? (c.value - tgt.value) / tgt.value : null;
+              return {
+                ...cyc,
+                sub: `target ${fmtD(tgt.value, 1)} s`,
+                status: cyc.status ?? (over == null ? null : over > 0.05 ? { tone: 'warning' as Tone, label: `${fmtD(over * 100, 0)} % slower than target` } : { tone: 'good' as Tone, label: 'On target' }),
+              };
+            })();
       return [
-        rateKpi(s, prof, claim, 'Press cycle rate'),
+        rateKpi(s, prof, claim, 'Press output rate'),
+        cycle,
         countKpi('good', 'Good tiles pressed', Math.max(0, t.count - t.rejects), `Tiles pressed in the period (${id}.count_total) minus the rejects attributed to pressing.`, 'tiles', `of ${int(t.count)} pressed`),
         rejectsKpi('PRESS', t.rejects, t.count),
         stopsKpi(s, id, p, 'Stoppage time'),
       ];
+    }
     case 'DRY':
       return [
-        countKpi('output', 'Tiles dried', t.count, `Tiles leaving the dryer in the period (${id}.count_total).`),
+        pvSpKpi(s, `${id}.zone1_temp_pv`, 'zone1', 'Zone 1 temperature'),
+        pvSpKpi(s, `${id}.zone2_temp_pv`, 'zone2', 'Zone 2 temperature'),
+        readingKpi(s, `${id}.roller_speed`, 'speed', 'Roller speed', 'Speed of the dryer roller decks (drive); follows the line rate.'),
         rateKpi(s, prof, claim, 'Throughput now'),
-        avail(),
+        countKpi('output', 'Tiles dried', t.count, `Tiles leaving the dryer in the period (${id}.count_total).`),
         stopsKpi(s, id, p, 'Downtime'),
-        na('conditions', 'Drying conditions', NOT_MODELLED.dryerConditions, 'Deck temperature and residence time of the dryer.'),
       ];
     case 'GLAZE':
+      return [
+        readingKpi(s, `${id}.line_speed`, 'speed', 'Line speed', 'Glazing line belt speed (drive); follows the line rate.'),
+        pvSpKpi(s, `${id}.glaze_density_pv`, 'density', 'Glaze density'),
+        rateKpi(s, prof, claim, 'Line rate'),
+        countKpi('output', 'Tiles glazed', t.count, `Tiles through ${id} in the period (${id}.count_total).`),
+        rejectsKpi(stage, t.rejects, t.count),
+        stopsKpi(s, id, p),
+      ];
     case 'DECOR':
       return [
         rateKpi(s, prof, claim, 'Line rate'),
-        countKpi('output', stage === 'GLAZE' ? 'Tiles glazed' : 'Tiles decorated', t.count, `Tiles through ${id} in the period (${id}.count_total).`),
+        countKpi('output', 'Tiles decorated', t.count, `Tiles through ${id} in the period (${id}.count_total).`),
         rejectsKpi(stage, t.rejects, t.count),
         stopsKpi(s, id, p),
       ];
     case 'KILN':
       return [
-        rateKpi(s, prof, claim, 'Production rate'),
-        avail(),
+        kilnZonesKpi(s, id),
+        rateKpi(s, prof, claim, 'Firing rate'),
+        readingKpi(s, `${id}.roller_speed`, 'speed', 'Roller speed', 'Speed of the kiln roller drive; follows the firing rate.'),
+        alarmsKpi(s, id, p),
+        countKpi('output', 'Tiles fired', t.count, `Tiles leaving the kiln in the period (${id}.count_total) — the line's throughput at its constraint.`, 'tiles', `${int(t.count * M2_PER_TILE)} m²`),
         stopsKpi(s, id, p, 'Downtime'),
-        countKpi('output', 'Tiles fired', t.count, `Tiles leaving the kiln in the period (${id}.count_total).`, 'tiles', `${int(t.count * M2_PER_TILE)} m²`),
-        na('profile', 'Temperature profile', NOT_MODELLED.kilnProfile, 'Firing curve (temperature along the kiln) and firing-cycle time.'),
       ];
     case 'SORT': {
       const q = qualityIn(s, p);
+      const rr = rejectRate(q.rejected, q.inspected);
       return [
         countKpi('inspected', 'Tiles inspected', q.inspected, 'Tiles through the gauge and the vision tunnel in the period (inspection counters).'),
-        countKpi('rejected', 'Defective tiles', q.rejected, 'Tiles rejected by the gauge or the vision tunnel (simulated classification).', 'tiles', q.inspected > 0 ? `${((q.rejected / q.inspected) * 100).toFixed(2)} % of inspected` : undefined),
+        rr.status === 'ok'
+          ? {
+              key: 'rejected',
+              label: 'Reject rate',
+              value: fmtD(rr.value * 100, 2),
+              unit: '%',
+              sub: `${int(q.rejected)} of ${int(q.inspected)} tiles · limit ${pct0(s.rules.rejectRateMax)} %`,
+              status: rr.value > s.rules.rejectRateMax ? { tone: 'critical', label: 'Above line limit' } : null,
+              hint: 'Tiles rejected by the gauge or the vision tunnel ÷ tiles inspected in the period (simulated classification).',
+            }
+          : noData('rejected', 'Reject rate', rr.reason, 'Tiles rejected ÷ tiles inspected in the period.'),
         fromKpi(firstPassQualityKpi(s, p), 'fpq'),
         {
           key: 'inspection-rate',
@@ -349,11 +604,15 @@ function machineKpis(s: SimState, prof: AssetProfile, p: Period, claim: Constrai
     }
     case 'PACK':
     case 'PAL': {
+      const per =
+        stage === 'PAL'
+          ? counterKpi(s, `${id}.pallet_count`, 'per-hour', 'Pallets per hour', 'pallets/h', 'Pallets completed by the palletiser cell.')
+          : counterKpi(s, `${id}.carton_count`, 'per-hour', 'Cartons per hour', 'cartons/h', `Cartons closed by the packaging machine (${TILES_PER_CARTON} tiles per carton).`);
       const out =
         stage === 'PAL'
           ? countKpi('output', 'Pallets built', t.count / TILES_PER_PALLET, `Palletised tiles in the period ÷ ${TILES_PER_PALLET} tiles per pallet (${id}.count_total).`, 'pallets', `${int(t.count)} tiles`)
           : countKpi('output', 'Tiles packed', t.count, `Tiles boxed in the period (${id}.count_total) — good output only, rejects leave the line at sorting.`);
-      return [out, rateKpi(s, prof, claim, 'Throughput now'), backlogKpi(s, stage), stopsKpi(s, id, p)].filter((k): k is EqKpi => k != null);
+      return [per, stateKpi(s, id), out, rateKpi(s, prof, claim, 'Throughput now'), backlogKpi(s, stage), stopsKpi(s, id, p)].filter((k): k is EqKpi => k != null);
     }
   }
 }
@@ -362,15 +621,19 @@ function machineKpis(s: SimState, prof: AssetProfile, p: Period, claim: Constrai
 
 function conveyorKpis(s: SimState, id: string, p: Period): EqKpi[] {
   const cm = conveyorMetrics(s, id, p);
+  const nominal = CONVEYOR_BY_ID[id]?.speedMpm;
+  const speed = readingKpi(s, `${id}.speed`, 'speed', 'Speed', 'Belt / roller speed of the conveyor drive.', { sub: nominal != null ? `nominal ${nominal} m/min` : undefined });
   return [
-    cm.availability == null
-      ? noData('availability', 'Availability', 'No planned running time in this period yet.', 'Running share of planned time.')
-      : { key: 'availability', label: 'Availability', value: pct1(cm.availability), unit: '%', sub: 'running share of planned time', hint: 'Planned time not stopped ÷ planned time. OEE is not meaningful for a conveyor.' },
+    stateKpi(s, id, 'State'),
+    speed,
+    { key: 'stops', label: 'Stops', value: String(cm.stops), sub: cm.stops ? `${formatDuration(cm.downMin)} stopped` : undefined, status: cm.stops ? null : { tone: 'good', label: 'No stops' }, hint: `Stops of ${id} overlapping the period, from its run_state signal.` },
     cm.utilisation == null
       ? noData('utilisation', 'Utilisation', 'No planned running time in this period yet.', 'Tiles moved ÷ nominal capacity.')
       : { key: 'utilisation', label: 'Utilisation', value: pct1(cm.utilisation), unit: '%', sub: 'of nominal capacity', hint: `Tiles moved (${id}.tile_count) ÷ nominal transport capacity over the planned time.` },
-    { key: 'stops', label: 'Stops', value: String(cm.stops), sub: cm.stops ? `${formatDuration(cm.downMin)} stopped` : undefined, status: cm.stops ? null : { tone: 'good', label: 'No stops' }, hint: `Stops of ${id} overlapping the period, from its run_state signal.` },
-    countKpi('moved', 'Tiles moved', cm.totals.count, `Tiles counted on the conveyor in the period (${id}.tile_count).`),
+    // The powder belt carries tile-equivalents of powder (catalogue unit), never tiles.
+    definitionOf(`${id}.tile_count`)?.unit === 'tile-eq'
+      ? countKpi('moved', 'Powder carried', cm.totals.count, `Tile-equivalents of powder counted on the belt in the period (${id}.tile_count) — a simulation unit, not tiles.`, 'tile-eq.')
+      : countKpi('moved', 'Tiles moved', cm.totals.count, `Tiles counted on the conveyor in the period (${id}.tile_count).`),
   ];
 }
 
@@ -398,65 +661,55 @@ export function bufferLevelBand(bufferId: string, fill: number): { ahead: boolea
   return { ahead, side: 'normal', concern: false, label: 'Normal band' };
 }
 
+/** Slip tanks (stage 1) and powder silos (stage 2): bulk material — level % only, flows in simulated t/h, never tiles. */
+export const BULK_BUFFER_IDS: ReadonlySet<string> = new Set(['BUF-SLIP', 'BUF-SILO']);
+
 function bufferKpis(s: SimState, prof: AssetProfile): EqKpi[] {
   const buf = BUFFERS.find((b) => b.id === prof.bufferId)!;
+  const bulk = BULK_BUFFER_IDS.has(buf.id);
+  const levelId = BUFFER_LEVEL_SIGNAL[buf.id] ?? `${prof.id}.level`;
   const level = s.buffers[buf.id];
   const { up, down } = bufferNeighbours(buf.id);
-  // Rate signals of the neighbouring machines: the last value received while a feed is stale.
-  const rate = (st: (typeof STAGES)[number] | undefined) => (st ? st.machines.reduce((a, m) => a + signalRate(s, m), 0) : 0);
+  // Rate signals of the neighbouring machines: the last value received while a feed is stale; unknown (null) when one has none.
+  const rate = (st: (typeof STAGES)[number] | undefined): number | null => {
+    if (!st) return null;
+    let a = 0;
+    for (const m of st.machines) {
+      const r = signalRate(s, m);
+      if (r == null) return null;
+      a += r;
+    }
+    return a;
+  };
   const lastValue = (st: (typeof STAGES)[number] | undefined): EqKpi['status'] => {
     const stale = (st?.machines ?? []).filter((m) => s.feeds[m]?.status === 'stale');
     if (!stale.length) return null;
     const at = clockOf(Math.max(...stale.map((m) => s.feeds[m].since)), s.minute);
     return { tone: 'neutral', label: stale.length === st!.machines.length ? `Last value · ${at}` : `Incl. last value of ${stale.join(', ')}` };
   };
-  const inflow = rate(up);
-  const outflow = rate(down);
-  const net = inflow - outflow;
-  const cover = outflow > 0 ? (level / outflow) * 60 : null;
-  const coverStale = lastValue(up) ?? lastValue(down);
   const band = bufferLevelBand(buf.id, level / buf.capacity);
-  return [
-    {
-      key: 'level',
-      label: 'Level',
-      value: pct0(level / buf.capacity),
-      unit: '%',
-      sub: `${int(level)} of ${int(buf.capacity)} tiles`,
-      // Read on its side of the kiln (the panel's facet, insight and signal row use the same band).
-      status: band.concern ? { tone: 'warning', label: band.label } : null,
-      hint: `Simulated level signal of ${buf.name} (${buf.id}), in tile-equivalents. ${band.ahead ? 'Ahead of the kiln a nearly empty buffer starves the next stage; a full one is normal (the stage filling it has spare capacity).' : 'Behind the kiln a nearly full buffer moves a blockage towards the kiln; a low one is normal (the stages after the kiln are faster).'}`,
-    },
-    {
-      key: 'inflow',
-      label: 'Filling from',
-      value: int(inflow),
-      unit: 'tiles/h',
-      sub: up ? up.name : '—',
-      status: lastValue(up),
-      hint: `Current output rate of the upstream stage (${up?.machines.join(', ') ?? '—'}); the last value received while a machine's feed is stale.`,
-    },
-    {
-      key: 'outflow',
-      label: 'Drawn by',
-      value: int(outflow),
-      unit: 'tiles/h',
-      sub: down ? down.name : '—',
-      status: lastValue(down),
-      hint: `Current output rate of the downstream stage (${down?.machines.join(', ') ?? '—'}); the last value received while a machine's feed is stale.`,
-    },
-    cover == null
-      ? noData('cover', 'Cover', 'The downstream stage is not drawing from the buffer right now.', 'Minutes of downstream demand the current level covers.')
-      : {
-          key: 'cover',
-          label: 'Cover',
-          value: formatDuration(cover),
-          sub: net >= 0 ? 'filling or steady' : `emptying ${int(-net)} tiles/h`,
-          // From a rate the feed no longer updates: no "runs empty soon" claim, the not-confirmed mark instead.
-          status: coverStale ? NOT_CONFIRMED : net < 0 && cover < 30 ? { tone: 'warning', label: 'Runs empty soon' } : null,
-          hint: 'Current level ÷ current downstream rate: how long the next stage can keep running if its supply stopped now.',
-        },
-  ];
+  const levelHint = `Simulated level signal of ${buf.name} (${levelId}), % of capacity. ${
+    bulk
+      ? 'A level is not a mass: without a level-to-mass calibration no tonnes are derived.'
+      : band.ahead
+        ? 'Ahead of the kiln a nearly empty buffer starves the next stage; a full one is normal (the stage filling it has spare capacity).'
+        : 'Behind the kiln a nearly full buffer moves a blockage towards the kiln; a low one is normal (the stages after the kiln are faster).'
+  }`;
+  const levels = levelKpis(s, levelId, bulk, band, levelHint);
+  if (!bulk) levels[0] = levels[0].unavailable ? levels[0] : { ...levels[0], sub: `${int(level)} of ${int(buf.capacity)} tiles` };
+  const flow = (key: 'inflow' | 'outflow', label: string, st: (typeof STAGES)[number] | undefined): EqKpi => {
+    const r = rate(st);
+    const hint = `Current output rate of the ${key === 'inflow' ? 'upstream' : 'downstream'} stage (${st?.machines.join(', ') ?? '—'}); the last value received while a machine's feed is stale.${bulk ? ` ${MASS_FLOW_HINT}` : ''}`;
+    if (!st) return noData(key, label, 'No process stage on this side of the buffer.', hint);
+    if (r == null) return noData(key, label, `No rate value received from ${st.machines.join(', ')}.`, hint);
+    return bulk
+      ? { key, label, value: fmtD((r * KG_PER_TILE) / 1000, 1), unit: 't/h', sub: `${st.name} · simulated`, window: 'now', status: lastValue(st), hint }
+      : { key, label, value: int(r), unit: 'tiles/h', sub: st.name, window: 'now', status: lastValue(st), hint };
+  };
+  const out = [...levels, flow('inflow', 'Filling from', up), flow('outflow', 'Drawn by', down)];
+  // The mass in a silo / tank is the "needs calibration" note (listed once with the not-modelled parameters).
+  if (bulk) out.push(na('mass', buf.id === 'BUF-SILO' ? 'Powder mass in the silos' : 'Slip mass in the tanks', buf.id === 'BUF-SILO' ? NOT_MODELLED.siloMass : NOT_MODELLED.tankMass, 'Mass from the level needs a level-to-mass calibration.'));
+  return out;
 }
 
 const STATION_DETECTS = Object.fromEntries(INSPECTION_STATIONS.map((st) => [st.id, st.detects])) as Record<string, DefectCategory[]>;
@@ -619,7 +872,7 @@ function feedsOf(prof: AssetProfile): { ids: string[]; note: string; keep: strin
       return {
         ids: [...(up?.machines ?? []), ...(down?.machines ?? [])],
         note: 'the filling and drawing rates are the last values received; the level comes from the buffer’s own signal.',
-        keep: ['level', 'inflow', 'outflow', 'cover'],
+        keep: ['level', 'trend', 'time-to', 'inflow', 'outflow'],
       };
     }
     case 'logistics':
@@ -818,7 +1071,7 @@ export function stageKpis(s: SimState, stage: MonitoredStageId, p: Period = reso
       sub: io.wipCapacity ? `${pct0(io.wip / io.wipCapacity)} % of the input buffer` : undefined,
       hint: 'Level of the stage’s input buffer now (or warehouse stock).',
     });
-  if (!pallets)
+  if (!pallets && io.downMin != null && io.starvedMin != null && io.blockedMin != null)
     kpis.push({
       key: 'lost',
       label: 'Time not producing',

@@ -115,14 +115,20 @@ function NotConfirmed({ label }: { label: string }) {
 
 const REACHED: Record<'yes' | 'no' | 'unknown', string> = { yes: 'reached line output', no: 'absorbed by buffers', unknown: 'line impact unknown' };
 
-export function Analytics({ a, vehicle }: { a: IntelAnalytics; vehicle: boolean }) {
+/**
+ * `figuresOnly` (added): the compact figures next to the range-controlled charts — stops, MTBF / MTTR and the
+ * shift's loss breakdown, each with its own window — without the fixed-window timeline, rate trend and facts.
+ */
+export function Analytics({ a, vehicle, figuresOnly = false }: { a: IntelAnalytics; vehicle: boolean; figuresOnly?: boolean }) {
   const st = a.stops;
   const loss = a.loss;
+  // Slip and powder are tile-equivalents, never tiles.
+  const unit = loss?.unit ?? 'tiles';
   const parts = loss?.breakdown?.filter((b) => b.tiles >= 0.5) ?? [];
   return (
     <div className="eqp-an">
-      <Timeline a={a} vehicle={vehicle} />
-      {a.rate && <RateTrend rate={a.rate} from={a.window.from} />}
+      {!figuresOnly && <Timeline a={a} vehicle={vehicle} />}
+      {!figuresOnly && a.rate && <RateTrend rate={a.rate} from={a.window.from} />}
       {(st || loss) && (
         <div className="eqp-stats">
           {st && st.topReason && (
@@ -152,7 +158,7 @@ export function Analytics({ a, vehicle }: { a: IntelAnalytics; vehicle: boolean 
             <div className="cell wide" title={loss.basis}>
               <span className="l">Output not made at the ideal rate · shift</span>
               <b className="num">
-                {fmtInt(loss.tiles)} tiles <span className="muted">· {fmtInt(loss.m2)} m²</span>
+                {fmtInt(loss.tiles)} {unit} <span className="muted">· {fmtInt(loss.m2)} m²{unit === 'tiles' ? '' : ' eq.'}</span>
                 <small className={`reach ${loss.reachedLine}`}>{REACHED[loss.reachedLine]}</small>
                 {loss.notConfirmed && <NotConfirmed label={loss.notConfirmed} />}
               </b>
@@ -177,7 +183,7 @@ export function Analytics({ a, vehicle }: { a: IntelAnalytics; vehicle: boolean 
           )}
         </div>
       )}
-      {a.facts && a.facts.length > 0 && (
+      {!figuresOnly && a.facts && a.facts.length > 0 && (
         <dl className="eqp-facts">
           {a.facts.map((f) => (
             <div key={f.label} title={f.hint}>

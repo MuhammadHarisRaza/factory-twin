@@ -1,6 +1,7 @@
 /* ==========================================================================
    Overview (src/pages/OverviewPage.tsx) — tokens of src/styles.css only.
-   Header → summary → KPIs → [ 3D model | issues ] → flow strip across both
+   Header → summary → KPIs → [ 3D model | issues ] → flow strip (+ equipment state now) across both
+   → [ operational insights | data freshness & coverage ]
    (side by side from 1280 px, stacked below; never a horizontal page scroll).
    ========================================================================== */
 
@@ -233,6 +234,12 @@
   color: var(--text-1);
   font-variant-numeric: tabular-nums;
 }
+.ov-sel-note {
+  margin: 0;
+  font-size: var(--fs-11);
+  line-height: 1.35;
+  color: var(--text-3);
+}
 .ov-sel-a {
   display: flex;
   gap: 6px;
@@ -389,4 +396,268 @@
   flex-wrap: wrap;
   padding: 8px var(--s-4);
   font-size: var(--fs-12);
+}
+
+/* ── Equipment state now (band under the flow strip) ──────────────────── */
+
+.ov-states {
+  margin-top: var(--s-3);
+  padding-top: var(--s-3);
+  border-top: 1px solid var(--line);
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  min-width: 0;
+}
+.ov-states-h {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 6px 12px;
+  font-size: var(--fs-12);
+}
+.ov-states-h > b {
+  font-size: var(--fs-13);
+  font-weight: var(--fw-semibold);
+  color: var(--text-1);
+}
+.ov-states-link {
+  margin-left: auto;
+  font-size: var(--fs-12);
+}
+.ov-states-l {
+  margin: 0;
+  padding: 0;
+  list-style: none;
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(150px, 1fr));
+  gap: 4px 8px;
+}
+.ov-states-l li {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  min-width: 0;
+  padding: 4px 8px;
+  border: 1px solid var(--line);
+  border-radius: var(--r-2);
+  background: var(--bg-2);
+}
+.ov-states-l li .status {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.ov-states-l li > b {
+  font-size: var(--fs-13);
+  font-weight: var(--fw-semibold);
+  color: var(--text-1);
+}
+.ov-states-l li.zero,
+.ov-data-l li.zero {
+  opacity: 0.55;
+}
+
+/* ── Insights | data coverage ─────────────────────────────────────────── */
+
+.ov-intel {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) 340px;
+  grid-template-areas: 'insights data';
+  gap: var(--s-4);
+  align-items: start;
+  min-width: 0;
+}
+.ov-insights {
+  grid-area: insights;
+  min-width: 0;
+  scroll-margin-top: var(--s-4);
+}
+.ov-data {
+  grid-area: data;
+  min-width: 0;
+}
+@media (max-width: 1279px) {
+  .ov-intel {
+    grid-template-columns: minmax(0, 1fr);
+    grid-template-areas:
+      'insights'
+      'data';
+  }
+}
+
+.ov-in-bar {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 8px 14px;
+  padding: 8px var(--s-4);
+  border-bottom: 1px solid var(--line);
+}
+.ov-in-sev {
+  display: inline-flex;
+  flex-wrap: wrap;
+  gap: 4px 12px;
+}
+.ov-in-filter {
+  margin-left: auto;
+  max-width: 100%;
+}
+.ov-in-filter .seg {
+  flex-wrap: wrap;
+  max-width: 100%;
+}
+.ov-ins {
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+.ov-in {
+  position: relative;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  padding: 10px var(--s-4) 10px calc(var(--s-4) + 2px);
+  border-bottom: 1px solid var(--line);
+}
+.ov-in::before {
+  content: '';
+  position: absolute;
+  left: 0;
+  top: 10px;
+  bottom: 10px;
+  width: 3px;
+  border-radius: 0 2px 2px 0;
+  background: var(--neutral);
+}
+.ov-in.sev-warning::before {
+  background: var(--warning);
+}
+.ov-in.sev-serious::before {
+  background: var(--serious);
+}
+.ov-in.sev-critical::before {
+  background: var(--critical);
+}
+.ov-in-top {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 4px 10px;
+}
+.ov-in-fam {
+  font-size: var(--fs-11);
+  color: var(--text-3);
+}
+.ov-in-id {
+  margin-left: auto;
+  font-size: var(--fs-11);
+  color: var(--text-3);
+}
+.ov-in-title {
+  margin: 0;
+  font-size: var(--fs-13);
+  font-weight: var(--fw-semibold);
+  line-height: 1.35;
+  color: var(--text-1);
+}
+/* One line of evidence (two at most); the full explanation is the tooltip. */
+.ov-in-line {
+  margin: 0;
+  font-size: var(--fs-12);
+  line-height: 1.4;
+  color: var(--text-2);
+  display: -webkit-box;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 2;
+  line-clamp: 2;
+  overflow: hidden;
+  overflow-wrap: anywhere;
+}
+.ov-in-foot {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  flex-wrap: wrap;
+  gap: 4px 12px;
+  font-size: var(--fs-12);
+}
+.ov-in-where {
+  min-width: 0;
+  color: var(--text-3);
+}
+
+.ov-data-head {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  margin-bottom: var(--s-3);
+  font-size: var(--fs-12);
+  line-height: 1.4;
+}
+.ov-data-head .status {
+  white-space: normal;
+  color: var(--text-1);
+  font-weight: var(--fw-medium);
+}
+.ov-data-g {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr);
+  gap: var(--s-3);
+}
+@media (min-width: 760px) and (max-width: 1279px) {
+  .ov-data-g {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+}
+.ov-data-t {
+  margin: 0 0 4px;
+  font-size: var(--fs-12);
+  font-weight: var(--fw-semibold);
+  color: var(--text-2);
+}
+.ov-data-l {
+  margin: 0;
+  padding: 0;
+  list-style: none;
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+}
+.ov-data-l li {
+  display: grid;
+  grid-template-columns: minmax(0, auto) minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 8px;
+  font-size: var(--fs-12);
+}
+.ov-data-l li > .status:only-of-type {
+  grid-column: 1 / 3;
+}
+.ov-data-l li > b {
+  grid-column: 3;
+  color: var(--text-1);
+  font-weight: var(--fw-semibold);
+}
+.ov-data-bar {
+  height: 4px;
+  border-radius: 2px;
+  background: var(--bg-3);
+  overflow: hidden;
+}
+.ov-data-bar > i {
+  display: block;
+  height: 100%;
+  background: var(--text-4);
+}
+.ov-data-feeds {
+  margin: var(--s-3) 0 0;
+  font-size: var(--fs-12);
+  line-height: 1.4;
+  color: var(--text-3);
+}
+.ov-data-feeds b {
+  color: var(--text-2);
+  font-weight: var(--fw-medium);
 }

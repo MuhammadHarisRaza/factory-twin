@@ -34,9 +34,9 @@ export function clipsFor(ctx: VideoContext, videos: VideoRef[] = VIDEOS): { topi
 }
 
 /**
- * `subject` names what the panel is about (e.g. a vehicle id). While the viewer watches a clip (started
- * it with sound or unmuted it), a change of context for the same subject (a truck moving from the queue
- * to the dock changes the topic) does not swap the clip under them; selecting another subject does.
+ * `subject` names what the panel is about (e.g. a vehicle id). While the viewer holds a clip (started
+ * it with sound, unmuted it or paused it), a change of context for the same subject (a truck moving from
+ * the queue to the dock changes the topic) does not swap the clip under them; selecting another subject does.
  * `bare`: one clip only — the most specific topic's — with no topic tabs, no heading and the bare
  * player (no caption); the host shows its source.
  */

@@ -6,17 +6,35 @@
  * Production — and an action bar (Frame stage). Esc or the header's Close clears the highlight; the
  * camera stays where it is. Wide (src/ui/twin/panelWidth.ts) the feed runs across the top and the key
  * figures and equipment sit beside the open events.
+ *
+ * Wave 3: the brief's 12-stage mapping line ("Covers brief stages 5 · … and 6 · …"), the stage's rule findings
+ * (findingsFor each brief stage it covers: fired, recently resolved, not evaluated) and a stage chart set over the
+ * viewer's time range (state lanes of its equipment, buffer levels, output rate).
  */
-import { useMemo, useState } from 'react';
+import { useMemo, useRef, useState } from 'react';
 import { Circle, Crosshair, Hourglass } from 'lucide-react';
 import { useApp } from '../../app/store';
 import { EQUIPMENT_BY_ID } from '../../data/equipment';
 import { ZONE_BY_ID } from '../../data/layout';
 import { CAMERAS, CONVEYOR_BY_ID, MONITORED_STAGE_BY_ID, cameraFor } from '../../model/plant';
 import type { MonitoredStageId } from '../../model/types';
-import { constraintClaim } from '../../intel/summary';
+import { clockLabel, constraintClaim } from '../../intel/summary';
+import { dedupeFindings, liveFindingsFor, compareFindings, type RuleFinding } from '../../intel/rules';
+import { liveCharts } from '../equipment/intel/live';
+
+import { STAGES_12, type ProductionStageDef } from '../../model/catalog';
+import type { Window } from '../../calc/types';
+import { RANGE_BY_KEY } from '../../model/telemetry';
+import { panelCharts } from '../equipment/intel/panelData';
+import { rangeCovering } from '../equipment/intel/ranges';
+import { Charts, type ChartHighlight } from '../equipment/panel/Charts';
+import { RuleFindings } from '../equipment/panel/RuleFindings';
+import { openEventRecord } from '../events/open';
+import { useTwinUi } from './uiStore';
 import { eventInMonitoredStage } from '../../sim/events';
+import type { SimState } from '../../sim/engine';
 import { useSimValue } from '../../sim/store';
+
 import { useTwin } from '../../store';
 import { STAGE_TOPICS } from '../../video/topics';
 import { chooseFeed, eventRows } from '../equipment/intel/derive';
@@ -28,6 +46,17 @@ import { MetricTiles, MetricsScope, notModelledKpis } from '../equipment/panel/M
 import { NotModelled } from '../equipment/panel/Signals';
 import { BarButton, ContinueIn, PanelHeader, PanelShell, Section, SourcePill } from '../equipment/panel/Shell';
 import { eventsForSubject, openEventsFor } from '../events/open';
+
+/** The brief's stages a monitored stage covers ("5 · Glazing & engobe and 6 · Digital printing"), with the partial-stage note. */
+export function briefStagesOf(id: MonitoredStageId): ProductionStageDef[] {
+  return STAGES_12.filter((st) => st.monitoredStage === id);
+}
+export function briefStageLine(id: MonitoredStageId): string | null {
+  const xs = briefStagesOf(id);
+  if (!xs.length) return null;
+  const words = xs.map((st) => `${st.no} · ${st.name}${st.present === 'partial' ? ' (kiln outfeed storage; no dedicated cooling-buffer machine)' : ''}`);
+  return `Covers brief stage${xs.length > 1 ? 's' : ''} ${words.length > 1 ? `${words.slice(0, -1).join(', ')} and ${words[words.length - 1]}` : words[0]}`;
+}
 import { OperationalStatus, StatusBadge } from '../kit/Status';
 import { constraintMarker } from './constraint';
 import { useWidePanel } from './panelWidth';
@@ -42,7 +71,24 @@ export function StagePanel({ id }: { id: MonitoredStageId }) {
   const cameraSources = useApp((s) => s.cameraSources);
   const zone = ZONE_BY_ID[ms.zone];
   const wide = useWidePanel();
+  const range = useTwinUi((s) => s.panelRange);
+  /**
+   * The live card's rule findings — of every brief stage the monitored stage covers (each includes its equipment), once
+   * each — and its charts: re-evaluated at most every few simulated minutes (src/intel/rules/live.ts,
+   * ../equipment/intel/live.ts); the card says when.
+   */
+  const liveStage = (s: SimState) => {
+    const evals = briefStagesOf(id).map((st) => liveFindingsFor(s, { kind: 'stage', stageNo: st.no }));
+    const h = liveCharts(s, `stage-charts:${id}:${range}`, '', range, () => ({ charts: panelCharts(s, { kind: 'stage', stageId: id }, range) }));
+    return {
+      findings: dedupeFindings(evals.flatMap((e): RuleFinding[] => e.value)).sort(compareFindings),
+      findingsAt: evals.length ? Math.min(...evals.map((e) => e.at)) : s.minute,
+      charts: h.value.charts,
+      chartsAt: h.at,
+    };
+  };
   const d = useSimValue(
+
     (s) => {
       const assets = [...ms.equipment, ...ms.conveyors.filter((c) => !ms.equipment.includes(c))].map((a) => ({
         id: a,
@@ -63,9 +109,10 @@ export function StagePanel({ id }: { id: MonitoredStageId }) {
         constraint: c.stage === id ? c : null,
         kpis: stageKpis(s, id, undefined, claim),
         events: { rows: eventRows(s, open, finance, 3), openCount: open.length, total: listed },
+        ...liveStage(s),
       };
     },
-    [id, finance],
+    [id, finance, range],
   );
   // The stage's one feed, in the equipment panel's order (stream → recording → twin view → reference → none).
   const feed = useMemo(() => {
@@ -75,12 +122,42 @@ export function StagePanel({ id }: { id: MonitoredStageId }) {
   }, [id, ms, cameraSources]);
   const clear = () => useTwin.getState().selectStage(null);
   const [openEv, setOpenEv] = useState<string | null>(null);
+  const [hl, setHl] = useState<ChartHighlight | null>(null);
+  const bodyRef = useRef<HTMLDivElement>(null);
+  const mapping = briefStageLine(id);
+  /** A finding's signal opens its equipment's panel; a chart link scrolls to the stage chart (or opens the equipment). */
+  const onSignal = (sig: string) => select(sig.slice(0, sig.indexOf('.')));
+  const onChart = (chartId: string, w: Window | null) => {
+    const charts = d.charts;
+    const el = bodyRef.current?.querySelector<HTMLElement>(`[data-charts~="${CSS.escape(chartId)}"]`);
+    if (!charts || !el) {
+      const sig = /^chart:(?:process|buffer):(.+)$/.exec(chartId)?.[1];
+      if (sig) onSignal(sig);
+      return;
+    }
+    if (w) {
+      const need = rangeCovering(d.now, w, charts.disabled);
+      if (RANGE_BY_KEY[need].minutes > RANGE_BY_KEY[charts.range].minutes) useTwinUi.getState().setPanelRange(need);
+      setHl({ chartId, from: w.from, to: w.to });
+    }
+    if (typeof el.scrollIntoView === 'function') el.scrollIntoView({ block: 'nearest' });
+  };
 
   const header = (
     <PanelHeader
       zone={{ id: zone.id, color: zone.color }}
       title={ms.name}
-      subtitle={`Production stage ${ms.step} · highlighted in the model`}
+      subtitle={
+        <>
+          Production stage {ms.step} · highlighted in the model
+          {mapping && (
+            <span className="eqp-stage12" title={briefStagesOf(id).map((st) => `${st.no} · ${st.name}: ${st.note}`).join('\n')}>
+              {' · '}
+              {mapping}
+            </span>
+          )}
+        </>
+      }
       status={
         <>
           {d.worst ? (
@@ -138,6 +215,27 @@ export function StagePanel({ id }: { id: MonitoredStageId }) {
     </Section>
   );
 
+  const checked = d.findingsAt < d.now ? clockLabel(d.findingsAt, d.now) : null;
+  const matters = d.findings.length > 0 && (
+    <Section id={`eqp-stage-rf-${id}`} title="What matters" meta={<span className="eqp-sec-meta">rule findings{checked ? ` · checked ${checked}` : null}</span>}>
+      <RuleFindings findings={d.findings} now={d.findingsAt} onSignal={onSignal} onChart={onChart} onEvent={openEventRecord} />
+    </Section>
+  );
+
+  const charts = d.charts && (
+    <Section id={`eqp-stage-an-${id}`} title="How it has behaved">
+      <Charts
+        specs={d.charts.specs}
+        range={d.charts.range}
+        onRange={useTwinUi.getState().setPanelRange}
+        disabled={d.charts.disabled}
+        highlight={hl}
+        onEvent={openEventRecord}
+        asOf={d.chartsAt < d.now ? clockLabel(d.chartsAt, d.now) : null}
+      />
+    </Section>
+  );
+
   const events = (
     <Section id={`eqp-stage-ev-${id}`} title="Open events" meta={<span className="eqp-sec-meta">{d.events.openCount} open</span>}>
       <EventList
@@ -153,7 +251,7 @@ export function StagePanel({ id }: { id: MonitoredStageId }) {
   );
 
   return (
-    <PanelShell label={`${ms.name} · stage details`} header={header} actions={actions} className={`eqp-stage ${wide ? 'eqp-wide' : ''}`}>
+    <PanelShell label={`${ms.name} · stage details`} header={header} actions={actions} bodyRef={bodyRef} className={`eqp-stage ${wide ? 'eqp-wide' : ''}`}>
       <div className="eqp-top">
         <FeedView feed={feed} subject={`stage:${id}`} />
       </div>
@@ -161,13 +259,19 @@ export function StagePanel({ id }: { id: MonitoredStageId }) {
         <div className="eqp-cols">
           <div className="eqp-col eqp-col-a">
             {figures}
+            {matters}
             {equipment}
           </div>
-          <div className="eqp-col eqp-col-b">{events}</div>
+          <div className="eqp-col eqp-col-b">
+            {charts}
+            {events}
+          </div>
         </div>
       ) : (
         <>
           {figures}
+          {matters}
+          {charts}
           {equipment}
           {events}
         </>

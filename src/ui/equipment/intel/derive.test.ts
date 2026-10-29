@@ -164,15 +164,9 @@ describe('feed: exactly one, in the configured order', () => {
     const press = deriveEquipmentIntel(normal, 'E-PRS2').feed;
     expect(press).toMatchObject({ kind: 'twin-view', cameraId: 'CAM-E1', badge: 'Twin view · simulated' });
     expect(press.details.map((d) => d.value).join(' ')).toMatch(/rendered from the digital twin — not a camera image/i);
-    expect(['none', 'reference']).toContain(deriveEquipmentIntel(normal, 'A-COMP').feed.kind);
-    // An asset without a camera but with a topic: the best public reference clip, labelled as such.
-    const stack = deriveEquipmentIntel(normal, 'A-STK').feed;
-    expect(stack.kind).toBe('reference');
-    if (stack.kind === 'reference') {
-      expect(stack.video.sourceType).toBe('public-reference');
-      expect(stack.badge).toBe('Reference');
-      expect(stack.details.map((d) => d.value).join(' ')).toMatch(/public footage of a comparable process — not this plant/i);
-    }
+    expect(deriveEquipmentIntel(normal, 'A-COMP').feed.kind).toBe('none');
+    // An asset without a camera or a recording: no footage (no public reference clips are registered).
+    expect(deriveEquipmentIntel(normal, 'A-STK').feed.kind).toBe('none');
   });
 
   it('uses a configured stream first (shown Live only by the player while it plays)', () => {

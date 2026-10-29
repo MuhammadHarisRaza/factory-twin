@@ -51,7 +51,7 @@ export type VideoTopic =
  */
 export type VideoSourceType = 'public-reference' | 'client-recording' | 'simulated' | 'connected';
 
-export type VideoProvider = 'youtube' | 'vimeo' | 'pexels' | 'pixabay' | 'wikimedia' | 'client' | 'other';
+export type VideoProvider = 'vimeo' | 'pexels' | 'pixabay' | 'wikimedia' | 'client' | 'other';
 
 /** How the clip may be used here: embedding allowed by the provider (and not disabled by the owner), unknown, or not allowed (link out only). */
 export type EmbedPermission = 'allowed' | 'unknown' | 'not-allowed';
@@ -82,12 +82,12 @@ export type VideoRef = {
   originalTitle?: string;
   /** Original page of the clip (always offered as "Open source"). */
   sourceUrl: string;
-  /** Playback URL: an embeddable player URL (YouTube: https://www.youtube-nocookie.com/embed/<id>) or a direct MP4. Null = link out only. */
+  /** Playback URL: an embeddable player URL or a direct MP4 file. Null = link out only. */
   embedUrl: string | null;
-  /** Poster image (YouTube: https://i.ytimg.com/vi/<id>/hqdefault.jpg). Null = a neutral poster is drawn. */
+  /** Poster image. Null = a neutral poster is drawn. */
   poster: string | null;
   sourceType: VideoSourceType;
-  /** Licence or usage basis, e.g. "Standard YouTube licence — embedded via the YouTube player". */
+  /** Licence or usage basis, e.g. "Provided by the client for use in this demonstration". */
   licence: string;
   embed: EmbedPermission;
   /** Seconds into the clip where the relevant part starts / ends (optional). */

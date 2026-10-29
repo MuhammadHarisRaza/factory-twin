@@ -163,16 +163,15 @@ describe('the one feed', () => {
     expect(text(out)).not.toContain('Unit 2 Camera 01 Kiln');
   });
 
-  it('a press: the simulated twin view of its camera; a utility: the unavailable state', () => {
+  it('a press: the simulated twin view of its camera; an asset without footage: the no-footage state', () => {
     const p = panel(normal, deriveEquipmentIntel(normal, 'E-PRS2'));
     expect(p).toContain('data-camera="CAM-E1"');
     expect(p).toContain('Twin view · simulated');
     const stk = deriveEquipmentIntel(normal, 'A-STK');
-    expect(stk.feed.kind).toBe('reference');
-    const ref = panel(normal, stk);
-    expect(ref).not.toContain('eqp-feed-badge');
-    expect(ref).toContain('Reference footage · not this plant, not live');
-    expect(ref).toContain('aria-label="Source details · reference footage, not this plant, not a live feed"');
+    expect(stk.feed.kind).toBe('none');
+    const none = panel(normal, stk);
+    expect(none).not.toContain('eqp-feed-badge');
+    expect(none).toContain('No camera or footage');
   });
 
   it('a configured stream: "Live stream" only while it actually plays; the data badge stays Simulated', () => {
@@ -406,7 +405,7 @@ describe('review fixes: the panel says each figure once', () => {
   it('a camera view keeps its badge (twin view, simulated); the ⓘ tells a client recording from public reference footage; neutral and planned have their own icons', () => {
     expect(panel(normal, deriveEquipmentIntel(normal, 'E-PRS2'))).toMatch(/class="eqp-feed-badge k-twin-view[^"]*"[^>]*><svg[^>]*lucide-monitor-play/);
     expect(panel(normal, deriveEquipmentIntel(normal, 'H-KILN'))).toContain('title="Recorded footage — not a live feed. Source details"');
-    expect(panel(normal, deriveEquipmentIntel(normal, 'A-STK'))).toContain('title="Reference footage — not this plant, not a live feed. Source details"');
+    expect(panel(normal, deriveEquipmentIntel(normal, 'A-STK'))).not.toContain('Source details');
     expect(TONE_ICON.planned).toBe(CalendarClock);
     expect(TONE_ICON.neutral).not.toBe(CircleDashed);
   });

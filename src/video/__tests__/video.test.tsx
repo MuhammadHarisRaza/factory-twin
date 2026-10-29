@@ -12,7 +12,7 @@ import { ContextVideo, clipsFor, topicsFor } from '../ContextVideo';
 import { VIDEOS } from '../registry';
 import { EQUIPMENT_TOPICS, STAGE_TOPICS, TOPIC_LABEL } from '../topics';
 import type { VideoRef } from '../types';
-import { VideoPlayer, autoplayAllowed, embedSrc, youTubeSrc } from '../VideoPlayer';
+import { VideoPlayer, autoplayAllowed, embedSrc } from '../VideoPlayer';
 
 const clip = (over: Partial<VideoRef>): VideoRef => ({
   id: 'vid-test',
@@ -23,13 +23,13 @@ const clip = (over: Partial<VideoRef>): VideoRef => ({
   equipment: [],
   equipmentTypes: ['roller kiln'],
   useCase: 'equipment',
-  provider: 'youtube',
+  provider: 'vimeo',
   publisher: 'Example channel',
-  sourceUrl: 'https://www.youtube.com/watch?v=aaaaaaaaaaa',
-  embedUrl: 'https://www.youtube-nocookie.com/embed/aaaaaaaaaaa',
-  poster: 'https://i.ytimg.com/vi/aaaaaaaaaaa/hqdefault.jpg',
+  sourceUrl: 'https://vimeo.com/123456',
+  embedUrl: 'https://player.vimeo.com/video/123456',
+  poster: 'https://example.org/poster.jpg',
   sourceType: 'public-reference',
-  licence: 'Standard YouTube licence — embedded with the YouTube player',
+  licence: 'Test licence for the player',
   embed: 'allowed',
   label: 'Illustrative equipment footage',
   verified: 'test',
@@ -63,14 +63,14 @@ describe('video player', () => {
     expect(html).toContain('Reference video');
     expect(html).toContain('Illustrative equipment footage');
     expect(html).toContain('not a live view');
-    expect(html).toContain('href="https://www.youtube.com/watch?v=aaaaaaaaaaa"');
+    expect(html).toContain('href="https://vimeo.com/123456"');
     expect(html).not.toContain('<iframe');
     expect(html).not.toContain('<video');
   });
 
   it('offers a link out when a clip cannot be embedded', () => {
     const html = renderToStaticMarkup(<VideoPlayer video={clip({ embedUrl: null, embed: 'not-allowed' })} />);
-    expect(html).toContain('can only be watched on YouTube');
+    expect(html).toContain('can only be watched on Vimeo');
     expect(html).not.toContain('<iframe');
   });
 
@@ -84,12 +84,10 @@ describe('video player', () => {
     expect(html).not.toContain('<iframe');
     expect(html).not.toContain('<video');
     // The fallback for a clip that cannot be embedded stays.
-    expect(renderToStaticMarkup(<VideoPlayer video={clip({ embedUrl: null, embed: 'not-allowed' })} bare />)).toContain('can only be watched on YouTube');
+    expect(renderToStaticMarkup(<VideoPlayer video={clip({ embedUrl: null, embed: 'not-allowed' })} bare />)).toContain('can only be watched on Vimeo');
   });
 
-  it('bare context video: one clip, no topic tabs, even where several topics apply (the kiln)', () => {
-    const tabs = renderToStaticMarkup(<ContextVideo context={{ equipmentId: 'H-KILN' }} compact />);
-    expect(tabs).toContain('role="tablist"');
+  it('bare context video: one clip, no topic tabs (the kiln recording)', () => {
     const bare = renderToStaticMarkup(<ContextVideo context={{ equipmentId: 'H-KILN' }} bare />);
     expect(bare).not.toContain('role="tablist"');
     expect(bare).not.toContain('<figcaption');
@@ -98,24 +96,6 @@ describe('video player', () => {
 });
 
 describe('video autoplay and controls', () => {
-  it('the YouTube embed starts by itself without player controls; muted and looping when it started by itself', () => {
-    const auto = new URL(youTubeSrc(clip({}), true));
-    expect(auto.searchParams.get('autoplay')).toBe('1');
-    expect(auto.searchParams.get('mute')).toBe('1');
-    expect(auto.searchParams.get('controls')).toBe('0');
-    expect(auto.searchParams.get('disablekb')).toBe('1');
-    expect(auto.searchParams.get('fs')).toBe('0');
-    expect(auto.searchParams.get('loop')).toBe('1');
-    // A single clip loops only as a playlist of itself.
-    expect(auto.searchParams.get('playlist')).toBe('aaaaaaaaaaa');
-    expect(auto.searchParams.get('enablejsapi')).toBe('1');
-    // Started from the poster by the viewer: with sound.
-    expect(new URL(youTubeSrc(clip({}), false)).searchParams.get('mute')).toBeNull();
-    // A clip cut to a segment plays the segment and stops (no loop back to the whole video).
-    const seg = new URL(youTubeSrc(clip({ segment: { start: 30, end: 75 } }), true));
-    expect([seg.searchParams.get('start'), seg.searchParams.get('end'), seg.searchParams.get('loop')]).toEqual(['30', '75', null]);
-  });
-
   it('a Vimeo embed autoplays and loops without controls; other embeds are left as they are', () => {
     const v = new URL(embedSrc(clip({ provider: 'vimeo', embedUrl: 'https://player.vimeo.com/video/123456' }), true));
     expect([v.searchParams.get('autoplay'), v.searchParams.get('loop'), v.searchParams.get('controls'), v.searchParams.get('muted')]).toEqual(['1', '1', '0', '1']);
@@ -158,7 +138,7 @@ describe('video registry', () => {
         expect(v.sourceType).toBe('public-reference');
         expect(['Process reference video', 'Illustrative equipment footage']).toContain(v.label);
         expect(v.sourceUrl).toMatch(/^https:\/\//);
-        if (v.embedUrl) expect(v.embedUrl).toMatch(/^https:\/\/(www\.youtube-nocookie\.com\/embed\/[\w-]{11}|player\.vimeo\.com\/video\/\d+|videos\.pexels\.com\/.+\.(mp4|webm)|[^ ]+\.(mp4|webm))/);
+        if (v.embedUrl) expect(v.embedUrl).not.toMatch(/youtube|youtu\.be/i);
       }
       if (v.embed === 'not-allowed') expect(v.embedUrl).toBeNull();
       expect(TOPIC_LABEL[v.topic]).toBeTruthy();
@@ -174,8 +154,9 @@ describe('video registry', () => {
     expect(clipsFor({ equipmentId: 'J-BOX' })[0].video.id).toBe('vid-packaging-camera-1');
     expect(clipsFor({ stage: 'PACK' })[0].video.id).toBe('vid-packaging-camera-1');
     expect(clipsFor({ topic: 'yard-movement' })[0].video.id).toBe('vid-yard-camera-1');
-    // The public kiln phases stay available next to the recording.
-    expect(clipsFor({ equipmentId: 'H-KILN' }).map((c) => c.topic)).toEqual(['kiln-camera', 'kiln-firing', 'kiln-infeed', 'kiln-exterior', 'kiln-discharge']);
+    // Only the client's recordings are registered: no YouTube or other third-party footage.
+    expect(VIDEOS.map((v) => v.id)).toEqual(['vid-kiln-camera-1', 'vid-packaging-camera-1', 'vid-yard-camera-1']);
+    expect(clipsFor({ equipmentId: 'H-KILN' }).map((c) => c.topic)).toEqual(['kiln-camera']);
     for (const id of ['vid-kiln-camera-1', 'vid-packaging-camera-1', 'vid-yard-camera-1']) {
       const v = VIDEOS.find((x) => x.id === id)!;
       const html = renderToStaticMarkup(<VideoPlayer video={v} compact />);

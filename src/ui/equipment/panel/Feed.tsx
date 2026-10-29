@@ -7,7 +7,7 @@
  * footage · not live" / "Reference footage · not this plant, not live"). An ⓘ button
  * (top-right; its tooltip names the kind of footage) discloses the compact source details — title,
  * camera, recorded at, provider, licence and the honesty note (a recording, not a live feed). While a
- * provider embed (YouTube) is loaded, whose own title covers the top of the frame, the chrome moves to
+ * provider embed is loaded, whose own title covers the top of the frame, the chrome moves to
  * a slim line under it and the details open below that line, so nothing overlaps the embed.
  *
  * On a phone the inspector is a short bottom sheet: the feed starts as one "Show camera" line, so the

@@ -8,13 +8,11 @@
  * Enter on a file, and a Pause / Resume button reached with Tab (drawn only while it has focus) on
  * a provider embed. A paused clip shows a small "Paused" tag and stays paused until resumed.
  * Viewers who asked their system for reduced motion or data saving get the poster and play
- * button instead of autoplay; a browser that refuses autoplay (a file's play() refused, a YouTube
- * embed that reports it blocked or never starts) falls back to the same poster.
+ * button instead of autoplay; a browser that refuses autoplay (a file's play() refused) falls back
+ * to the same poster.
  * Sound only plays when the viewer starts a clip from that poster, and only one player has sound
  * at a time: another one taking it mutes the previous one, which keeps playing.
- * YouTube clips play in the privacy-enhanced embed and report errors through the player's
- * postMessage channel, so a removed clip or one whose owner disabled embedding falls back to the
- * poster with an "Open on YouTube" link instead of a black box. Direct MP4 files play in <video>.
+ * Direct MP4 files play in <video>; a file that cannot be loaded shows the reason and a link to it.
  */
 import { useEffect, useId, useMemo, useRef, useState } from 'react';
 import { create } from 'zustand';
@@ -27,7 +25,6 @@ import './video.css';
 const useSound = create<{ id: string | null; set: (id: string | null) => void }>((set) => ({ id: null, set: (id) => set({ id }) }));
 
 const PROVIDER_LABEL: Record<VideoRef['provider'], string> = {
-  youtube: 'YouTube',
   vimeo: 'Vimeo',
   pexels: 'Pexels',
   pixabay: 'Pixabay',
@@ -46,32 +43,18 @@ export function recordingNote(v: VideoRef) {
   return `${when} · provided by the client. A recording, not a live feed, and not linked to this demo's simulated data.${overlays}`;
 }
 
-/** YouTube player error codes → plain reasons. */
-const YT_ERRORS: Record<number, string> = {
-  2: 'The video link is invalid.',
-  5: 'The browser cannot play this video.',
-  100: 'The video has been removed or made private.',
-  101: 'The owner does not allow this video to be played on other sites.',
-  150: 'The owner does not allow this video to be played on other sites.',
-  153: 'The video player did not accept this page as its embedding site.',
-};
-
 /** Seconds before a player that has not reported ready offers the link out. */
 const SLOW_MS = 15000;
-
-/** A muted YouTube start still unstarted this long after "ready", on screen in a visible page: the browser refused it. */
-const BLOCKED_MS = 4000;
 
 /** Share of the frame that must be on screen for the clip to play (on) by itself. */
 const VISIBLE_RATIO = 0.35;
 
-const isYouTube = (v: VideoRef) => v.provider === 'youtube' && !!v.embedUrl;
 const isVimeo = (v: VideoRef) => v.provider === 'vimeo' && !!v.embedUrl;
 const isFile = (v: VideoRef) => !!v.embedUrl && /\.(mp4|webm)(\?|$)/i.test(v.embedUrl);
 
 /**
  * True when the clip plays in a <video> element (nothing is drawn over the top of the picture; only the
- * bottom-left "Paused" tag); false for provider embeds (YouTube and others draw their own title over the
+ * bottom-left "Paused" tag); false for provider embeds (which draw their own title over the
  * top of the frame).
  */
 export const playsInVideoElement = isFile;
@@ -89,30 +72,6 @@ export function autoplayAllowed(): boolean {
   }
   const nav = typeof navigator !== 'undefined' ? (navigator as Navigator & { connection?: { saveData?: boolean } }) : null;
   return !nav?.connection?.saveData;
-}
-
-/** The YouTube embed URL: autoplay, no player controls; `muted` when the clip started by itself; a whole clip loops. */
-export function youTubeSrc(v: VideoRef, muted: boolean) {
-  const u = new URL(v.embedUrl!);
-  u.searchParams.set('autoplay', '1');
-  u.searchParams.set('rel', '0');
-  u.searchParams.set('playsinline', '1');
-  u.searchParams.set('enablejsapi', '1');
-  u.searchParams.set('controls', '0');
-  u.searchParams.set('disablekb', '1');
-  u.searchParams.set('fs', '0');
-  u.searchParams.set('iv_load_policy', '3');
-  if (typeof location !== 'undefined') u.searchParams.set('origin', location.origin);
-  if (v.segment?.start) u.searchParams.set('start', String(Math.floor(v.segment.start)));
-  if (v.segment?.end) u.searchParams.set('end', String(Math.floor(v.segment.end)));
-  if (muted) u.searchParams.set('mute', '1');
-  // A single clip loops only as a playlist of itself; a clip cut to a segment stops at its end.
-  const ytId = u.pathname.split('/').pop();
-  if (!v.segment?.end && ytId) {
-    u.searchParams.set('loop', '1');
-    u.searchParams.set('playlist', ytId);
-  }
-  return u.toString();
 }
 
 /** Other provider embeds (Vimeo): autoplay and loop without controls, muted when the clip started by itself. */
@@ -165,25 +124,14 @@ export function VideoPlayer({
   const autoTried = useRef(false);
   const autoPaused = useRef(false);
   const audible = useRef(false);
-  const ytState = useRef<number | null>(null);
-  // When the page last became visible (a provider's pause reported just after it is not the viewer's).
-  const shownAt = useRef(0);
-  // A refused-autoplay check that could not decide (frame off screen, page hidden): run again once it is back.
-  const rearmBlocked = useRef<(() => void) | null>(null);
-  const resumeBlockedCheck = () => {
-    const r = rearmBlocked.current;
-    rearmBlocked.current = null;
-    r?.();
-  };
   const loaded = state.kind === 'loading' || state.kind === 'ready';
   const file = isFile(video);
 
-  /** Sends a command to the provider embed (YouTube IFrame API / Vimeo player API). */
+  /** Sends a command to the provider embed (Vimeo player API). */
   const command = (func: 'playVideo' | 'pauseVideo' | 'mute') => {
     const w = frame.current?.contentWindow;
     if (!w) return;
-    if (isYouTube(video)) w.postMessage(JSON.stringify({ event: 'command', func, args: [] }), '*');
-    else if (isVimeo(video)) w.postMessage(JSON.stringify(func === 'mute' ? { method: 'setMuted', value: true } : { method: func === 'playVideo' ? 'play' : 'pause' }), '*');
+    if (isVimeo(video)) w.postMessage(JSON.stringify(func === 'mute' ? { method: 'setMuted', value: true } : { method: func === 'playVideo' ? 'play' : 'pause' }), '*');
   };
   /** The viewer turned the sound on: this player takes the sound (muting the previous one) and is kept by its host. */
   const takeSound = () => {
@@ -222,7 +170,7 @@ export function VideoPlayer({
   useEffect(() => {
     if (!loaded) return;
     if (!visible) {
-      const playing = media.current ? !media.current.paused : ytState.current == null || ytState.current === 1 || ytState.current === 3;
+      const playing = media.current ? !media.current.paused : true;
       // A clip the viewer paused stays theirs: it is not marked for resuming.
       if (playing && !userPausedRef.current) {
         autoPaused.current = true;
@@ -235,7 +183,6 @@ export function VideoPlayer({
         if (media.current) void media.current.play()?.catch(() => {});
         else command('playVideo');
       }
-      resumeBlockedCheck();
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps -- reacts to visibility and load only
   }, [visible, loaded]);
@@ -247,9 +194,7 @@ export function VideoPlayer({
     if (!loaded || typeof document === 'undefined') return;
     const onVisibility = () => {
       if (document.visibilityState !== 'visible') return;
-      shownAt.current = Date.now();
       if (!visibleRef.current) return;
-      resumeBlockedCheck();
       if (!autoPaused.current) return;
       autoPaused.current = false;
       if (media.current) void media.current.play()?.catch(() => {});
@@ -282,7 +227,6 @@ export function VideoPlayer({
     if (loaded) return;
     audible.current = false;
     autoPaused.current = false;
-    ytState.current = null;
     setEngaged(false);
     setUserPaused(false);
     userPausedRef.current = false;
@@ -316,130 +260,6 @@ export function VideoPlayer({
     // eslint-disable-next-line react-hooks/exhaustive-deps -- once per load
   }, [loaded, file]);
 
-  // YouTube: listen to the player's postMessage channel while the embed is loaded. A clip whose owner
-  // disabled embedding reports "ready" and then error 150, so errors are honoured after ready too.
-  useEffect(() => {
-    if (!loaded || !isYouTube(video)) return;
-    let greeted = false;
-    // Whether the clip has played in this load (a viewer pause pressed while it loaded must survive its first start).
-    let started = false;
-    let blockedCheck: ReturnType<typeof setTimeout> | undefined;
-    // A refused muted start goes back to the poster, which starts the clip with sound (autoTried stays
-    // true, so there is no loop). A clip the viewer started from the poster keeps YouTube's own start.
-    const refused = () => {
-      if (muted) setState({ kind: 'idle' });
-    };
-    // 4 s after "ready" a muted start still reported unstarted / cued, on screen in a visible page, was
-    // refused by the browser. Off screen or in a hidden page the check cannot decide: it runs again (a full
-    // window) once the frame is back. An unknown state is left alone.
-    const arm = () => {
-      clearTimeout(blockedCheck);
-      rearmBlocked.current = null;
-      blockedCheck = setTimeout(() => {
-        if (ytState.current !== -1 && ytState.current !== 5) return;
-        if (document.visibilityState === 'visible' && visibleRef.current && !autoPaused.current) refused();
-        else rearmBlocked.current = arm;
-      }, BLOCKED_MS);
-    };
-    const subscribe = () => {
-      for (const ev of ['onStateChange', 'onError', 'onAutoplayBlocked'])
-        frame.current?.contentWindow?.postMessage(JSON.stringify({ event: 'command', func: 'addEventListener', args: [ev], id: video.id, channel: 'widget' }), '*');
-    };
-    const onMessage = (e: MessageEvent) => {
-      if (!frame.current || e.source !== frame.current.contentWindow) return;
-      let d: { event?: string; info?: unknown } | null = null;
-      try {
-        d = typeof e.data === 'string' ? JSON.parse(e.data) : (e.data as typeof d);
-      } catch {
-        return;
-      }
-      if (!d?.event) return;
-      if ((d.event === 'initialDelivery' || d.event === 'onReady') && !greeted) {
-        greeted = true;
-        subscribe();
-      }
-      if (d.event === 'onError') {
-        const code = Number(d.info);
-        setState({ kind: 'failed', reason: YT_ERRORS[code] ?? `The video player reported error ${code}.` });
-        return;
-      }
-      if (d.event === 'onAutoplayBlocked') {
-        refused();
-        return;
-      }
-      if (d.event === 'onReady') {
-        setState((s) => (s.kind === 'loading' ? { kind: 'ready' } : s));
-        if (muted) arm();
-      }
-      const info = (d.info ?? null) as { playerState?: number; muted?: boolean; volume?: number } | number | null;
-      const ps = d.event === 'onStateChange' && typeof info === 'number' ? info : info && typeof info === 'object' ? info.playerState : undefined;
-      if (typeof ps === 'number' && ps !== ytState.current) {
-        const prev = ytState.current;
-        ytState.current = ps;
-        const hidden = document.visibilityState !== 'visible';
-        if ((ps === 1 || ps === 3) && !visibleRef.current && prev === 2 && (autoPaused.current || userPausedRef.current) && !hidden) {
-          // Resumed from paused while less than VISIBLE_RATIO of the frame is on screen: this player only sends
-          // play while the frame counts as visible, so the viewer clicked it — their resume, the frame is on screen.
-          autoPaused.current = false;
-          userPausedRef.current = false;
-          setUserPaused(false);
-          visibleRef.current = true;
-          setVisible(true);
-        } else if ((ps === 1 || ps === 3) && !visibleRef.current) {
-          // It started while out of view (ready after the viewer scrolled on): paused until it is back.
-          autoPaused.current = true;
-          command('pauseVideo');
-        } else if (ps === 2 && !userPausedRef.current && !autoPaused.current && ((hidden && !audible.current) || Date.now() - shownAt.current < 1000)) {
-          // A muted clip paused in a hidden page (browsers pause muted / video-only media there), or a pause
-          // reported just after the page came back: not the viewer's — resumed when the page is visible again
-          // (or now, if it already is).
-          autoPaused.current = true;
-          if (!hidden && visibleRef.current) {
-            autoPaused.current = false;
-            command('playVideo');
-          }
-        } else if (ps === 2 && !autoPaused.current && !userPausedRef.current && (visibleRef.current || hidden)) {
-          // Paused on screen and not by this player (a click on the picture), or paused with sound in a hidden
-          // page (a media key, the OS): the viewer's pause.
-          userPausedRef.current = true;
-          setUserPaused(true);
-          setEngaged(true);
-        } else if (ps === 1 && userPausedRef.current) {
-          if (started) {
-            // Resumed by a click on the picture.
-            userPausedRef.current = false;
-            setUserPaused(false);
-          } else {
-            // Paused by the viewer before its first start (the command was dropped while it loaded): kept paused.
-            command('pauseVideo');
-          }
-        }
-        if (ps === 1) started = true;
-      }
-      if (info && typeof info === 'object' && typeof info.muted === 'boolean') {
-        const on = !info.muted && (info.volume ?? 100) > 0;
-        if (on && !audible.current) {
-          // The first report is the start state (the src), not the viewer unmuting. If another player took
-          // the sound while this one loaded, the 'mute' sent then was dropped: send it again now it listens.
-          if (d.event === 'initialDelivery' && useSound.getState().id !== me) command('mute');
-          else takeSound();
-        } else if (!on) audible.current = false;
-      }
-    };
-    window.addEventListener('message', onMessage);
-    // Handshake: the embed only reports events after the page says it is listening.
-    const hello = setInterval(() => {
-      if (!greeted) frame.current?.contentWindow?.postMessage(JSON.stringify({ event: 'listening', id: video.id, channel: 'widget' }), '*');
-    }, 400);
-    return () => {
-      window.removeEventListener('message', onMessage);
-      clearInterval(hello);
-      clearTimeout(blockedCheck);
-      rearmBlocked.current = null;
-    };
-    // eslint-disable-next-line react-hooks/exhaustive-deps -- per load of this clip
-  }, [loaded, video]);
-
   // Offer the link out when the embed has not reported ready after a while (never an endless spinner).
   useEffect(() => {
     if (state.kind !== 'loading' || state.slow) return;
@@ -465,7 +285,7 @@ export function VideoPlayer({
     }
   };
 
-  /** The keyboard Pause / Resume button of a provider embed (YouTube, Vimeo): the same as a click on the picture. */
+  /** The keyboard Pause / Resume button of a provider embed (Vimeo): the same as a click on the picture. */
   const toggleEmbed = () => {
     // A frame less than VISIBLE_RATIO on screen is paused by this player: the button then resumes it.
     const pause = !userPausedRef.current && visibleRef.current;
@@ -495,8 +315,7 @@ export function VideoPlayer({
     setState({ kind: 'loading', slow: false });
   };
 
-  const ytSrc = useMemo(() => (loaded && isYouTube(video) ? youTubeSrc(video, muted) : null), [loaded, video, muted]);
-  const otherSrc = useMemo(() => (loaded && !isYouTube(video) && !file && video.embedUrl ? embedSrc(video, muted) : null), [loaded, video, muted, file]);
+  const otherSrc = useMemo(() => (loaded && !file && video.embedUrl ? embedSrc(video, muted) : null), [loaded, video, muted, file]);
 
   const meta = (
     <div className="vp-meta">
@@ -541,18 +360,7 @@ export function VideoPlayer({
     <figure className={`vp ${compact || bare ? 'compact' : ''} ${bare ? 'bare' : ''}`}>
       <div className="vp-frame" ref={box}>
         {loaded ? (
-          isYouTube(video) ? (
-            <iframe
-              ref={frame}
-              className="vp-media"
-              src={ytSrc!}
-              title={`${video.label}: ${video.title}`}
-              allow="autoplay; encrypted-media; picture-in-picture; fullscreen"
-              referrerPolicy="strict-origin-when-cross-origin"
-              loading="lazy"
-              allowFullScreen
-            />
-          ) : file ? (
+          file ? (
             <video
               ref={media}
               className="vp-media"

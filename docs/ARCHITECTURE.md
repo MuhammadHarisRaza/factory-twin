@@ -196,14 +196,14 @@ and scenario log always yield the same events; ~400 events are already in the 7-
 
 ## Reference videos
 
-`src/video/registry.ts` holds curated public reference clips (equipment makers, tile manufacturers, stock
-libraries) per topic (`src/video/types.ts`); kiln infeed, exterior, firing and discharge are separate topics. Three
-client-provided camera recordings (`public/videos/`, sourceType `client-recording`) lead the kiln-camera, packaging and
-yard-movement topics; they are labelled *Recorded camera footage* with their camera and recording time, and always say
+`src/video/registry.ts` holds only the three client-provided camera recordings (`public/videos/`, sourceType
+`client-recording`) for the kiln-camera, packaging and yard-movement topics (`src/video/types.ts`); no YouTube or other
+third-party footage is used, and a context without a recording shows no video. The recordings are labelled *Recorded camera footage* with their camera
+and recording time, and always say
 they are recordings, not live, with overlays from the recording system rather than this demo's simulation.
 `<ContextVideo context={{ equipmentId, stage, topic }}/>` picks the clips for a context (`src/video/topics.ts`)
 and shows them in one player (`src/video/VideoPlayer.tsx`). Nothing loads before the player is on screen; then the
-clip starts by itself, muted and looping (the provider's embed — YouTube privacy-enhanced player — or the MP4), pauses
+clip starts by itself, muted and looping (the MP4), pauses
 when scrolled out of view and resumes when it is back. The picture has no visible playback controls (no play bar,
 timeline or duration; the embeds are asked to hide theirs); a click on it pauses and resumes it — from the keyboard,
 Space / Enter on an MP4, and on an embed a Pause / Resume button reached with Tab (drawn only while focused) — and a
@@ -211,10 +211,8 @@ paused clip shows a small *Paused* tag and stays paused (its host keeps it). Thi
 a pause of a muted clip in a hidden page (browsers pause muted / video-only media there) are resumed when the clip is
 visible again;
 any other pause (a media key, the OS) counts as the viewer's. Viewers who set reduced motion
-or data saving, and browsers that refuse autoplay (a refused `play()`, a YouTube embed that reports it blocked or
-stays unstarted), get the poster with a play button instead; sound only plays for a clip started from that poster,
-one player at a time. Errors reported by the YouTube player
-(removed clip, embedding disabled) and slow loads fall back to the poster with a link to the source. In the Factory
+or data saving, and browsers that refuse autoplay (a refused `play()`), get the poster with a play button instead; sound only plays for a clip started from that poster,
+one player at a time. A file that cannot be loaded, and slow loads, fall back to the poster with a link to the file. In the Factory
 Twin's subject panel (equipment, vehicle, stage) the video has no badge on the picture; its ⓘ (tooltip *Recorded
 footage — not a live feed* / *Reference footage — not this plant, not a live feed*) opens the source details. Camera views keep their badge
 (*Twin view · simulated*, the stream's state). The panel is wide by default (`src/ui/twin/panelWidth.ts`): 70 % of

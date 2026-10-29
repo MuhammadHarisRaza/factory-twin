@@ -11,6 +11,7 @@ import {
   MessageSquareText,
   OctagonX,
   ScanSearch,
+  ShieldCheck,
   TriangleAlert,
   Truck,
   type LucideIcon,
@@ -71,7 +72,7 @@ export function ScenarioState({ st, now, time = true }: { st: ScenarioStatus; no
 
 // ── Show me ───────────────────────────────────────────────────────────────────
 
-/** The seven workspaces' names, as in the navigation. */
+/** The workspaces' names, as in the navigation. */
 export const WS_LABEL: Record<WorkspaceId, string> = {
   overview: 'Overview',
   twin: 'Factory Twin',
@@ -79,6 +80,7 @@ export const WS_LABEL: Record<WorkspaceId, string> = {
   quality: 'Quality & Defects',
   fleet: 'Fleet & Movement',
   events: 'Events & Reports',
+  compliance: 'Compliance',
   copilot: 'Copilot',
 };
 const WS_ICON: Record<WorkspaceId, LucideIcon> = {
@@ -88,6 +90,7 @@ const WS_ICON: Record<WorkspaceId, LucideIcon> = {
   quality: ScanSearch,
   fleet: Truck,
   events: ClipboardList,
+  compliance: ShieldCheck,
   copilot: MessageSquareText,
 };
 

@@ -14,6 +14,7 @@ import {
   Pause,
   Play,
   ScanSearch,
+  ShieldCheck,
   SlidersHorizontal,
   Truck,
   type LucideIcon,
@@ -37,6 +38,7 @@ const ICONS: Record<WorkspaceId, LucideIcon> = {
   quality: ScanSearch,
   fleet: Truck,
   events: ClipboardList,
+  compliance: ShieldCheck,
   copilot: Bot,
 };
 

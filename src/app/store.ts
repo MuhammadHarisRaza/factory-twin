@@ -29,7 +29,7 @@ import { useTwin } from '../store';
 /** How a navigation is recorded: 'push' adds a browser-history entry (user step), 'replace' rewrites the current one (automatic correction). */
 export type NavMode = 'push' | 'replace';
 
-export type WorkspaceId = 'overview' | 'twin' | 'production' | 'quality' | 'fleet' | 'events' | 'copilot';
+export type WorkspaceId = 'overview' | 'twin' | 'production' | 'quality' | 'fleet' | 'events' | 'compliance' | 'copilot';
 
 /** Workspaces of earlier releases; their links and addresses redirect (see LEGACY_REDIRECTS). */
 export type LegacyWorkspaceId = 'monitoring' | 'command' | 'health' | 'energy' | 'scenarios' | 'assets';
@@ -52,6 +52,7 @@ export const WORKSPACES: { id: WorkspaceId; title: string; short: string; questi
   { id: 'quality', title: 'Quality & Defects', short: 'Quality', question: 'What quality problems are occurring, and where?' },
   { id: 'fleet', title: 'Fleet & Movement', short: 'Fleet', question: 'Where are vehicles and materials, and what is delaying movement?' },
   { id: 'events', title: 'Events & Reports', short: 'Events', question: 'What happened, what was the impact, and what was done?' },
+  { id: 'compliance', title: 'Compliance', short: 'Compliance', question: 'Which regulations and internal controls apply, and what is outstanding? (illustrative sample data)' },
   { id: 'copilot', title: 'Copilot', short: 'Copilot', question: 'Ask about the current state of the factory.' },
 ];
 

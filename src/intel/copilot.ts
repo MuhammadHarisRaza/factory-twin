@@ -184,7 +184,7 @@ export type CopilotAnswer = {
   eventId?: string;
 };
 
-/** Titles of the seven workspaces (as in the navigation, src/app/store.ts WORKSPACES). */
+/** Titles of the workspaces (as in the navigation, src/app/store.ts WORKSPACES). */
 export const WORKSPACE_TITLE: Record<WorkspaceId, string> = {
   overview: 'Overview',
   twin: 'Factory Twin',
@@ -192,6 +192,7 @@ export const WORKSPACE_TITLE: Record<WorkspaceId, string> = {
   quality: 'Quality & Defects',
   fleet: 'Fleet & Movement',
   events: 'Events & Reports',
+  compliance: 'Compliance',
   copilot: 'Copilot',
 };
 

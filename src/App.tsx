@@ -77,6 +77,7 @@ const PAGES: Record<Exclude<WorkspaceId, 'twin'>, ComponentType> = {
   quality: page(() => import('./pages/QualityPage'), 'QualityPage'),
   fleet: page(() => import('./pages/FleetPage'), 'FleetPage'),
   events: page(() => import('./pages/EventsPage'), 'EventsPage'),
+  compliance: page(() => import('./pages/CompliancePage'), 'CompliancePage'),
   copilot: page(() => import('./pages/CopilotPage'), 'CopilotPage'),
 };
 

@@ -348,7 +348,7 @@ export function VideoPlayer({
       ) : (
         !compact && (
           <div className="vp-note">
-            {video.description} Public footage of a comparable process — not this plant, not a live view, and not evidence of any event.
+            {video.description} Footage of a comparable process — not this plant, not a live view, and not evidence of any event.
             {video.attribution ? ` ${video.attribution}.` : ''} Licence: {video.licence}.
           </div>
         )

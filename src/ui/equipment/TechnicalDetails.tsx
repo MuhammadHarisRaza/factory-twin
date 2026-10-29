@@ -3,7 +3,7 @@
  * register data, the condition assessment (with the condition indicator and its definition — the
  * only place the indicator appears), data source and feed, the integration status and the signal catalogue
  * (availability counts, signal mappings with 'tag not configured', the rule thresholds that apply, calculation
- * definitions), the cameras covering the asset (simulated view / configure a
+ * definitions), the cameras covering the asset (configure a
  * stream), stop / condition / maintenance history and the definitions of every figure the panel
  * shows. Vehicles: their register, visit and position source.
  */

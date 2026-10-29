@@ -55,7 +55,7 @@ export const LEGEND: { basis: Basis; label: string; text: string }[] = [
   {
     basis: 'illustrative',
     label: BASIS_LABEL.illustrative,
-    text: 'Indicative only: digital-twin camera renders, inspection frames drawn for simulated records, price and cost assumptions.',
+    text: 'Indicative only: inspection frames drawn for simulated records, price and cost assumptions.',
   },
 ];
 
@@ -77,7 +77,7 @@ export type ReportEvidenceItem = {
   /** Why there is no image (when not available). */
   reason?: string;
   inspectionId?: string;
-  /** Provenance of the evidence record: a camera snapshot is a digital-twin render or a frame of a configured camera stream. */
+  /** Provenance of the evidence record: a camera snapshot is a frame of a configured camera stream. */
   provenance: Evidence['provenance'];
 };
 

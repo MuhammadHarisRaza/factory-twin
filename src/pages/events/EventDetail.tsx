@@ -289,7 +289,7 @@ function Detail({ r }: { r: EventReport }) {
             <b>Reference footage — not evidence</b>
           </div>
           <p className="evd-ref-t">
-            Public footage of this kind of {ev.category === 'logistics' ? 'vehicle operation' : ev.category === 'quality' ? 'inspection' : 'process or equipment'}, for orientation only. It is not this plant, not a recording
+            Reference footage of this kind of {ev.category === 'logistics' ? 'vehicle operation' : ev.category === 'quality' ? 'inspection' : 'process or equipment'}, for orientation only. It is not this plant, not a recording
             of this event and not evidence that it happened.
           </p>
           <ContextVideo context={video} compact title="Process reference video" />

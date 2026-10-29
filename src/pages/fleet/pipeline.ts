@@ -408,7 +408,7 @@ export const NOT_AVAILABLE: Unavailable[] = [
     label: 'CCTV analytics',
     status: 'No camera stream or video model connected',
     needs: 'Camera streams through a video gateway (RTSP / ONVIF → WebRTC, HLS or MJPEG) plus a validated vehicle / person detection model.',
-    instead: 'Camera views are rendered from the digital twin; no video analytics runs on them.',
+    instead: 'No camera image is shown without a configured stream; no video analytics runs on any feed.',
   },
 ];
 

@@ -75,13 +75,12 @@ function EvidenceFigure({ x }: { x: ReportEvidenceItem }) {
   const rec = useSim((s) => (x.inspectionId ? (s.sim.inspections.find((r) => r.id === x.inspectionId) ?? null) : null));
   const snap = x.kind === 'camera-snapshot' && ev ? snapshotImage(ev) : null;
   const frame = useInspectionImage(x.kind === 'inspection-image' ? rec : null, x.kind === 'inspection-image' && !!rec, 240);
-  const live = x.kind === 'camera-snapshot' && x.provenance.origin === 'live-camera';
   let body: ReactNode;
   if (x.kind === 'camera-snapshot')
     body = snap ? (
-      <img src={snap.dataUrl} width={snap.width} height={snap.height} alt={live ? `Camera frame from the configured camera stream, captured with ${x.eventId}` : `Digital-twin render captured with ${x.eventId}`} />
+      <img src={snap.dataUrl} width={snap.width} height={snap.height} alt={`Camera frame from the configured camera stream, captured with ${x.eventId}`} />
     ) : (
-      <Unavailable reason={live ? 'The camera frame is no longer held in this browser session' : 'The rendered image is no longer held in this browser session'} />
+      <Unavailable reason="The camera frame is no longer held in this browser session" />
     );
   else if (frame.status === 'ready') body = <img src={frame.url!} width={240} height={240} alt={`Illustrative frame of inspection record ${x.inspectionId}, annotated`} />;
   else if (frame.status === 'loading') body = <Unavailable pending reason="Drawing the illustrative frame…" />;

@@ -537,8 +537,8 @@ export type ConveyorDef = {
 // ── Cameras ───────────────────────────────────────────────────────────────────
 
 /**
- * A camera position in the plant. Every camera has a simulated feed rendered from the digital twin;
- * a real stream is only used when one is configured and actually plays (see src/ui/feeds).
+ * A camera position in the plant. It shows an image only when a stream is configured for it and
+ * actually plays (see src/ui/feeds).
  */
 export type CameraDef = {
   id: string;
@@ -738,7 +738,7 @@ export type Evidence = {
   /** Plant minute the evidence was captured / frozen. */
   capturedAt: number;
   provenance: {
-    origin: 'simulation' | 'scenario' | 'digital-twin-render' | 'live-camera' | 'user';
+    origin: 'simulation' | 'scenario' | 'camera-stream' | 'live-camera' | 'user';
     sourceId: string;
     label: string;
   };

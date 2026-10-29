@@ -188,7 +188,8 @@
 .eqp-feed .feed-f .feed-snap {
   display: none;
 }
-.eqp-feed .feed-f:not(:has(.feed-back)) {
+/* The panel shows no feed footer (the source details sit behind the ⓘ). */
+.eqp-feed .feed-f {
   display: none;
 }
 .eqp-feed .feed-f {
@@ -1886,32 +1887,6 @@ button.eqp-chip:hover {
 .eqp.eqp-wide .eqp-feed .feed-media {
   max-height: min(400px, 80cqh);
 }
-/* The one honest chip on recorded / reference footage. */
-.eqp-feed-tag {
-  display: inline-flex;
-  align-items: center;
-  gap: 6px;
-  height: 24px;
-  padding: 0 10px;
-  border-radius: 999px;
-  background: #000000aa;
-  backdrop-filter: blur(6px);
-  font-size: var(--fs-12);
-  color: var(--text-1);
-  white-space: nowrap;
-  min-width: 0;
-  overflow: hidden;
-  text-overflow: ellipsis;
-}
-.eqp-feed-tag svg {
-  flex: none;
-  color: var(--eq-blue);
-}
-.eqp-feed.docked .eqp-feed-tag {
-  background: var(--bg-2);
-  backdrop-filter: none;
-}
-
 /* Hero key figures: 6 across wide, 2–3 per row compact; a coloured top strip by status, a glow on warning / critical. */
 .eqp .eqp-kpis {
   grid-template-columns: repeat(auto-fill, minmax(132px, 1fr));

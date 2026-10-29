@@ -1,35 +1,15 @@
 /**
- * Bridge between the event / evidence system and the 3D twin renderer.
- *
- * The scene registers a renderer that draws the factory from a camera position (src/scene/cctv/*).
- * Simulated camera feeds and event snapshots use it; images are kept in an in-memory store keyed
- * by evidence id. A snapshot is always labelled "rendered from the digital twin" — it is never
- * presented as a camera image (a frame grabbed from a configured stream carries its own provenance).
+ * Evidence image store. Event snapshots are frames grabbed from a configured camera stream that was
+ * playing when the event was detected; nothing is rendered from the 3D twin as a stand-in image.
+ * Images are kept in memory keyed by evidence id.
  *
  * The store is bounded: images are dropped when their evidence is pruned from the session history
  * (`retainImagesFor`, called with the live evidence array), all of them on Reset Demo (`clearImages`),
  * and the oldest first once the stored data URLs exceed MAX_IMAGE_CHARS. Views already show
  * "not kept in this browser session" for available evidence whose image is no longer held.
  */
+/** A captured image (a JPEG / PNG data URL and its size). */
 export type TwinRender = { dataUrl: string; width: number; height: number };
-export type TwinRenderer = (cameraId: string, opts: { width: number; height: number }) => Promise<TwinRender | null>;
-
-let renderer: TwinRenderer | null = null;
-
-/** Called by the 3D scene once its renderer is ready; returns an unregister function. */
-export function registerTwinRenderer(r: TwinRenderer) {
-  renderer = r;
-  return () => {
-    if (renderer === r) renderer = null;
-  };
-}
-
-export const twinRendererReady = () => renderer != null;
-
-/** Renders a camera position of the twin (null if the scene is not ready or the camera is unknown). */
-export function renderTwinCamera(cameraId: string, opts: { width: number; height: number } = { width: 640, height: 360 }) {
-  return renderer ? renderer(cameraId, opts) : Promise.resolve(null);
-}
 
 // ── Image store ───────────────────────────────────────────────────────────────
 

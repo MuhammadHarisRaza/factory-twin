@@ -1,14 +1,8 @@
 /**
  * Burnt-in labels drawn onto every image the feeds produce, so a copied or downloaded image stays
- * labelled: twin renders read "SIMULATED VIEW · <camera> · <plant time>", frames grabbed from a
- * configured stream read "CAMERA FRAME · <camera> · <local time>".
+ * labelled: frames grabbed from a configured stream read "CAMERA FRAME · <camera> · <local time>".
  */
-import { formatDay, formatClockSec, toMs } from '../../sim/time';
-
-export const simulatedStrip = (cameraId: string, plantMinute: number) => ({
-  left: `SIMULATED VIEW · ${cameraId} · ${formatDay(plantMinute)} ${formatClockSec(plantMinute)} plant time`,
-  right: 'Digital twin render — not a camera image',
-});
+import { toMs } from '../../sim/time';
 
 const pad = (n: number) => String(n).padStart(2, '0');
 /** Local wall-clock date-time, e.g. "2026-10-11 14:32:05". */

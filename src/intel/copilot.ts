@@ -2666,8 +2666,8 @@ function eventAnswer(c: Ctx, id: string, sub: EventSub): CopilotAnswer {
           ],
           simulated: [
             available.some((x) => x.kind === 'camera-snapshot' && x.provenance.origin === 'live-camera')
-              ? 'Camera frames marked “live camera” were grabbed from the configured stream; other camera views are rendered from the digital twin (not camera images).'
-              : 'Camera views are rendered from the digital twin (simulated view, not a camera image).',
+              ? 'Camera frames marked “live camera” were grabbed from the configured stream.'
+              : 'No camera image is available: no camera stream is configured or playing.',
           ],
           unknown: missing.map((u) => `Unavailable: ${u.title} — ${low1(u.reason)}.`),
           actions: [`Open ${ev.id} in Events & Reports to see the evidence and export the report.`],

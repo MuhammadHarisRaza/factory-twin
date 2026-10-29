@@ -23,14 +23,14 @@ function Snapshot({ x }: { x: ReportEvidence }) {
     <figure className="rp-fig rp-snap">
       <figcaption className="rp-fig-t">{x.title}</figcaption>
       {img ? (
-        <img src={img.dataUrl} width={img.width} height={img.height} alt={`${live ? 'Camera frame' : 'Digital-twin render'} of ${x.cameraId ? cameraName(x.cameraId) : 'the asset'} at ${plantClock(x.image?.frameTime ?? x.capturedAt)}`} />
+        <img src={img.dataUrl} width={img.width} height={img.height} alt={`Camera frame of ${x.cameraId ? cameraName(x.cameraId) : 'the asset'} at ${plantClock(x.image?.frameTime ?? x.capturedAt)}`} />
       ) : x.status === 'pending' ? (
-        <Unavailable pending reason="Capturing… rendering the digital-twin view of this camera position" />
+        <Unavailable pending reason="Capturing… waiting for a frame from the configured camera stream" />
       ) : (
         <Unavailable reason={missingReason(x, false) ?? 'Unavailable'} />
       )}
       <div className="rp-cap">
-        <span className={live ? 'rp-cap-live' : 'rp-cap-sim'}>{live ? `Camera frame · ${x.provenance.label}` : LABELS.simulatedFeed}</span>
+        <span className={live ? 'rp-cap-live' : 'rp-cap-sim'}>{live ? `Camera frame · ${x.provenance.label}` : LABELS.noCameraFrame}</span>
         <span>
           Frame time {plantTime(x.image?.frameTime ?? x.capturedAt)} · {x.originLabel}
           {x.cameraId ? ` · ${x.cameraId} ${cameraName(x.cameraId)}` : ''}

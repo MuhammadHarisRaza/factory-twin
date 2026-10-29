@@ -146,7 +146,7 @@ describe('every selectable asset and every vehicle', () => {
 });
 
 describe('feed: exactly one, in the configured order', () => {
-  it('kiln → its recording; packaging → its recording; a camera without recording → twin view; a utility → none or reference', () => {
+  it('kiln → its recording; packaging → its recording; a camera without stream or recording → reference clip; a utility → none', () => {
     const kiln = deriveEquipmentIntel(normal, 'H-KILN').feed;
     expect(kiln.kind).toBe('recording');
     if (kiln.kind === 'recording') {
@@ -162,8 +162,15 @@ describe('feed: exactly one, in the configured order', () => {
       if (f.kind === 'recording') expect(f.video.id).toBe('vid-packaging-camera-1');
     }
     const press = deriveEquipmentIntel(normal, 'E-PRS2').feed;
-    expect(press).toMatchObject({ kind: 'twin-view', cameraId: 'CAM-E1', badge: 'Twin view · simulated' });
-    expect(press.details.map((d) => d.value).join(' ')).toMatch(/rendered from the digital twin — not a camera image/i);
+    // A camera without a configured stream or recording: the client's reference clip of the process (never a twin render).
+    expect(press.kind).toBe('reference');
+    if (press.kind === 'reference') {
+      expect(press.video.id).toBe('vid-pressing-client-1');
+      expect(press.details.map((d) => d.value).join(' ')).toMatch(/comparable process — not this plant, not live/i);
+    }
+    // A camera without a stream and without footage of its process: no image, with how to configure one.
+    const sort = deriveEquipmentIntel(normal, 'I-SORT').feed;
+    if (sort.kind === 'none') expect(sort.reason).toMatch(/No stream is configured|no footage/i);
     expect(deriveEquipmentIntel(normal, 'A-COMP').feed.kind).toBe('none');
     // An asset without a camera or a recording: no footage (no public reference clips are registered).
     expect(deriveEquipmentIntel(normal, 'A-STK').feed.kind).toBe('none');

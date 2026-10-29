@@ -60,14 +60,13 @@ export type IntelSourceKind = 'simulated' | 'stale' | 'connected' | 'unavailable
  * The single camera / video of the panel, chosen in this order:
  *   1. live-stream  — a stream the user configured for the asset's camera (shown Live only while it plays);
  *   2. recording    — a client-provided camera recording for this asset (registry sourceType 'client-recording');
- *   3. twin-view    — the simulated camera view rendered from the digital twin for the asset's camera;
- *   4. reference    — the best public reference clip for the asset (registry);
- *   5. none         — no appropriate source: an explicit unavailable state.
+ *   3. reference    — the best reference clip for the asset (registry: footage provided by the client);
+ *   4. none         — no appropriate source: an explicit unavailable state (a camera without a
+ *                     configured stream says so; nothing is rendered from the twin in its place).
  */
 export type FeedChoice =
   | { kind: 'live-stream'; cameraId: string; badge: string; details: FeedDetail[] }
   | { kind: 'recording'; video: VideoRef; badge: string; details: FeedDetail[] }
-  | { kind: 'twin-view'; cameraId: string; badge: string; details: FeedDetail[] }
   | { kind: 'reference'; video: VideoRef; badge: string; details: FeedDetail[] }
   | { kind: 'none'; reason: string; badge: null; details: FeedDetail[] };
 

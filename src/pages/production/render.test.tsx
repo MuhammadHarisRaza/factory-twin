@@ -145,7 +145,7 @@ describe('Production render', () => {
         'Machines and conveyors',
         'Input → output',
         'Camera view',
-        'Simulated view rendered from the digital twin',
+        'An image is shown only when a stream is configured for the camera',
         'Reference video',
         'Stage events',
         'Production trend',

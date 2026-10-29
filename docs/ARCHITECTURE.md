@@ -181,7 +181,8 @@ and scenario log always yield the same events; ~400 events are already in the 7-
   stopped"). Consequence events link to their root (`consequenceOf`).
 - **Evidence** (`s.evidence`, by event id): state transitions and per-minute counter series frozen from the minute
   log, condition-signal series, inspection frames (illustrations of simulated records), vehicle timelines, metric
-  snapshots, and camera snapshots rendered from the digital twin (or grabbed from a configured live stream).
+  snapshots, and camera snapshots grabbed from a configured stream that was playing (otherwise unavailable, with the
+  reason — nothing is rendered from the twin in their place).
   Unavailable evidence is recorded with its reason, never fabricated.
 - **Impact** is accumulated minute by minute while the condition is active: asset-level loss vs typical rate, and
   the minutes / tiles the kiln (line constraint) was held up *because of this event* — the only loss that costs
@@ -198,7 +199,9 @@ and scenario log always yield the same events; ~400 events are already in the 7-
 
 `src/video/registry.ts` holds only the three client-provided camera recordings (`public/videos/`, sourceType
 `client-recording`) for the kiln-camera, packaging and yard-movement topics (`src/video/types.ts`); no YouTube or other
-third-party footage is used, and a context without a recording shows no video. The recordings are labelled *Recorded camera footage* with their camera
+third-party hosting is used. Four further clips provided by the client (raw-material preparation, spray drying,
+pressing, glazing) are labelled as reference footage of a comparable process — not this plant, not live. A context
+without a matching video shows none. The recordings are labelled *Recorded camera footage* with their camera
 and recording time, and always say
 they are recordings, not live, with overlays from the recording system rather than this demo's simulation.
 `<ContextVideo context={{ equipmentId, stage, topic }}/>` picks the clips for a context (`src/video/topics.ts`)
@@ -214,8 +217,8 @@ any other pause (a media key, the OS) counts as the viewer's. Viewers who set re
 or data saving, and browsers that refuse autoplay (a refused `play()`), get the poster with a play button instead; sound only plays for a clip started from that poster,
 one player at a time. A file that cannot be loaded, and slow loads, fall back to the poster with a link to the file. In the Factory
 Twin's subject panel (equipment, vehicle, stage) the video has no badge on the picture; its ⓘ (tooltip *Recorded
-footage — not a live feed* / *Reference footage — not this plant, not a live feed*) opens the source details. Camera views keep their badge
-(*Twin view · simulated*, the stream's state). The panel is wide by default (`src/ui/twin/panelWidth.ts`): 70 % of
+footage — not a live feed* / *Reference footage — not this plant, not a live feed*) opens the source details. A configured stream keeps its
+state badge; a camera without a stream shows *No camera image* and how to configure one. The panel is wide by default (`src/ui/twin/panelWidth.ts`): 70 % of
 the screen width (always leaving 200 px of the 3D view), the feed across its top, two columns of sections under it,
 the zone and live lists folded away, and the scene's view centred in the strip beside it (`Scene.tsx` ViewInset);
 its header button switches to the compact column, remembered per browser (showing the zone list from the rail
@@ -246,7 +249,7 @@ Views: the equipment panel (key figures, range-aware charts, searchable signal t
 
 Seven conveyors (`CONVEYORS`) are operational assets: a stopped conveyor cuts the transfer it carries (no input
 for the stages it feeds, no discharge for the ones feeding it), so starvation and blocking follow through the
-buffers. Ten camera positions (`CAMERAS`) cover the plant; each renders a simulated view from the twin.
+buffers. Ten camera positions (`CAMERAS`) cover the plant; a camera shows an image only when a stream is configured for it.
 Per-asset data-feed health (`s.feeds`) drives *Unknown — data stale* states and frozen signal values.
 
 See `INTEGRATION.md` for the path to real data.

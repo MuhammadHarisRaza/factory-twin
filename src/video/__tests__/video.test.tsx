@@ -137,7 +137,9 @@ describe('video registry', () => {
       } else {
         expect(v.sourceType).toBe('public-reference');
         expect(['Process reference video', 'Illustrative equipment footage']).toContain(v.label);
-        expect(v.sourceUrl).toMatch(/^https:\/\//);
+        expect(v.provider).toBe('client');
+        expect(v.embedUrl).toMatch(/^\/videos\/[\w-]+\.mp4$/);
+        expect(v.sourceUrl).toBe(v.embedUrl);
         if (v.embedUrl) expect(v.embedUrl).not.toMatch(/youtube|youtu\.be/i);
       }
       if (v.embed === 'not-allowed') expect(v.embedUrl).toBeNull();
@@ -155,8 +157,14 @@ describe('video registry', () => {
     expect(clipsFor({ stage: 'PACK' })[0].video.id).toBe('vid-packaging-camera-1');
     expect(clipsFor({ topic: 'yard-movement' })[0].video.id).toBe('vid-yard-camera-1');
     // Only the client's recordings are registered: no YouTube or other third-party footage.
-    expect(VIDEOS.map((v) => v.id)).toEqual(['vid-kiln-camera-1', 'vid-packaging-camera-1', 'vid-yard-camera-1']);
+    expect(VIDEOS.every((v) => v.provider === 'client')).toBe(true);
+    expect(VIDEOS.filter((v) => v.sourceType === 'client-recording').map((v) => v.id)).toEqual(['vid-kiln-camera-1', 'vid-packaging-camera-1', 'vid-yard-camera-1']);
     expect(clipsFor({ equipmentId: 'H-KILN' }).map((c) => c.topic)).toEqual(['kiln-camera']);
+    // The client's process clips lead their stages.
+    expect(clipsFor({ equipmentId: 'E-PRS2' })[0].video.id).toBe('vid-pressing-client-1');
+    expect(clipsFor({ stage: 'PREP' })[0].video.id).toBe('vid-raw-materials-client-1');
+    expect(clipsFor({ stage: 'SPRAY' })[0].video.id).toBe('vid-spray-drying-client-1');
+    expect(clipsFor({ stage: 'GLAZE' })[0].video.id).toBe('vid-glazing-client-1');
     for (const id of ['vid-kiln-camera-1', 'vid-packaging-camera-1', 'vid-yard-camera-1']) {
       const v = VIDEOS.find((x) => x.id === id)!;
       const html = renderToStaticMarkup(<VideoPlayer video={v} compact />);

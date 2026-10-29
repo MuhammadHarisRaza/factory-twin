@@ -2,7 +2,6 @@ import { describe, expect, it } from 'vitest';
 import type { Evidence } from '../../model/types';
 import { DEFAULT_START } from '../../sim/time';
 import { LIVE_PROVENANCE, createEvidenceCapturer, type CaptureDeps, type CaptureSim } from './capture';
-import { feedRenderSize, frameTimeOf, tagFrameTime } from './frames';
 import {
   HLS_REASON,
   RTSP_REASON,
@@ -17,7 +16,7 @@ import {
   urlSummary,
   type LiveState,
 } from './live';
-import { cameraStrip, localStamp, simulatedStrip, snapshotFileName, stripFontPx } from './overlay';
+import { cameraStrip, localStamp, snapshotFileName, stripFontPx } from './overlay';
 
 const env = { canPlayHls: false, pageHttps: false };
 
@@ -148,10 +147,7 @@ describe('stream states', () => {
 });
 
 describe('labels and sizes', () => {
-  it('burns the simulated label with camera id and plant time', () => {
-    const s = simulatedStrip('CAM-E1', DEFAULT_START + 12.5);
-    expect(s.left).toMatch(/^SIMULATED VIEW · CAM-E1 · Mon,? 12 Oct 10:42:30 plant time$/);
-    expect(s.right).toMatch(/not a camera image/);
+  it('burns the camera-frame label with camera id and local time', () => {
     expect(cameraStrip('CAM-E1', new Date(2026, 9, 11, 9, 5, 7)).left).toBe('CAMERA FRAME · CAM-E1 · 2026-10-11 09:05:07 local time');
     expect(localStamp(new Date(2026, 0, 2, 3, 4, 5))).toBe('2026-01-02 03:04:05');
     expect(stripFontPx(540)).toBe(23);
@@ -161,22 +157,6 @@ describe('labels and sizes', () => {
   it('names snapshot files by camera, origin and time', () => {
     expect(snapshotFileName('CAM-E1', 'simulated', { plantMinute: DEFAULT_START + 12.5 })).toBe('CAM-E1_simulated-view_20261012-104230.jpg');
     expect(snapshotFileName('CAM-K1', 'live', { date: new Date(2026, 9, 11, 14, 3, 9) })).toBe('CAM-K1_camera-frame_20261011-140309.jpg');
-  });
-
-  it('sizes feed renders to the media box aspect', () => {
-    expect(feedRenderSize(400, 225, 1)).toEqual({ width: 416, height: 234 });
-    expect(feedRenderSize(400, 225, 2)).toEqual({ width: 608, height: 342 });
-    expect(feedRenderSize(2000, 400, 2).width).toBe(960);
-    expect(feedRenderSize(0, 0, 1)).toEqual({ width: 640, height: 360 });
-    expect(feedRenderSize(100, 100, 1)).toEqual({ width: 320, height: 320 });
-  });
-
-  it('remembers the plant time of a render', () => {
-    const f = { dataUrl: 'x', width: 1, height: 1 };
-    expect(frameTimeOf(f)).toBeNull();
-    tagFrameTime(f, 123.5);
-    expect(frameTimeOf(f)).toBe(123.5);
-    expect(frameTimeOf(null)).toBeNull();
   });
 });
 
@@ -191,20 +171,17 @@ const snapEv = (id: string, cameraId?: string): Evidence => ({
   title: 'snap',
   capturedAt: 10,
   cameraId,
-  provenance: { origin: 'digital-twin-render', sourceId: cameraId ?? 'none', label: 'Rendered from the digital twin (simulated camera view)' },
+  provenance: { origin: 'camera-stream', sourceId: cameraId ?? 'none', label: 'Camera frame — captured only from a configured stream that is playing' },
   status: 'pending',
 });
 
-function harness(opts: { ready?: () => boolean; render?: (cam: string) => Promise<{ dataUrl: string; width: number; height: number } | null>; live?: string[] } = {}) {
-  let t = 0;
+function harness(opts: { live?: string[] } = {}) {
   const sims: { current: FakeSim } = { current: { id: 'A', minute: 100, evidence: [] } };
   const log: string[] = [];
   const images = new Map<string, string>();
   const deps: CaptureDeps<FakeSim> = {
     getSim: () => sims.current,
     pending: (s) => s.evidence.filter((x) => x.status === 'pending' && x.kind === 'camera-snapshot'),
-    rendererReady: opts.ready ?? (() => true),
-    renderTwin: opts.render ?? (async (cam) => ({ dataUrl: `twin:${cam}`, width: 960, height: 540 })),
     grabLive: (cam) => (opts.live?.includes(cam) ? { dataUrl: `live:${cam}`, width: 1280, height: 720 } : null),
     putImage: (k, img) => {
       images.set(k, img.dataUrl);
@@ -224,74 +201,32 @@ function harness(opts: { ready?: () => boolean; render?: (cam: string) => Promis
       }
       log.push(`unavailable ${id}`);
     },
-    now: () => t,
-    wait: async (ms) => {
-      t += ms;
-    },
   };
   return { sims, log, images, deps, capturer: createEvidenceCapturer(deps) };
 }
 
 describe('evidence capture', () => {
-  it('renders the twin view for pending snapshots, one at a time, keeping the twin provenance', async () => {
-    const h = harness();
-    h.sims.current.evidence.push(snapEv('EVD-1', 'CAM-E1'), snapEv('EVD-2', 'CAM-H1'), { ...snapEv('EVD-3', 'CAM-I1'), status: 'available' });
-    await h.capturer.pump();
-    expect(h.log).toEqual(['attach EVD-1 100', 'attach EVD-2 100']);
-    expect(h.images.get('EVD-1')).toBe('twin:CAM-E1');
-    const e1 = h.sims.current.evidence[0];
-    expect(e1.provenance.origin).toBe('digital-twin-render');
-    expect(e1.image).toEqual({ key: 'EVD-1', width: 960, height: 540, frameTime: 100 });
-  });
-
   it('uses a frame from a playing configured stream with live-camera provenance', async () => {
     const h = harness({ live: ['CAM-E1'] });
     h.sims.current.evidence.push(snapEv('EVD-1', 'CAM-E1'));
     await h.capturer.pump();
     expect(h.images.get('EVD-1')).toBe('live:CAM-E1');
     expect(h.sims.current.evidence[0].provenance).toEqual(LIVE_PROVENANCE('CAM-E1'));
+    expect(h.sims.current.evidence[0].image).toEqual({ key: 'EVD-1', width: 1280, height: 720, frameTime: 100 });
   });
 
-  it('marks the evidence unavailable when the twin is not ready within 10 s, or the render fails', async () => {
-    const notReady = harness({ ready: () => false });
-    notReady.sims.current.evidence.push(snapEv('EVD-1', 'CAM-E1'));
-    await notReady.capturer.pump();
-    expect(notReady.sims.current.evidence[0].status).toBe('unavailable');
-    expect(notReady.sims.current.evidence[0].unavailableReason).toMatch(/not ready .* 10 s/);
-
-    const failing = harness({ render: async () => Promise.reject(new Error('context lost')) });
-    failing.sims.current.evidence.push(snapEv('EVD-1', 'CAM-E1'), snapEv('EVD-2'));
-    await failing.capturer.pump();
-    expect(failing.sims.current.evidence[0].unavailableReason).toMatch(/context lost/);
-    expect(failing.sims.current.evidence[1].unavailableReason).toMatch(/No camera/);
-
-    const empty = harness({ render: async () => null });
-    empty.sims.current.evidence.push(snapEv('EVD-1', 'CAM-E1'));
-    await empty.capturer.pump();
-    expect(empty.sims.current.evidence[0].status).toBe('unavailable');
-  });
-
-  it('drops a render that finishes after a reset (evidence ids restart)', async () => {
-    let release: () => void = () => undefined;
-    const h = harness({
-      render: (cam) =>
-        new Promise((r) => {
-          release = () => r({ dataUrl: `twin:${cam}`, width: 960, height: 540 });
-        }),
-    });
-    h.sims.current.evidence.push(snapEv('EVD-1', 'CAM-E1'));
-    const run = h.capturer.pump();
-    await Promise.resolve();
-    // Reset: a new simulation whose evidence reuses the id, already resolved.
-    h.sims.current = { id: 'B', minute: 5, evidence: [{ ...snapEv('EVD-1', 'CAM-H1'), status: 'unavailable' }] };
-    release();
-    await run;
-    expect(h.images.has('EVD-1')).toBe(false);
-    expect(h.log).toEqual([]);
+  it('never renders a stand-in image: without a playing stream the evidence is unavailable, with the reason', async () => {
+    const h = harness();
+    h.sims.current.evidence.push(snapEv('EVD-1', 'CAM-E1'), snapEv('EVD-2'), { ...snapEv('EVD-3', 'CAM-I1'), status: 'available' });
+    await h.capturer.pump();
+    expect(h.log).toEqual(['unavailable EVD-1', 'unavailable EVD-2']);
+    expect(h.images.size).toBe(0);
+    expect(h.sims.current.evidence[0].unavailableReason).toMatch(/No camera stream was playing for CAM-E1/);
+    expect(h.sims.current.evidence[1].unavailableReason).toMatch(/No camera/);
   });
 
   it('coalesces calls while busy and picks up evidence that arrives meanwhile', async () => {
-    const h = harness();
+    const h = harness({ live: ['CAM-E1', 'CAM-G1'] });
     h.sims.current.evidence.push(snapEv('EVD-1', 'CAM-E1'));
     const a = h.capturer.pump();
     h.sims.current.evidence.push(snapEv('EVD-2', 'CAM-G1'));

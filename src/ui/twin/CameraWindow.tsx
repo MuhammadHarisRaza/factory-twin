@@ -13,7 +13,7 @@ import { useTwinUi } from './uiStore';
  * Small floating camera view over the scene, opened from the equipment workspace (Camera button or technical details).
  * It follows the selection: selecting another asset switches to the camera covering it (or closes
  * when none does); a followed vehicle switches camera as it moves between covered areas.
- * The feed itself (simulated twin render, or a configured stream that actually plays) is CameraFeed.
+ * The feed itself (a configured stream that actually plays, or a no-stream state) is CameraFeed.
  */
 export function CameraWindow() {
   const camera = useTwinUi((s) => s.camera);

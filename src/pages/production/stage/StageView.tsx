@@ -427,7 +427,7 @@ function EquipmentBlock({ row, onAsset }: { row: StageRow; onAsset: (id: string)
   );
 }
 
-// ── Simulated camera view ────────────────────────────────────────────────────
+// ── Camera ────────────────────────────────────────────────────
 
 function CameraBlock({ ms }: { ms: MonitoredStage }) {
   const [picked, setPicked] = useState(ms.cameras[0] ?? '');
@@ -435,7 +435,7 @@ function CameraBlock({ ms }: { ms: MonitoredStage }) {
   return (
     <Block
       title="Camera view"
-      subtitle="Simulated view rendered from the digital twin — no camera is connected"
+      subtitle="An image is shown only when a stream is configured for the camera — no camera is connected in this demo"
       actions={
         ms.cameras.length > 1 ? <Segmented label="Camera" value={cam} options={ms.cameras.map((id) => ({ value: id, label: id }))} onChange={setPicked} /> : undefined
       }

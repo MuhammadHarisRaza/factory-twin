@@ -214,7 +214,7 @@ export type EventReport = {
     sources: string[];
     unavailable: { title: string; reason: string }[];
     disclaimers: string[];
-    /** The camera evidence includes a frame grabbed from a configured camera stream (not a twin render). */
+    /** The camera evidence includes a frame grabbed from a configured camera stream. */
     liveCamera: boolean;
   };
 };
@@ -229,7 +229,7 @@ const TRIGGER_KIND: Record<OpEvent['trigger']['kind'], string> = {
 const ORIGIN_LABEL: Record<Evidence['provenance']['origin'], string> = {
   simulation: 'Simulated',
   scenario: 'Simulated (scenario)',
-  'digital-twin-render': 'Digital-twin render (simulated view)',
+  'camera-stream': 'Configured camera stream (a frame is captured only while one plays)',
   'live-camera': 'Live camera',
   user: 'User',
 };
@@ -294,8 +294,8 @@ export function buildEventReport(
   if (ev.trigger.signalId) sources.add(ev.trigger.signalId);
   for (const x of supporting) x.series?.forEach((sr) => sources.add(sr.id));
   const unavailable = evidence.filter((x) => x.status !== 'available').map((x) => ({ title: x.title, reason: x.status === 'pending' ? 'Being captured' : (x.unavailableReason ?? 'Unavailable') }));
-  if (!visual.some((x) => x.kind === 'video-ref')) unavailable.push({ title: 'Video segment', reason: 'No video recording (NVR) is integrated — simulated feeds are rendered live, not recorded' });
-  // A frame grabbed from a configured camera stream must not be described as a twin render.
+  if (!visual.some((x) => x.kind === 'video-ref')) unavailable.push({ title: 'Video segment', reason: 'No video recording (NVR) is integrated' });
+  // Whether a frame grabbed from a configured camera stream is included.
   const liveCamera = visual.some((x) => x.kind === 'camera-snapshot' && x.provenance.origin === 'live-camera');
 
   return {
@@ -350,12 +350,12 @@ export function buildEventReport(
       disclaimers: liveCamera
         ? [
             'wAI Manufacturing Digital Twin — demonstration. No PLC, SCADA, sensor, vehicle tracking or language model is connected.',
-            'Camera evidence includes a frame from a configured stream (labelled on the image); other camera views are digital-twin renders. Inspection frames are illustrations of simulated records.',
+            'Camera evidence includes a frame from a configured stream (labelled on the image). Inspection frames are illustrations of simulated records.',
             'Financial figures are estimates from the stated assumptions, not verified business losses.',
           ]
         : [
             'wAI Manufacturing Digital Twin — demonstration. No PLC, SCADA, camera, sensor, vehicle tracking or language model is connected.',
-            'Camera views are rendered from the digital twin and labelled as such; inspection frames are illustrations of simulated records.',
+            'No camera image is included: no camera stream was playing. Inspection frames are illustrations of simulated records.',
             'Financial figures are estimates from the stated assumptions, not verified business losses.',
           ],
       liveCamera,

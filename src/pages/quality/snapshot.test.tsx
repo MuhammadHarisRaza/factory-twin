@@ -29,7 +29,7 @@ const snap = (over: Partial<Evidence>): Evidence => ({
   title: 'CAM-04 · Sorting & inspection',
   capturedAt: 100,
   cameraId: 'CAM-04',
-  provenance: { origin: 'digital-twin-render', sourceId: 'CAM-04', label: 'Rendered from the digital twin (simulated camera view)' },
+  provenance: { origin: 'camera-stream', sourceId: 'CAM-04', label: 'Camera frame — captured only from a configured stream that is playing' },
   status: 'available',
   image: { key: 'EVD-1', width: 4, height: 3, frameTime: 100 },
   ...over,
@@ -43,16 +43,8 @@ describe('quality event camera snapshot', () => {
     expect(html).not.toMatch(/digital twin|digital-twin/i);
   });
 
-  it('keeps the twin render labelled as simulated and never as a camera image', () => {
-    const html = renderToStaticMarkup(<SnapshotEvidence x={snap({})} img={IMG} />);
-    expect(html).toContain('alt="Digital-twin render of');
-    expect(html).toContain('Simulated feed · rendered from the digital twin — not a camera image');
-    expect(html).not.toContain('Camera frame');
-  });
-
   it('explains a missing image by its provenance, pending and unavailable states', () => {
     expect(renderToStaticMarkup(<SnapshotEvidence x={snap({ provenance: LIVE_PROVENANCE('CAM-04') })} img={null} />)).toContain('Camera frame not kept in this browser session');
-    expect(renderToStaticMarkup(<SnapshotEvidence x={snap({})} img={null} />)).toContain('Rendered view not kept in this browser session');
     expect(renderToStaticMarkup(<SnapshotEvidence x={snap({ status: 'pending', image: undefined })} img={null} />)).toContain('Being captured');
     expect(renderToStaticMarkup(<SnapshotEvidence x={snap({ status: 'unavailable', image: undefined, unavailableReason: 'No camera position covers I-QC' })} img={null} />)).toContain(
       'Unavailable — No camera position covers I-QC',

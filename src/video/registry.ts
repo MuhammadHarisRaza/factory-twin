@@ -1,9 +1,11 @@
 /**
  * Videos shown in the product (contract: src/video/types.ts) and the context lookup.
  *
- * Only the three camera recordings provided by the client (kiln, packaging line, site entrance),
- * served from this app's own files in public/videos/ and labelled as recordings. No YouTube or other
- * third-party footage is used; a context without a matching recording shows no video.
+ * Only videos provided by the client, served from this app's own files in public/videos/: three
+ * camera recordings (kiln, packaging line, site entrance), labelled as recordings, and four clips of
+ * comparable processes (raw-material preparation, spray drying, pressing, glazing), labelled as
+ * reference footage — not this plant, not live. No YouTube or other third-party hosting is used; a
+ * context without a matching video shows none.
  */
 import type { VideoContext, VideoRef } from './types';
 
@@ -82,6 +84,96 @@ export const VIDEOS: VideoRef[] = [
     label: 'Recorded camera footage',
     recording: { camera: null, recordedAt: null, overlays: 'vehicle boxes' },
     verified: 'File checked 2026-10-12: plays in the browser (1496×792, 84 s); the recording shows no camera name or time',
+  },
+  // ── Process reference footage provided by the client (this app's own files, public/videos/) ──
+  // Footage of comparable processes, not of this (representative) plant and not live.
+  {
+    id: 'vid-raw-materials-client-1',
+    title: 'Raw-material preparation area',
+    description:
+      'Footage of a raw-material preparation area: a ball mill and the clay and slip handling around it.',
+    topic: 'raw-materials',
+    stages: ['PREP'],
+    equipment: ['B-BAYS', 'B-FEED', 'B-LOAD'],
+    equipmentTypes: ['ball mill'],
+    useCase: 'process',
+    provider: 'client',
+    publisher: 'Provided by the client',
+    sourceUrl: `${FILES}raw-material-preparation.mp4`,
+    embedUrl: `${FILES}raw-material-preparation.mp4`,
+    poster: null,
+    posterTime: 2,
+    sourceType: 'public-reference',
+    licence: 'Provided by the client for use in this demonstration',
+    embed: 'allowed',
+    label: 'Process reference video',
+    verified: 'File checked 2026-10-29: plays in the browser (360×640, 25 s); frames show a ball mill and raw-material handling',
+  },
+  {
+    id: 'vid-spray-drying-client-1',
+    title: 'Spray drying (as supplied)',
+    description:
+      'Footage supplied as spray-drying footage; the frames show large tiles moving on a belt conveyor rather than the spray dryer itself.',
+    topic: 'spray-drying',
+    stages: ['SPRAY'],
+    equipment: ['D-TWR', 'D-HAG'],
+    equipmentTypes: [],
+    useCase: 'process',
+    provider: 'client',
+    publisher: 'Provided by the client',
+    sourceUrl: `${FILES}spray-drying.mp4`,
+    embedUrl: `${FILES}spray-drying.mp4`,
+    poster: null,
+    posterTime: 3,
+    sourceType: 'public-reference',
+    licence: 'Provided by the client for use in this demonstration',
+    embed: 'allowed',
+    label: 'Process reference video',
+    verified: 'File checked 2026-10-29: plays in the browser (360×640, 14 s); frames show tiles on a belt conveyor, not the dryer tower',
+  },
+  {
+    id: 'vid-pressing-client-1',
+    title: 'Hydraulic tile press',
+    description:
+      'Footage of a hydraulic tile press with pressed tiles leaving it on a roller conveyor.',
+    topic: 'pressing',
+    stages: ['PRESS'],
+    equipment: ['E-PRS1', 'E-PRS2', 'E-PRS3'],
+    equipmentTypes: ['hydraulic press'],
+    useCase: 'equipment',
+    provider: 'client',
+    publisher: 'Provided by the client',
+    sourceUrl: `${FILES}press-machine.mp4`,
+    embedUrl: `${FILES}press-machine.mp4`,
+    poster: null,
+    posterTime: 4,
+    sourceType: 'public-reference',
+    licence: 'Provided by the client for use in this demonstration',
+    embed: 'allowed',
+    label: 'Illustrative equipment footage',
+    verified: 'File checked 2026-10-29: plays in the browser (720×1280, 15 s); frames show a tile press and its outfeed rollers',
+  },
+  {
+    id: 'vid-glazing-client-1',
+    title: 'Glaze line',
+    description:
+      'Footage of a glaze line: tiles travelling on belt conveyors through the glazing stations, with operators at the line.',
+    topic: 'glazing',
+    stages: ['GLAZE'],
+    equipment: ['G-LINE', 'G-PREP', 'CV-GLZ'],
+    equipmentTypes: ['glaze line'],
+    useCase: 'process',
+    provider: 'client',
+    publisher: 'Provided by the client',
+    sourceUrl: `${FILES}glaze-line.mp4`,
+    embedUrl: `${FILES}glaze-line.mp4`,
+    poster: null,
+    posterTime: 1,
+    sourceType: 'public-reference',
+    licence: 'Provided by the client for use in this demonstration',
+    embed: 'allowed',
+    label: 'Process reference video',
+    verified: 'File checked 2026-10-29: plays in the browser (720×1280, 15 s); frames show a glaze line with tiles on conveyors',
   },
 ];
 

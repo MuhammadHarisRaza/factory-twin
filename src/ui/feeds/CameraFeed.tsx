@@ -3,11 +3,7 @@ import { Camera, CirclePlay, LoaderCircle, RefreshCw, VideoOff, WifiOff, type Lu
 import { useApp, type CameraSource } from '../../app/store';
 import { CAMERA_BY_ID, MONITORED_STAGE_BY_ID, STAGE_BY_ID } from '../../model/plant';
 import type { CameraDef, MonitoredStageId, StageId } from '../../model/types';
-import { simClock } from '../../sim/store';
-import { formatClockSec, formatDay } from '../../sim/time';
-import { renderTwinCamera, twinRendererReady, type TwinRender } from '../../twin/bridge';
-import { FEED_STATUS, FeedStatusBadge, StatusBadge, type Tone } from '../kit/Status';
-import { feedRenderSize, frameTimeOf } from './frames';
+import { FEED_STATUS, StatusBadge, type Tone } from '../kit/Status';
 import {
   RESOLVED_LABEL,
   STALE_DETAIL,
@@ -27,8 +23,8 @@ import { SnapshotViewer, type Snapshot } from './SnapshotViewer';
 import './feeds.css';
 
 /**
- * Camera feed. Without a configured stream it shows the camera position's view rendered from the
- * digital twin, refreshed about every 2 s while on screen and labelled as simulated. With a stream
+ * Camera feed. Without a configured stream it says so — no image is drawn (in particular no render of
+ * the 3D twin standing in for a camera). With a stream
  * configured (Assets & Data → Camera sources) it plays the stream and shows "Live" only once the
  * media element actually plays and new frames can be seen arriving; otherwise connecting / connection
  * error / stale / unavailable, or "Playing · freshness unknown" when a frozen image could not be told
@@ -43,10 +39,7 @@ export type CameraFeedProps = {
   style?: CSSProperties;
 };
 
-const REFRESH_MS = 2000;
 const CONNECT_TIMEOUT_MS = 20_000;
-const SNAPSHOT_SIZE = { width: 960, height: 540 };
-export const SIMULATED_LABEL = 'Simulated feed · rendered from the digital twin';
 
 /** Badge of a configured stream's state ("Live" only while it actually plays). */
 export const LIVE_BADGE: Record<LiveState, { tone: Tone; icon: LucideIcon; label: string }> = {
@@ -74,29 +67,6 @@ function mediaErrorText(el: HTMLVideoElement | HTMLImageElement | null) {
   if (code === 3) return 'The stream could not be decoded';
   if (code === 4) return 'The stream could not be opened — unreachable, or a format this browser cannot play';
   return 'The stream could not be loaded';
-}
-
-/** On screen (IntersectionObserver) and the document visible. */
-function useOnScreen(ref: RefObject<HTMLElement | null>) {
-  const [inView, setInView] = useState(false);
-  const [docVisible, setDocVisible] = useState(() => typeof document === 'undefined' || !document.hidden);
-  useEffect(() => {
-    const el = ref.current;
-    if (!el) return;
-    if (typeof IntersectionObserver === 'undefined') {
-      setInView(true);
-      return;
-    }
-    const io = new IntersectionObserver((entries) => setInView(entries.some((e) => e.isIntersecting)), { threshold: 0 });
-    io.observe(el);
-    return () => io.disconnect();
-  }, [ref]);
-  useEffect(() => {
-    const on = () => setDocVisible(!document.hidden);
-    document.addEventListener('visibilitychange', on);
-    return () => document.removeEventListener('visibilitychange', on);
-  }, []);
-  return inView && docVisible;
 }
 
 function Msg({ icon: Icon, title, text, overlay, children }: { icon: LucideIcon; title: string; text?: ReactNode; overlay?: boolean; children?: ReactNode }) {
@@ -190,109 +160,21 @@ function SnapshotButton({ onClick, disabled, busy, compact, title }: { onClick: 
   );
 }
 
-// ── Simulated feed (twin render) ───────────────────────────────────────────────
+// ── No stream ──────────────────────────────────────────────────────────────────
 
-function SimulatedFeed({
-  cam,
-  compact,
-  mediaStyle,
-  onSnapshot,
-  streamConfigured,
-  onBackToStream,
-}: {
-  cam: CameraDef;
-  compact: boolean;
-  mediaStyle: CSSProperties;
-  onSnapshot: (s: Snapshot) => void;
-  streamConfigured: boolean;
-  onBackToStream: () => void;
-}) {
-  const mediaRef = useRef<HTMLDivElement>(null);
-  const onScreen = useOnScreen(mediaRef);
-  const [frame, setFrame] = useState<TwinRender | null>(null);
-  const [phase, setPhase] = useState<'waiting' | 'ok' | 'none' | 'failed'>('waiting');
-  const [busy, setBusy] = useState(false);
-  const [note, setNote] = useState<string | null>(null);
-
-  useEffect(() => {
-    if (!onScreen) return;
-    let cancelled = false;
-    let timer: ReturnType<typeof setTimeout> | undefined;
-    const tick = async () => {
-      if (cancelled) return;
-      if (!twinRendererReady()) {
-        timer = setTimeout(tick, 1000);
-        return;
-      }
-      const el = mediaRef.current;
-      try {
-        const img = await renderTwinCamera(cam.id, feedRenderSize(el?.clientWidth ?? 0, el?.clientHeight ?? 0, window.devicePixelRatio));
-        if (cancelled) return;
-        if (img) {
-          setFrame(img);
-          setPhase('ok');
-        } else setPhase(twinRendererReady() ? 'none' : 'waiting');
-      } catch {
-        if (!cancelled) setPhase('failed');
-      }
-      if (!cancelled) timer = setTimeout(tick, REFRESH_MS);
-    };
-    void tick();
-    return () => {
-      cancelled = true;
-      if (timer) clearTimeout(timer);
-    };
-  }, [onScreen, cam.id]);
-
-  const snapshot = async () => {
-    setNote(null);
-    setBusy(true);
-    try {
-      const img = await renderTwinCamera(cam.id, SNAPSHOT_SIZE);
-      if (img) onSnapshot({ cameraId: cam.id, origin: 'simulated', frame: img, plantMinute: frameTimeOf(img) ?? simClock.t });
-      else setNote('The 3D twin is not ready to render yet — try again in a moment.');
-    } catch {
-      setNote('The twin view could not be rendered.');
-    } finally {
-      setBusy(false);
-    }
-  };
-
-  const t = frameTimeOf(frame);
-  const time = t == null ? null : compact ? formatClockSec(t) : `${formatDay(t)} ${formatClockSec(t)}`;
-  const media =
-    frame && phase !== 'none' ? (
-      <img className="feed-img" src={frame.dataUrl} alt={`Simulated view of ${cam.id}, rendered from the digital twin`} draggable={false} />
-    ) : phase === 'none' ? (
-      <Msg icon={VideoOff} title="No simulated view" text="No virtual camera position is defined for this camera." />
-    ) : phase === 'failed' ? (
-      <Msg icon={VideoOff} title="The twin view could not be rendered" text="It is retried every few seconds." />
-    ) : (
-      <Msg icon={LoaderCircle} title="Waiting for the 3D twin…" text="The view is rendered from the digital twin once the scene has loaded." />
-    );
-
+function NoStreamFeed({ cam, compact, mediaStyle }: { cam: CameraDef; compact: boolean; mediaStyle: CSSProperties }) {
   return (
     <FeedFrame
       cam={cam}
       compact={compact}
-      badge={<FeedStatusBadge status="simulated" />}
-      time={time}
-      timeTitle="Plant time of the last render"
-      mediaRef={mediaRef}
+      badge={<StatusBadge {...FEED_STATUS.unavailable} label="No stream" />}
+      time={null}
+      timeTitle=""
       mediaStyle={mediaStyle}
-      media={media}
-      label={<span title="Simulated camera view: the digital twin rendered from this camera position — not a camera image">{SIMULATED_LABEL}</span>}
-      actions={
-        <>
-          {streamConfigured && (
-            <button className="btn ghost sm feed-back" onClick={onBackToStream} title="Show the configured stream again">
-              {compact ? 'Stream' : 'Back to stream'}
-            </button>
-          )}
-          <SnapshotButton onClick={snapshot} busy={busy} compact={compact} title="Snapshot of the simulated view (opens a viewer with download)" />
-        </>
-      }
-      note={note ?? (streamConfigured ? 'A stream is configured for this camera but is not playing — showing the simulated view.' : null)}
+      media={<Msg icon={VideoOff} title="No camera stream configured" text="Configure a stream for this camera under Technical details › Cameras." />}
+      label="No camera image"
+      actions={null}
+      note={null}
     />
   );
 }
@@ -305,14 +187,12 @@ function LiveFeed({
   compact,
   mediaStyle,
   onSnapshot,
-  onShowSimulated,
 }: {
   cam: CameraDef;
   source: CameraSource;
   compact: boolean;
   mediaStyle: CSSProperties;
   onSnapshot: (s: Snapshot) => void;
-  onShowSimulated: () => void;
 }) {
   const plan = useMemo(() => planStream(source, browserEnv()), [source]);
   const kind = plan.ok ? plan.kind : null;
@@ -441,11 +321,7 @@ function LiveFeed({
   const alt = `Configured camera stream of ${cam.id}`;
   const playing = isPlaying(state);
   const media = !plan.ok ? (
-    <Msg icon={VideoOff} title={plan.reason} text={plan.detail}>
-      <button className="btn sm" onClick={onShowSimulated}>
-        Show simulated view
-      </button>
-    </Msg>
+    <Msg icon={VideoOff} title={plan.reason} text={plan.detail} />
   ) : (
     <>
       {kind === 'mjpeg' ? (
@@ -499,9 +375,6 @@ function LiveFeed({
           <button className="btn sm" onClick={retry}>
             <RefreshCw size={12} aria-hidden /> Retry
           </button>
-          <button className="btn sm ghost" onClick={onShowSimulated}>
-            Show simulated view
-          </button>
         </Msg>
       )}
       {state === 'stale' && <div className="feed-stale">Stale — no new frame for more than 10 s</div>}
@@ -552,10 +425,8 @@ function LiveFeed({
 export function CameraFeed({ cameraId, height, compact = false, style }: CameraFeedProps) {
   const cam = CAMERA_BY_ID[cameraId];
   const source = useApp((s) => s.cameraSources[cameraId]);
-  const [preferSimulated, setPreferSimulated] = useState(false);
   const [snap, setSnap] = useState<Snapshot | null>(null);
   const sourceKey = source ? `${source.kind}|${source.url}` : '';
-  useEffect(() => setPreferSimulated(false), [sourceKey]);
   const closeSnap = useCallback(() => setSnap(null), []);
 
   const mediaStyle: CSSProperties = height != null ? { height } : { aspectRatio: '16 / 9' };
@@ -570,25 +441,10 @@ export function CameraFeed({ cameraId, height, compact = false, style }: CameraF
 
   return (
     <div className={`feed ${compact ? 'compact' : ''}`} style={style} data-camera={cam.id}>
-      {source && !preferSimulated ? (
-        <LiveFeed
-          key={sourceKey}
-          cam={cam}
-          source={source}
-          compact={compact}
-          mediaStyle={mediaStyle}
-          onSnapshot={setSnap}
-          onShowSimulated={() => setPreferSimulated(true)}
-        />
+      {source ? (
+        <LiveFeed key={sourceKey} cam={cam} source={source} compact={compact} mediaStyle={mediaStyle} onSnapshot={setSnap} />
       ) : (
-        <SimulatedFeed
-          cam={cam}
-          compact={compact}
-          mediaStyle={mediaStyle}
-          onSnapshot={setSnap}
-          streamConfigured={!!source}
-          onBackToStream={() => setPreferSimulated(false)}
-        />
+        <NoStreamFeed cam={cam} compact={compact} mediaStyle={mediaStyle} />
       )}
       {snap && <SnapshotViewer snap={snap} onClose={closeSnap} />}
     </div>

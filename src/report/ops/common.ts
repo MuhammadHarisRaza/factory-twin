@@ -207,7 +207,7 @@ export function evidenceItems(s: SimState, events: OpEvent[], kinds: ReportEvide
       if (x.kind === 'camera-snapshot' && !x.image) continue;
       const caption: string[] = [`${ev.id} · ${ev.title}`];
       if (x.kind === 'camera-snapshot') {
-        caption.push(x.provenance.origin === 'live-camera' ? `Camera frame · ${x.provenance.label}` : LABELS.simulatedFeed);
+        caption.push(x.provenance.origin === 'live-camera' ? `Camera frame · ${x.provenance.label}` : LABELS.noCameraFrame);
         caption.push(`Frame time ${plantTime(x.image?.frameTime ?? x.capturedAt)}${x.cameraId ? ` · ${x.cameraId} ${cameraName(x.cameraId)}` : ''}`);
       } else if (rec) {
         caption.push(`${rec.defect ? DEFECTS[rec.defect].label : 'No defect'}${rec.confidence != null ? ` · ${Math.round(rec.confidence * 100)} % ${LABELS.simulatedConfidence}` : ''} · ${rec.stationId} · ${plantClock(rec.time)}`);
@@ -311,15 +311,15 @@ export function reportFileName(type: OpsReportType, scope: ReportScope, period: 
 }
 
 export const OPS_DISCLAIMER =
-  'Demonstration with simulated data of a representative plant — not plant results. Figures come from the simulation, not from plant systems; camera views are digital-twin renders, inspection frames are illustrations of simulated records, financial figures are estimates from the stated assumptions.';
+  'Demonstration with simulated data of a representative plant — not plant results. Figures come from the simulation, not from plant systems; no camera image is included, inspection frames are illustrations of simulated records, financial figures are estimates from the stated assumptions.';
 /** Footer of an operational report whose evidence includes a frame grabbed from a configured camera stream. */
 export const OPS_DISCLAIMER_LIVE_CAMERA =
-  'Demonstration with simulated data of a representative plant — not plant results. Figures come from the simulation, not from plant systems; camera evidence includes a frame from a configured camera stream (labelled as a camera frame), other camera views are digital-twin renders, inspection frames illustrate simulated records, financial figures are estimates.';
+  'Demonstration with simulated data of a representative plant — not plant results. Figures come from the simulation, not from plant systems; camera evidence includes a frame from a configured camera stream (labelled as a camera frame), inspection frames illustrate simulated records, financial figures are estimates.';
 
 /** The evidence figures a report includes (every evidence block of every section). */
 export const reportEvidence = (sections: ReportSection[]): ReportEvidenceItem[] => sections.flatMap((sec) => sec.blocks.flatMap((b) => (b.kind === 'evidence' ? b.items : [])));
 
-/** Whether the report includes a frame of a configured camera stream (never to be called a twin render). */
+/** Whether the report includes a frame of a configured camera stream. */
 export const reportHasLiveCameraFrame = (sections: ReportSection[]) => hasLiveCameraFrame(reportEvidence(sections));
 
 /** Footer disclaimer that matches the provenance of the evidence the report actually includes. */

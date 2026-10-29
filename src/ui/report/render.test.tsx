@@ -73,7 +73,7 @@ describe('event report view', () => {
     const live = sim.events.find((e) => e.type === 'conveyor-stop' && !e.historical)!;
     const t = text(render(<EventReportView eventId={live.id} />));
     expect(t).toContain('Capturing…');
-    expect(t).toContain('Simulated feed · rendered from the digital twin');
+    expect(t).toContain('No camera frame (no stream was playing)');
     expect(t).toContain('Not available — No video recording (NVR) is integrated');
     const hist = sim.events.find((e) => e.historical && e.category === 'production')!;
     expect(text(render(<EventReportView eventId={hist.id} />))).toContain('Occurred before this demo session');
@@ -130,14 +130,7 @@ describe('operational report preview: camera evidence wording follows its proven
     expect(reportEvidence(live.sections).some((x) => x.evidenceId === snap.id)).toBe(true);
     const html = render(<OpsReportView report={live} />);
     expect(html).toContain(`alt="Camera frame from the configured camera stream, captured with ${stop.id}"`);
-    expect(html).not.toContain(`alt="Digital-twin render captured with ${stop.id}"`);
     expect(text(html)).toContain('camera evidence includes a frame from a configured camera stream');
 
-    attachEvidenceImage(sim, snap.id, { key: snap.id, width: 1, height: 1, frameTime: sim.minute }, { origin: 'digital-twin-render', sourceId: snap.cameraId ?? 'CAM-H1', label: 'Rendered from the digital twin' });
-    useSim.setState({ version: sim.version });
-    const twin = buildOpsReport(sim, 'shift', { period: 'shift' });
-    const html2 = render(<OpsReportView report={twin} />);
-    expect(html2).toContain(`alt="Digital-twin render captured with ${stop.id}"`);
-    expect(text(html2)).toContain('camera views are digital-twin renders');
   });
 });

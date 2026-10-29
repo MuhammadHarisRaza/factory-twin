@@ -45,8 +45,8 @@ metrics layer, the reports and the UI do not change. Counting points per stage a
 
 ## Cameras
 
-Each camera position (`CAMERAS` in `src/model/plant.ts`) has a **simulated feed rendered from the digital twin**,
-burnt-in labelled *SIMULATED VIEW*. A real stream can be configured per camera in the Factory Twin (select the
+A camera position (`CAMERAS` in `src/model/plant.ts`) shows **no image** until a stream is configured for it — no
+view is rendered from the digital twin in its place. A real stream can be configured per camera in the Factory Twin (select the
 equipment → *Technical details* → *Cameras* → *Configure a stream*); it is used only if the browser can play it:
 
 - Browsers cannot open **RTSP / ONVIF** streams. Use a gateway that restreams to **HLS** (only where the browser
@@ -56,8 +56,8 @@ equipment → *Technical details* → *Cameras* → *Configure a stream*); it is
   connection error.
 - Event snapshots from a real stream need the gateway to allow **CORS** (`Access-Control-Allow-Origin` for this
   page). Without it the stream may still play, but the browser does not let the app read its frames: the event
-  evidence then falls back to the labelled digital-twin render (provenance *Rendered from the digital twin
-  (simulated camera view)*), and the evidence does not record that the stream was blocked. A manual snapshot
+  evidence is then marked unavailable (no camera frame), and the evidence does not record that the stream was
+  blocked. A manual snapshot
   from the feed reports the cross-origin block. Without CORS the app also cannot check an MJPEG / JPEG stream's pixels for new frames, so
   it is not shown as *Live* unless freshness can be confirmed another way.
 - Video segments linked to events need an **NVR / VMS** integration (segment URLs by camera and time); not part
@@ -66,7 +66,8 @@ equipment → *Technical details* → *Cameras* → *Configure a stream*); it is
 ## Reference videos and client recordings
 
 The contextual videos (`src/video/registry.ts`) are not cameras of this demo. No YouTube or other third-party footage
-is used: the only videos are three camera recordings provided by the client
+is used: the videos are files provided by the client — four reference clips of comparable processes (raw-material
+preparation, spray drying, pressing, glazing; labelled not this plant, not live) and three camera recordings
 (a tile-counting camera at a kiln roller line, a counting camera over the packaging line, a site-entrance camera with
 vehicle detection), served from `public/videos/` for the kiln, packaging and yard topics. Each loads only once its
 player is on screen, where it starts by itself muted and looping (reduced motion, data saving or a browser that refuses

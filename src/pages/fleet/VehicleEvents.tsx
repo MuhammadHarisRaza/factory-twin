@@ -312,16 +312,14 @@ function EventFocus({ id, auto, clock, onSelectVehicle }: { id: string; auto: bo
         ))}
         {d.snap && (
           <div className="fv-ev-snap">
-            {d.snap.status === 'available' && d.snapImg ? <img src={d.snapImg.dataUrl} alt={`${d.snap.title} — rendered from the digital twin`} /> : null}
+            {d.snap.status === 'available' && d.snapImg ? <img src={d.snapImg.dataUrl} alt={`${d.snap.title} — camera frame`} /> : null}
             <span>
               <b>{d.snap.title}</b>
               <span className="dim">
                 {d.snap.status === 'available'
                   ? d.snapImg
-                    ? d.snap.provenance.origin === 'live-camera'
-                      ? ` · ${d.snap.provenance.label}`
-                      : ' · Simulated feed · rendered from the digital twin — not a camera image'
-                    : ' · Rendered view not kept in this browser session'
+                    ? ` · ${d.snap.provenance.label}`
+                    : ' · Camera frame not kept in this browser session'
                   : d.snap.status === 'pending'
                     ? ' · Being captured'
                     : ` · Unavailable — ${d.snap.unavailableReason ?? 'no reason recorded'}`}

@@ -27,7 +27,6 @@ import { Kiln } from './zones/Kiln';
 import { Packaging, Sorting } from './zones/SortingPackaging';
 import { Warehouse } from './zones/Warehouse';
 import { Maintenance } from './zones/Maintenance';
-import { CctvRenderer } from './cctv/CctvRenderer';
 import { sceneTabIndex, useSceneEmbedded, wheelAction } from './embedded';
 import { setPinOpacity } from './status/pins';
 
@@ -494,7 +493,6 @@ export default function Scene({ active = true }: { active?: boolean }) {
       <CameraRig />
       <ReadySignal />
       <DevHandles />
-      <CctvRenderer />
       {highQuality && <Effects />}
     </Canvas>
   );

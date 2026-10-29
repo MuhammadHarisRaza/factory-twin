@@ -93,19 +93,19 @@ export type EventPdfContext = {
 };
 
 export const PRODUCT_NAME = 'wAI Manufacturing Digital Twin';
-/** Footer of an event report whose camera evidence (if any) is rendered from the digital twin. */
+/** Footer of an event report without a camera frame. */
 export const FOOTER_DISCLAIMER =
-  'Demonstration with simulated data of a representative plant — not plant results. Camera views are digital-twin renders, inspection frames are illustrations of simulated records, financial figures are estimates from the stated assumptions.';
+  'Demonstration with simulated data of a representative plant — not plant results. No camera image is included; inspection frames are illustrations of simulated records, financial figures are estimates from the stated assumptions.';
 /** Footer of an event report whose camera evidence includes a frame grabbed from a configured camera stream. */
 export const FOOTER_DISCLAIMER_LIVE_CAMERA =
-  'Demonstration with simulated data of a representative plant — not plant results. Camera evidence includes a frame from a configured camera stream (labelled as a camera frame); other camera views are digital-twin renders, inspection frames are illustrations of simulated records, financial figures are estimates from the stated assumptions.';
+  'Demonstration with simulated data of a representative plant — not plant results. Camera evidence includes a frame from a configured camera stream (labelled as a camera frame); inspection frames are illustrations of simulated records, financial figures are estimates from the stated assumptions.';
 /** Footer of a stage shift summary: it shows no camera image, and no camera feeds its figures. */
 export const STAGE_FOOTER_DISCLAIMER =
   'Demonstration with simulated data of a representative plant — not plant results. The stage figures come from the simulation, not from cameras or plant systems; financial figures are estimates from the stated assumptions.';
 export const BAND_NOTE = 'Demonstration · no live plant data';
 export const BAND_NOTE_LIVE_CAMERA = 'Demonstration · simulated plant data + camera frame';
 
-/** Whether the evidence includes a frame grabbed from a configured camera stream (not a twin render). */
+/** Whether the evidence includes a frame grabbed from a configured camera stream. */
 export const hasLiveCameraFrame = (evidence: Pick<Evidence, 'kind' | 'provenance'>[]) =>
   evidence.some((x) => x.kind === 'camera-snapshot' && x.provenance.origin === 'live-camera');
 
@@ -155,7 +155,7 @@ function snapshotFigure(x: ReportEvidence, img: PdfImage | null | undefined): Pd
     image: img ?? null,
     missing: missingReason(x, !!img) ?? undefined,
     caption: [
-      live ? `Camera frame · ${x.provenance.label}` : LABELS.simulatedFeed,
+      live ? `Camera frame · ${x.provenance.label}` : LABELS.noCameraFrame,
       `Frame time ${plantTime(x.image?.frameTime ?? x.capturedAt)} (plant time)`,
       `Provenance: ${x.originLabel} — ${x.provenance.label}${x.cameraId ? ` · ${x.cameraId} ${cameraName(x.cameraId)}` : ''}`,
     ],
@@ -462,7 +462,7 @@ export function eventPdfModel(r: EventReport, ctx: EventPdfContext = {}): PdfDoc
     sections,
     fileName: `wAI-event-${fileSafe(ev.id)}.pdf`,
     bandContext: `${A.id === '—' ? A.name : A.id} · ${plantTime(ev.start)} - ${ev.end != null ? plantClock(ev.end) : 'ongoing'}`,
-    // A frame grabbed from a configured stream must not be described as a twin render.
+    // The footer says whether a frame grabbed from a configured stream is included.
     disclaimer: footerDisclaimer(r.visualEvidence),
     bandNote: hasLiveCameraFrame(r.visualEvidence) ? BAND_NOTE_LIVE_CAMERA : BAND_NOTE,
   });

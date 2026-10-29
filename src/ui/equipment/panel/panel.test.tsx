@@ -137,7 +137,7 @@ describe('one panel for every asset and vehicle', () => {
     const m = deriveEquipmentIntel(normal, 'A-COMP');
     const out = panel(normal, m);
     expect(out).toContain('No operating data is simulated for this asset');
-    expect(out).toContain('No camera or footage');
+    expect(out).toContain('No camera image');
     expect(out).not.toContain('What matters');
     expect(out).not.toContain('Operating normally');
     expect(out).toContain('No operating state modelled');
@@ -145,14 +145,14 @@ describe('one panel for every asset and vehicle', () => {
 });
 
 describe('the one feed', () => {
-  it('kiln: the client recording in the bare player — no badge on the picture, only its honest chip; the source-details control says what it is', () => {
+  it('kiln: the client recording in the bare player — no badge or tag on the picture; the source-details control says what it is', () => {
     const m = deriveEquipmentIntel(normal, 'H-KILN');
     expect(m.feed.kind).toBe('recording');
     const out = panel(normal, m);
     expect(out).toContain('class="vp compact bare"');
     expect(out).toContain('class="vp-poster"');
     expect(out).not.toContain('eqp-feed-badge');
-    expect(out).toMatch(/class="eqp-feed-tag k-recording"[^>]*>.*?Recorded footage · not live<\/span>/);
+    expect(out).not.toContain('eqp-feed-tag');
     expect(text(out)).not.toContain('Live stream');
     expect(out).toContain('aria-label="Source details · recorded footage, not a live feed" aria-expanded="false"');
     expect(out).toContain('title="Recorded footage — not a live feed. Source details"');
@@ -163,15 +163,18 @@ describe('the one feed', () => {
     expect(text(out)).not.toContain('Unit 2 Camera 01 Kiln');
   });
 
-  it('a press: the simulated twin view of its camera; an asset without footage: the no-footage state', () => {
+  it('a press without a stream: its reference clip, never a twin render; an asset without footage: the no-image state', () => {
     const p = panel(normal, deriveEquipmentIntel(normal, 'E-PRS2'));
-    expect(p).toContain('data-camera="CAM-E1"');
-    expect(p).toContain('Twin view · simulated');
+    expect(p).not.toContain('data-camera="CAM-E1"');
+    expect(p).not.toMatch(/Twin view|simulated view/i);
+    expect(p).toContain('class="vp compact bare"');
+    expect(p).not.toContain('eqp-feed-tag');
+    expect(p).toContain('title="Reference footage — not this plant, not a live feed. Source details"');
     const stk = deriveEquipmentIntel(normal, 'A-STK');
     expect(stk.feed.kind).toBe('none');
     const none = panel(normal, stk);
     expect(none).not.toContain('eqp-feed-badge');
-    expect(none).toContain('No camera or footage');
+    expect(none).toContain('No camera image');
   });
 
   it('a configured stream: "Live stream" only while it actually plays; the data badge stays Simulated', () => {
@@ -402,8 +405,7 @@ describe('review fixes: the panel says each figure once', () => {
     expect(count(visible(out), /Unknown · feed stale/g)).toBe(0);
   });
 
-  it('a camera view keeps its badge (twin view, simulated); the ⓘ tells a client recording from public reference footage; neutral and planned have their own icons', () => {
-    expect(panel(normal, deriveEquipmentIntel(normal, 'E-PRS2'))).toMatch(/class="eqp-feed-badge k-twin-view[^"]*"[^>]*><svg[^>]*lucide-monitor-play/);
+  it('the ⓘ tells a client recording from public reference footage; neutral and planned have their own icons', () => {
     expect(panel(normal, deriveEquipmentIntel(normal, 'H-KILN'))).toContain('title="Recorded footage — not a live feed. Source details"');
     expect(panel(normal, deriveEquipmentIntel(normal, 'A-STK'))).not.toContain('Source details');
     expect(TONE_ICON.planned).toBe(CalendarClock);
@@ -465,10 +467,6 @@ describe('review fixes: controls and behaviour', () => {
     expect(p).toMatch(/\.eqp-tl-axis \{[^}]*color: var\(--text-3\);/);
     expect(p).toMatch(/\.eqp-pop dt \{\s*color: var\(--text-2\);/);
     expect(p).toMatch(/\.eqp-pop-fine \{[^}]*color: var\(--text-2\);/);
-    // The camera feed's footer stays only for "Stream" (back to a configured stream) — never a dead end.
-    expect(p).toMatch(/\.eqp-feed \.feed-f:not\(:has\(\.feed-back\)\) \{\s*display: none;/);
-    expect(p).not.toMatch(/\.eqp-feed \.feed-f \{\s*display: none;/);
-    expect(await readText('../../feeds/CameraFeed.tsx')).toMatch(/className="btn ghost sm feed-back"/);
     expect(await readText('../../../video/video.css')).toMatch(/\.vp-poster:focus-visible \{\s*box-shadow:\s*inset 0 0 0 2px var\(--accent\)/);
   });
 
@@ -549,10 +547,10 @@ describe('the wide panel: 70 % of the screen, the video across its top', () => {
     const out = at(1680, true, <EquipmentPanel intel={deriveEquipmentIntel(normal, 'H-KILN')} now={normal.minute} />);
     expect(out).toMatch(/class="inspector overlay-panel tw-insp eqp [^"]*eqp-wide/);
     expect(out).toMatch(/<button type="button" class="btn ghost sm icon eqp-width" aria-pressed="true" aria-label="Wide panel"/);
-    // The feed sits before the columns, across the whole panel; the recording carries only its honest chip, no badge.
+    // The feed sits before the columns, across the whole panel; the recording carries no badge or tag (its ⓘ says what it is).
     expect(out.indexOf('class="eqp-feed ')).toBeLessThan(out.indexOf('class="eqp-cols"'));
     expect(out).not.toContain('eqp-feed-badge');
-    expect(out).toContain('Recorded footage · not live');
+    expect(out).toContain('title="Recorded footage — not a live feed. Source details"');
     // Key figures and the firing profile (with the one time-range control) run across the card above the columns.
     const head = (t: string) => out.indexOf(`>${t}</h3>`);
     expect(head('Key figures')).toBeGreaterThan(out.indexOf('class="eqp-feed '));

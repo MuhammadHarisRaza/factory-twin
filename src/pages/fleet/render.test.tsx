@@ -240,7 +240,7 @@ describe('Vehicle footage names no topic of its own (verify: held clip vs live t
       const label = TOPIC_LABEL[videoTopicFor(s, v)];
       const { heading, note } = footage(html);
       expect(heading, id).toBe('Reference footage');
-      expect(note, id).toContain('Public footage of this kind of operation');
+      expect(note, id).toContain('Reference footage of this kind of operation');
       expect(note, id).toContain('not this vehicle, not this plant and not evidence of its location');
       // A held clip of an earlier activity would otherwise sit under the new activity's topic name.
       expect(note.toLowerCase(), id).not.toContain(label.toLowerCase());

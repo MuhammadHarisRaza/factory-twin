@@ -443,8 +443,8 @@ export const CONVEYOR_BY_ID: Record<string, ConveyorDef> = Object.fromEntries(CO
 export const CONVEYOR_IDS = CONVEYORS.map((c) => c.id);
 
 /**
- * Camera positions. Each has a simulated feed rendered from the digital twin; a real stream is used
- * only when one is configured for it and actually plays. No camera is connected in this release.
+ * Camera positions. A camera shows an image only when a stream is configured for it and actually
+ * plays; otherwise it says that no stream is configured. No camera is connected in this release.
  */
 export const CAMERAS: CameraDef[] = [
   { id: 'CAM-A1', name: 'Main gate & holding area', zone: 'A', stage: 'YARD', covers: ['A-GATE', 'A-HOLD', 'GF-GATE', 'GF-HOLD'], purpose: 'Gate entries, truck queue' },

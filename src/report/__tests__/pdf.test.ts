@@ -64,9 +64,9 @@ describe('event report → PDF section model', () => {
     const fig = vis.blocks.find((b) => b.kind === 'figures');
     if (!fig || fig.kind !== 'figures') throw new Error('no figure block');
     expect(fig.items[0].image).toBeNull();
-    // The live snapshot is still pending (no twin renderer in node) → "being captured".
+    // The snapshot is still pending (no stream plays in node) → "being captured", never a stand-in image.
     expect(fig.items[0].missing).toMatch(/Being captured/);
-    expect(fig.items[0].caption.join(' ')).toMatch(/rendered from the digital twin/i);
+    expect(fig.items[0].caption.join(' ')).toMatch(/No camera frame/);
     // No NVR → explicit video box.
     expect(vis.blocks.some((b) => b.kind === 'missing' && /Video segment/.test(b.title))).toBe(true);
   });

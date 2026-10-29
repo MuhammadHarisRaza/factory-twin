@@ -533,8 +533,7 @@ function header(x: X, rows: SignalTableRow[] = []): IntelHeader {
 // ── Feed (exactly one) ───────────────────────────────────────────────────────
 
 const RECORDING_NOTE = 'A recording — not a live feed; its overlays come from the system that recorded it.';
-const REFERENCE_NOTE = 'Public footage of a comparable process — not this plant.';
-const TWIN_NOTE = 'Rendered from the digital twin — not a camera image.';
+const REFERENCE_NOTE = 'Footage of a comparable process — not this plant, not live.';
 const STREAM_NOTE = 'A stream configured for this camera; it is shown as Live only while it plays.';
 
 const clientRecordings = () => VIDEOS.filter((v) => v.sourceType === 'client-recording');
@@ -544,7 +543,7 @@ function recordingFor(equipmentId: string | null, topics: VideoTopic[], byTopic 
   return (equipmentId ? recs.find((v) => v.equipment.includes(equipmentId)) : undefined) ?? (byTopic && topics[0] ? recs.find((v) => v.topic === topics[0]) : undefined) ?? null;
 }
 
-/** Best public reference clip for the topics (equipment match first, embeddable first) — clipsFor's rule, public footage only. */
+/** Best reference clip for the topics (equipment match first, embeddable first) — clipsFor's rule, reference footage only. */
 function referenceFor(equipmentId: string | null, topics: VideoTopic[]): VideoRef | null {
   for (const topic of topics) {
     const cands = VIDEOS.filter((v) => v.topic === topic && v.sourceType === 'public-reference');
@@ -596,13 +595,6 @@ export function chooseFeed(
         { label: 'Note', value: RECORDING_NOTE },
       ],
     };
-  if (camera)
-    return {
-      kind: 'twin-view',
-      cameraId: camera.id,
-      badge: 'Twin view · simulated',
-      details: [...detail('Camera', `${camera.name} (${camera.id})`), ...detail('View', camera.purpose), { label: 'Note', value: TWIN_NOTE }],
-    };
   const ref = referenceFor(subject.equipmentId, topics);
   if (ref)
     return {
@@ -617,6 +609,13 @@ export function chooseFeed(
         ...detail('Source', ref.sourceUrl),
         { label: 'Note', value: REFERENCE_NOTE },
       ],
+    };
+  if (camera)
+    return {
+      kind: 'none',
+      reason: `No stream is configured for ${camera.name} (${camera.id}). Configure one under Technical details › Cameras.`,
+      badge: null,
+      details: [],
     };
   return {
     kind: 'none',

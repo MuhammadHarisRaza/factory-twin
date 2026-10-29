@@ -1,10 +1,9 @@
 /**
- * The panel's ONE feed (types.ts FeedChoice): a configured stream or the twin view in the camera feed,
- * a client recording or a public reference clip in the bare video player, or an explicit unavailable
- * state. No topic tabs, no title or description under it. A camera view (the twin view, a configured
- * stream) carries a small source badge on the frame (top-left) — "Twin view · simulated" / the
- * stream's state; a recording or reference clip carries one small honest chip instead ("Recorded
- * footage · not live" / "Reference footage · not this plant, not live"). An ⓘ button
+ * The panel's ONE feed (types.ts FeedChoice): a configured stream in the camera feed, a client
+ * recording or a public reference clip in the bare video player, or an explicit unavailable state.
+ * No topic tabs, no title or description under it. A configured stream carries a small source badge
+ * on the frame (top-left) — the stream's state; a recording or reference clip carries no tag on the
+ * picture. An ⓘ button
  * (top-right; its tooltip names the kind of footage) discloses the compact source details — title,
  * camera, recorded at, provider, licence and the honesty note (a recording, not a live feed). While a
  * provider embed is loaded, whose own title covers the top of the frame, the chrome moves to
@@ -16,7 +15,7 @@
 import { memo, useCallback, useEffect, useId, useRef, useState, type RefObject } from 'react';
 import { sameProps } from '../../kit/equal';
 
-import { ChevronDown, ExternalLink, Film, Globe, Info, MonitorPlay, Radio, Video, VideoOff, X, type LucideIcon } from 'lucide-react';
+import { ChevronDown, ExternalLink, Film, Globe, Info, Radio, Video, VideoOff, X, type LucideIcon } from 'lucide-react';
 import { CameraFeed } from '../../feeds/CameraFeed';
 import { useLiveStatus } from '../../feeds/registry';
 import type { LiveState } from '../../feeds/live';
@@ -51,7 +50,6 @@ export const useStreamState = (cameraId: string | null) => useLiveStatus((s) => 
 const BADGE_ICON: Record<Exclude<FeedChoice['kind'], 'none'>, LucideIcon> = {
   'live-stream': Radio,
   recording: Film,
-  'twin-view': MonitorPlay,
   reference: Globe,
 };
 
@@ -95,7 +93,7 @@ function SourceDetails({ feed, onClose, id, closeRef }: { feed: Exclude<FeedChoi
           {feed.kind === 'recording' ? 'Open the recording file' : 'Open the original source'} <ExternalLink size={11} aria-hidden />
         </a>
       )}
-      {(feed.kind === 'twin-view' || feed.kind === 'live-stream') && <p className="eqp-pop-fine">Camera streams are configured under Technical details › Cameras.</p>}
+      {feed.kind === 'live-stream' && <p className="eqp-pop-fine">Camera streams are configured under Technical details › Cameras.</p>}
     </div>
   );
 }
@@ -163,7 +161,7 @@ export const FeedView = memo(function FeedView({ feed, subject }: { feed: FeedCh
       <div className="eqp-feed-none" role="note">
         <VideoOff size={15} aria-hidden />
         <span>
-          <b>No camera or footage</b> {current.reason}
+          <b>No camera image</b> {current.reason}
         </span>
       </div>
     );
@@ -192,16 +190,9 @@ export const FeedView = memo(function FeedView({ feed, subject }: { feed: FeedCh
   // reference clip is also not this plant).
   const disclosure = current.kind === 'reference' ? 'not this plant, not a live feed' : 'not a live feed';
   const infoTitle = video ? `${badge.label} footage — ${disclosure}. Source details` : 'Source details';
-  // The footage's one honest chip on the picture (the approved card): recorded / reference footage is never called live.
-  const tag = video ? (current.kind === 'reference' ? 'Reference footage · not this plant, not live' : 'Recorded footage · not live') : null;
+  // No tag on the picture of a recording or reference clip: its ⓘ (tooltip and source details) says what it is.
   const chrome = (
     <>
-      {tag && (
-        <span className={`eqp-feed-tag k-${current.kind}`}>
-          <Icon size={12} aria-hidden />
-          {tag}
-        </span>
-      )}
       {!video && (
         <span className={`eqp-feed-badge k-${current.kind} ${badge.tone}`} title={current.details.find((d) => d.label === 'Note')?.value}>
           <Icon size={12} aria-hidden />
@@ -235,7 +226,7 @@ export const FeedView = memo(function FeedView({ feed, subject }: { feed: FeedCh
       <div className="eqp-feed-frame">
         {video ? (
           <VideoPlayer key={video.id} video={video} bare onActiveChange={onActiveChange} />
-        ) : current.kind === 'twin-view' || current.kind === 'live-stream' ? (
+        ) : current.kind === 'live-stream' ? (
           <CameraFeed key={current.cameraId} cameraId={current.cameraId} compact />
         ) : null}
         {!docked && <div className="eqp-feed-chrome">{chrome}</div>}

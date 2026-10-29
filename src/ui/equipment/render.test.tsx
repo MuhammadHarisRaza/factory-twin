@@ -16,7 +16,7 @@ import { useApp, type CameraSource } from '../../app/store';
 import { CAMERA_BY_ID } from '../../model/plant';
 import { useSim } from '../../sim/store';
 import { useTwin } from '../../store';
-import { CameraFeed, SIMULATED_LABEL } from '../feeds/CameraFeed';
+import { CameraFeed } from '../feeds/CameraFeed';
 import { useTwinUi } from '../twin/uiStore';
 import { StagePanel } from '../twin/StagePanel';
 import { CameraSources, StreamEditor, camerasOf } from './CameraSources';
@@ -37,11 +37,12 @@ const html = (el: ReactElement) => {
 };
 
 describe('camera feed render', () => {
-  it('shows a simulated feed, labelled, for a camera without a stream', () => {
+  it('shows no image, only a no-stream state, for a camera without a stream', () => {
     withSources({});
     for (const compact of [false, true]) {
       const out = html(<CameraFeed cameraId="CAM-E1" compact={compact} height={180} />);
-      expect(out).toContain(SIMULATED_LABEL);
+      expect(out).toContain('No camera stream configured');
+      expect(out).not.toContain('<img');
       expect(out).not.toMatch(/>Live</);
     }
     expect(html(<CameraFeed cameraId="CAM-NOPE" />)).toContain('Unknown camera CAM-NOPE');
@@ -52,7 +53,7 @@ describe('camera feed render', () => {
     const out = html(<CameraFeed cameraId="CAM-E1" />);
     expect(out).toContain('Connecting');
     expect(out).not.toMatch(/>Live</);
-    expect(out).not.toContain(SIMULATED_LABEL);
+    expect(out).not.toContain('No camera stream configured');
     withSources({});
   });
 });
@@ -71,7 +72,7 @@ describe('equipment cameras', () => {
     expect(out).not.toMatch(/>Live</);
     withSources({});
     const sim = html(<CameraSources equipmentId="H-KILN" />);
-    expect(sim).toContain('Simulated view rendered from the digital twin');
+    expect(sim).toContain('No stream configured — no image');
     expect(sim).toContain('Configure a stream');
     expect(html(<CameraSources equipmentId="A-PARK" />)).toContain('No camera position covers this asset');
   });
@@ -83,7 +84,7 @@ describe('equipment cameras', () => {
     expect(out).toContain('Browsers cannot open RTSP');
     expect(out).toContain('CORS');
     expect(out).toContain('stored in this browser only');
-    expect(out).toContain(SIMULATED_LABEL);
+    expect(out).toContain('No camera stream configured');
   });
 });
 

@@ -1,6 +1,6 @@
 /**
  * Store-free evidence lookups shared by the in-app report, the PDF builder and the tests:
- * the stored image of a camera snapshot (src/twin/bridge.ts — a digital-twin render, or a frame of a
+ * the stored image of a camera snapshot (src/twin/bridge.ts — a frame of a
  * configured camera stream; the evidence's provenance says which) and the inspection records behind
  * inspection-image evidence. Drawing the frames needs a browser: see frames.ts.
  */

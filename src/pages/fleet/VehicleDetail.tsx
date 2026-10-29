@@ -42,7 +42,7 @@ import { handlingEvents, legAt, movementState } from './pipeline';
 const newestFirst = (xs: OpEvent[]) => [...xs].sort((a, b) => b.start - a.start);
 
 const FOOTAGE_NOTE =
-  "Public footage of this kind of operation, picked by the vehicle's class and activity — not this vehicle, not this plant and not evidence of its location.";
+  "Reference footage of this kind of operation, picked by the vehicle's class and activity — not this vehicle, not this plant and not evidence of its location.";
 
 function useVehicleInfo(id: string) {
   return useSimValue(

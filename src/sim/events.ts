@@ -607,9 +607,9 @@ function captureCamera(s: SimState, ev: OpEvent, coverId: string | undefined, t:
     title: `${cam.id} · ${cam.name}`,
     capturedAt: t,
     cameraId: cam.id,
-    provenance: { origin: 'digital-twin-render', sourceId: cam.id, label: 'Rendered from the digital twin (simulated camera view)' },
+    provenance: { origin: 'camera-stream', sourceId: cam.id, label: 'Camera frame — captured only from a configured stream that is playing' },
     status: ev.historical ? 'unavailable' : 'pending',
-    unavailableReason: ev.historical ? 'Occurred before this demo session — no view was rendered at the time' : undefined,
+    unavailableReason: ev.historical ? 'Occurred before this demo session — no camera frame was captured at the time' : undefined,
   });
 }
 

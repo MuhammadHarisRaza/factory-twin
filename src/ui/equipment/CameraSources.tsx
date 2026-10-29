@@ -1,7 +1,7 @@
 /**
  * Cameras covering an asset, inside the equipment workspace's technical details (moved here from
- * the retired Assets & Data › Camera sources tab). Each camera shows its simulated view rendered
- * from the digital twin unless the user configures a browser-playable stream for it; "Live" is
+ * the retired Assets & Data › Camera sources tab). A camera shows an image only when the user
+ * configures a browser-playable stream for it (otherwise it says no stream is configured); "Live" is
  * shown only while such a stream actually plays. Stream URLs stay in this browser.
  */
 import { useMemo, useState, type FormEvent } from 'react';
@@ -116,7 +116,7 @@ export function StreamEditor({ cam }: { cam: CameraDef }) {
             </button>
           )}
           {saved && (
-            <button type="button" className="btn sm danger" onClick={clear} title="Remove the stream; the camera shows its simulated view again">
+            <button type="button" className="btn sm danger" onClick={clear} title="Remove the stream; the camera then shows no image">
               <Link2Off size={12} aria-hidden /> Clear stream
             </button>
           )}
@@ -128,7 +128,7 @@ export function StreamEditor({ cam }: { cam: CameraDef }) {
       </div>
       <ul className="eqw-fine-list">
         <li>Browsers cannot open RTSP / ONVIF directly: a gateway must restream the camera as HLS (.m3u8), MJPEG or MP4 / WebM over http(s).</li>
-        <li>To capture frames for event evidence the gateway must allow CORS for this page; without it the stream still plays, but evidence falls back to the labelled twin render.</li>
+        <li>To capture frames for event evidence the gateway must allow CORS for this page; without it the stream still plays, but no frame is captured as event evidence.</li>
         <li>The URL is stored in this browser only. Do not put credentials in it.</li>
       </ul>
     </div>
@@ -157,7 +157,7 @@ export function CameraSources({ equipmentId }: { equipmentId: string }) {
               <span className="mono muted">{c.id}</span>
             </div>
             <div className="eqw-cam-m">
-              <span>{src ? `Configured stream · ${src.kind === 'auto' ? 'auto' : RESOLVED_LABEL[src.kind]} · ${urlSummary(src.url)}` : 'Simulated view rendered from the digital twin'}</span>
+              <span>{src ? `Configured stream · ${src.kind === 'auto' ? 'auto' : RESOLVED_LABEL[src.kind]} · ${urlSummary(src.url)}` : 'No stream configured — no image'}</span>
               <CameraState cameraId={c.id} />
             </div>
             <div className="eqw-cam-a">

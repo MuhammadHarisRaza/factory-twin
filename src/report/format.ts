@@ -67,7 +67,7 @@ export const EVIDENCE_KIND_LABEL: Record<Evidence['kind'], string> = {
 
 /** Honesty labels used wherever the corresponding synthetic surface appears. */
 export const LABELS = {
-  simulatedFeed: 'Simulated feed · rendered from the digital twin',
+  noCameraFrame: 'No camera frame (no stream was playing)',
   illustrativeFrame: 'Illustrative frame · simulated classification — no vision model',
   simulatedConfidence: 'simulated confidence',
   estimate: 'estimate · assumptions shown',

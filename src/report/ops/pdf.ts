@@ -5,7 +5,7 @@
  * explicit "Not available — reason" box. All strings are sanitised for the PDF standard fonts.
  * Every significant event is printed (the table continues across pages); the header note, footer
  * and provenance list follow the evidence the report actually includes (a frame of a configured
- * camera stream is never called a digital-twin render).
+ * camera stream is labelled as a camera frame).
  */
 import type { jsPDF as JsPDF } from 'jspdf';
 import { BAND_NOTE, BAND_NOTE_LIVE_CAMERA, type PdfBlock, type PdfDocModel, type PdfImage, type PdfKpi, type PdfSection } from '../model';

@@ -182,7 +182,7 @@ describe('report text from the record, not the current settings (#6, #10)', () =
     const ev = s.events.find((e) => e.type === 'conveyor-stop' && e.asset.equipmentId === 'CV-PACK' && e.start >= t0)!;
     const before = buildEventReport(s, ev.id)!.provenance;
     expect(before.liveCamera).toBe(false);
-    expect(before.disclaimers.join(' ')).toMatch(/Camera views are rendered from the digital twin/);
+    expect(before.disclaimers.join(' ')).toMatch(/No camera image is included/);
     const snap = evidenceOf(s, ev).find((x) => x.kind === 'camera-snapshot')!;
     attachEvidenceImage(s, snap.id, { key: snap.id, width: 960, height: 540, frameTime: s.minute }, { origin: 'live-camera', sourceId: snap.cameraId ?? 'CAM', label: 'Camera frame from the configured stream' });
     const after = buildEventReport(s, ev.id)!.provenance;
@@ -190,7 +190,7 @@ describe('report text from the record, not the current settings (#6, #10)', () =
     const text = after.disclaimers.join(' ');
     expect(text).toMatch(/frame from a configured stream/);
     expect(text).not.toMatch(/No PLC, SCADA, camera/);
-    expect(text).not.toMatch(/Camera views are rendered from the digital twin and labelled/);
+    expect(text).not.toMatch(/No camera image is included/);
   });
 });
 

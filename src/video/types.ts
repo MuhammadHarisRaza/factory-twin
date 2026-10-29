@@ -46,7 +46,7 @@ export type VideoTopic =
   | 'dock-operations';
 
 /**
- * public-reference: third-party public footage · client-recording: a camera recording provided by the
+ * public-reference: footage of a comparable process (not this plant) · client-recording: a camera recording provided by the
  * client (played from this app's own files) · simulated: rendered by this demo · connected: a configured live camera.
  */
 export type VideoSourceType = 'public-reference' | 'client-recording' | 'simulated' | 'connected';

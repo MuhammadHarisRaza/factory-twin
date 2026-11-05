@@ -2,7 +2,7 @@
  * Vercel function: /api/copilot — the browser's only route to the AI agent. The API key stays in the
  * project's environment variables (ALARA_API_KEY, ALARA_AGENT_URL) and is never returned.
  */
-import { handleCopilotRequest } from '../server/agent';
+import { handleCopilotRequest } from '../server/agent.js';
 
 declare const process: { env: Record<string, string | undefined> };
 

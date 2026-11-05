@@ -512,3 +512,69 @@
   flex: 1;
   height: auto;
 }
+
+/* AI agent reply (language model) — shown first, labelled; the rule-based analysis follows. */
+.cp-agent {
+  margin-top: 8px;
+  padding: 10px 12px;
+  border: 1px solid var(--accent-line);
+  border-radius: var(--r-3);
+  background: var(--accent-soft);
+  font-size: var(--fs-13);
+  line-height: 1.5;
+}
+.cp-agent.error {
+  border-color: #fab21940;
+  background: #fab21910;
+}
+.cp-agent-h {
+  display: flex;
+  align-items: center;
+  gap: 5px;
+  font-size: var(--fs-11);
+  font-weight: var(--fw-semibold);
+  color: var(--accent-strong);
+  margin-bottom: 4px;
+}
+.cp-agent-h small {
+  font-weight: var(--fw-regular);
+  color: var(--text-3);
+}
+.cp-agent-b p,
+.cp-agent-b ul,
+.cp-agent-b ol {
+  margin: 0 0 6px;
+}
+.cp-agent-b ul,
+.cp-agent-b ol {
+  padding-left: 18px;
+}
+.cp-agent-b > :last-child {
+  margin-bottom: 0;
+}
+.cp-agent-wait,
+.cp-agent-err {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  margin: 0;
+  color: var(--text-2);
+  font-size: var(--fs-12);
+}
+.cp-agent-err svg {
+  color: var(--warning);
+  flex: none;
+}
+.cp-rule {
+  margin-top: 8px;
+}
+.cp-rule > summary {
+  font-size: var(--fs-11);
+  color: var(--text-3);
+  cursor: pointer;
+  width: max-content;
+  max-width: 100%;
+}
+.cp-rule > summary:hover {
+  color: var(--text-1);
+}

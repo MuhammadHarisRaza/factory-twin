@@ -4,6 +4,7 @@ import {
   Box,
   Building2,
   ClipboardList,
+  Compass,
   ChevronsLeft,
   ChevronsRight,
   Factory,
@@ -41,6 +42,9 @@ const ICONS: Record<WorkspaceId, LucideIcon> = {
   compliance: ShieldCheck,
   copilot: Bot,
 };
+
+/** The Odin demo, a separate application: its sidebar entry leaves the twin and opens it. */
+export const ODIN_URL = 'https://odin-ghani-demo.vercel.app';
 
 const SEV_RANK: Record<AlertSeverity, number> = { info: 0, warning: 1, serious: 2, critical: 3 };
 
@@ -105,6 +109,10 @@ export function Sidebar() {
             </button>
           );
         })}
+        <a className="nav-item" href={ODIN_URL} title={collapsed ? 'Odin — opens the Odin demo (a separate application)' : 'Opens the Odin demo (a separate application)'}>
+          <Compass size={17} strokeWidth={1.9} />
+          <span>Odin</span>
+        </a>
       </div>
       <div className="nav-foot">
         <div className="nav-note">
@@ -201,7 +209,7 @@ export function Header({ title, period = false, actions, showTitle = true }: { t
       )}
       <div className="spacer" />
       {actions}
-      <button className="btn" onClick={() => useApp.getState().openCopilot()} title="Ask the Copilot about what is on screen (rule-based on the current demo state — no language model)">
+      <button className="btn" onClick={() => useApp.getState().openCopilot()} title="Ask the Copilot about what is on screen (rule-based analysis of the simulated plant, plus a language-model agent when one is configured on the server)">
         <MessageSquareText size={14} />
         <span className="btn-label">Ask</span>
       </button>

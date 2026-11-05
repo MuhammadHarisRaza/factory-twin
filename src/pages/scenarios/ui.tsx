@@ -142,7 +142,7 @@ function targetTitle(t: ShowTarget, label: string) {
     case 'event':
       return `Open the report of ${t.id} in Events & Reports (the same record as the PDF)`;
     case 'copilot':
-      return `Ask the copilot (rule-based on the simulated plant state — no language model): “${t.question}”`;
+      return `Ask the copilot about the simulated plant: “${t.question}”`;
     default:
       return `Open ${label}`;
   }

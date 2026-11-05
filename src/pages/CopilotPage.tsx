@@ -3,8 +3,8 @@
  * conversation with its question box and context chips (current shift, incident in context) as the
  * one work area; beside it the suggested questions, the incident picker (the issues requiring
  * attention, ranked as on the Overview) and the incident in context. The same engine and
- * conversation as the header drawer. Nothing here is a language model or an external service:
- * answers are assembled from the one simulation state.
+ * conversation as the header drawer. Answers are assembled from the one simulation state; when an AI
+ * agent is configured on the server, its reply (given those simulated figures) is shown first.
  */
 import { useEffect, useState } from 'react';
 import { Box, ClipboardList, Crosshair, ListFilter, SlidersHorizontal, X } from 'lucide-react';
@@ -13,7 +13,7 @@ import { INCIDENT_QUESTION, copilotEventReport } from '../intel/copilot';
 import type { OpEvent } from '../model/types';
 import { useSim, useSimValue } from '../sim/store';
 import { formatClock, formatDateTime, formatDuration } from '../sim/time';
-import { CopilotPanel, QuestionGroups } from '../ui/copilot/CopilotPanel';
+import { CopilotPanel, QuestionGroups, useCopilotLabel } from '../ui/copilot/CopilotPanel';
 import { setCopilotContext, useCopilot, useCopilotContext } from '../ui/copilot/store';
 import { EmptyState, Facts, PageHeader, ProvenanceBadge, Section } from '../ui/kit/Page';
 import { EventStatusBadge, SeverityBadge } from '../ui/kit/Status';
@@ -33,6 +33,7 @@ function CopilotWorkspace() {
   useEffect(() => register(), [register]);
   const sum = useSimValue((s) => copilotSummary(s));
   const minute = useSimValue((s) => s.minute);
+  const label = useCopilotLabel();
 
   return (
     <div className="wp cpg">
@@ -40,7 +41,7 @@ function CopilotWorkspace() {
         title="Copilot"
         context={
           <>
-            <span>Rule-based assistant over the simulated plant state — no language model, no external service</span>
+            <span>{label}</span>
             <span className="num">
               Plant time {formatClock(minute)} · {sum.scope}
             </span>

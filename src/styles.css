@@ -260,6 +260,9 @@ kbd {
 .nav-item svg {
   flex: none;
 }
+a.nav-item {
+  text-decoration: none;
+}
 .nav-item:hover {
   background: var(--bg-2);
   color: var(--text-1);

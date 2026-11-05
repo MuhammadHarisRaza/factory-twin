@@ -2476,7 +2476,7 @@ function helpAnswer(c: Ctx): CopilotAnswer {
     '—',
     {
       confirmed: [
-        'This copilot is rule-based: it matches a question to a topic and builds the answer from the same KPIs, events and reports the workspaces show. No language model or external service is connected.',
+        'This rule-based analysis matches a question to a topic and builds the answer from the same KPIs, events and reports the workspaces show; it uses no language model itself. When an agent is configured on the server, its reply is shown separately above it, labelled.',
       ],
       unknown: ['The question did not match a topic the data can answer.'],
       actions: ['Try one of the suggested questions, or ask about one incident by its id (e.g. “What happened in EV-00012?”).'],

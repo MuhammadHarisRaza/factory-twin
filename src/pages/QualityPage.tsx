@@ -134,7 +134,7 @@ function QualityWorkspace() {
         }
         summary={summaryText(data.summary, data.p.label)}
         actions={
-          <button type="button" className="btn sm ghost" onClick={() => openCopilot('What quality problems are occurring, and where?')} title="Ask the rule-based copilot">
+          <button type="button" className="btn sm ghost" onClick={() => openCopilot('What quality problems are occurring, and where?')} title="Ask the copilot">
             <MessageSquareText size={13} aria-hidden /> Ask copilot
           </button>
         }

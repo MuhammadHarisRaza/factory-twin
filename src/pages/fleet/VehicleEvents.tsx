@@ -346,7 +346,7 @@ function EventFocus({ id, auto, clock, onSelectVehicle }: { id: string; auto: bo
         <button className="btn sm" onClick={() => act('inv')} disabled={!canInv} title={canInv ? 'Start the investigation' : `Event is ${d.status}`}>
           <Search size={13} aria-hidden /> Investigate
         </button>
-        <button className="btn sm ghost" onClick={() => openCopilot(`Why did ${ev.id} happen?`, { eventId: ev.id })} title="Ask the rule-based copilot about this event">
+        <button className="btn sm ghost" onClick={() => openCopilot(`Why did ${ev.id} happen?`, { eventId: ev.id })} title="Ask the copilot about this event">
           <MessageSquareText size={13} aria-hidden /> Ask copilot
         </button>
         <button className={`btn sm ghost ${report ? 'on' : ''}`} aria-expanded={report} onClick={() => setReport(!report)}>

@@ -167,7 +167,7 @@ function EvidenceBody({ m, now, fpy, snap, snapImg, onSelect }: BodyProps) {
               <Factory size={13} aria-hidden /> Modeled origin: {origin.name}
             </button>
           )}
-          <button type="button" className="btn sm ghost" onClick={askCopilot} title="Ask the rule-based copilot">
+          <button type="button" className="btn sm ghost" onClick={askCopilot} title="Ask the copilot">
             <MessageSquareText size={13} aria-hidden /> Ask copilot
           </button>
         </div>

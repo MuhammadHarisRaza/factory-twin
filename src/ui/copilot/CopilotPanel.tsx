@@ -4,62 +4,48 @@
  * Recommended actions, How it was computed — plus the figures used, links into the seven workspaces
  * and follow-up questions. Above the question field, chips show the context the next question is
  * asked in (period, incident, equipment, stage). One conversation store backs the Copilot workspace
- * and the global drawer. Answers come from the rule-based copilot (src/intel/copilot.ts) — no
- * language model, no external service.
+ * and the global drawer. Answers are the AI agent's replies (a language model, src/ui/copilot/agent.ts),
+ * labelled as such; the rule-based analysis of the simulated plant (src/intel/copilot.ts) is not shown —
+ * it is sent to the agent as the figures to answer from. Without an agent the turn says so.
  */
 import { useEffect, useLayoutEffect, useRef, useState, type ReactNode, type Ref } from 'react';
 import {
-  Calculator,
   CalendarClock,
   ChevronDown,
   ChevronRight,
-  CircleHelp,
-  CircleSlash,
   Crosshair,
-  Database,
   Eraser,
   Factory,
-  FlaskConical,
-  Lightbulb,
-  ListChecks,
+  LoaderCircle,
   Locate,
   MessageSquareText,
   SendHorizontal,
-  Sigma,
+  Sparkles,
+  TriangleAlert,
   X,
-  type LucideIcon,
 } from 'lucide-react';
 import type { WorkspaceId } from '../../app/store';
 import { MONITORED_STAGE_BY_ID } from '../../model/plant';
-import { EMPTY_SECTION_LINE, EVENT_QUESTIONS, INCIDENT_QUESTION, QUESTION_GROUPS, type CopilotAnswer, type CopilotSection } from '../../intel/copilot';
+import { EVENT_QUESTIONS, INCIDENT_QUESTION, QUESTION_GROUPS } from '../../intel/copilot';
 import { formatClock, formatDay } from '../../sim/time';
 import { SeverityBadge } from '../kit/Status';
-import { LinkButton } from './links';
-import { CONFIDENCE_HINT, SECTION_LABEL, groupSections, lineBlocks, type SectionKind } from './sections';
-import { SOURCE_LABEL, setCopilotContext, useCopilot, useCopilotContext, type CopilotTurn } from './store';
+import { SOURCE_LABEL, useCopilot, useCopilotContext, type AgentTurn, type CopilotTurn } from './store';
 import './copilot.css';
 
-export const COPILOT_LABEL = 'Rule-based on the simulated plant state — no language model, no external service';
+export const COPILOT_LABEL = 'AI agent (language model) — not configured on this server, so questions cannot be answered';
+export const COPILOT_AGENT_LABEL = 'AI agent (language model) given the simulated plant figures — it can be wrong';
+
+/** The header line: what answers the questions here. */
+export function useCopilotLabel() {
+  return useCopilot((s) => (s.agentConfigured === false ? COPILOT_LABEL : COPILOT_AGENT_LABEL));
+}
 
 type Variant = 'drawer' | 'page';
 
-const SECTION_ICON: Record<SectionKind, LucideIcon> = {
-  confirmed: Database,
-  simulated: FlaskConical,
-  inferred: Lightbulb,
-  hypotheses: CircleHelp,
-  unknown: CircleSlash,
-  estimate: Calculator,
-  actions: ListChecks,
-  method: Sigma,
-};
-
-const EMPTY = new Set(Object.values(EMPTY_SECTION_LINE));
 
 export function CopilotPanel({
   variant,
   onClose,
-  onNavigate,
   autoFocus = false,
   suggestions = true,
 }: {
@@ -77,6 +63,7 @@ export function CopilotPanel({
   const clear = useCopilot((s) => s.clear);
   const focusTick = useCopilot((s) => s.focusTick);
   const ctx = useCopilotContext();
+  const label = useCopilotLabel();
   const [draft, setDraft] = useState('');
   const [suggestOpen, setSuggestOpen] = useState(false);
   const inputRef = useRef<HTMLInputElement>(null);
@@ -111,12 +98,12 @@ export function CopilotPanel({
   };
 
   return (
-    <section className={`cp cp-${variant}`} aria-label={`Copilot · ${COPILOT_LABEL}`}>
+    <section className={`cp cp-${variant}`} aria-label={`Copilot · ${label}`}>
       <header className="cp-h">
         <MessageSquareText size={16} className="cp-h-icon" aria-hidden />
         <div className="cp-titles">
           <h2>{variant === 'page' ? 'Conversation' : 'Copilot'}</h2>
-          <p>{COPILOT_LABEL}</p>
+          <p>{label}</p>
         </div>
         <div className="spacer" />
         {turns.length > 0 && (
@@ -136,7 +123,7 @@ export function CopilotPanel({
         {turns.length === 0 ? (
           <Intro onAsk={submit} grouped={suggestions} workspace={ctx.workspace} />
         ) : (
-          turns.map((t, i) => <Turn key={t.id} turn={t} onAsk={submit} onNavigate={onNavigate} contextEventId={ctx.event?.id ?? null} ref={i === turns.length - 1 ? lastRef : undefined} />)
+          turns.map((t, i) => <Turn key={t.id} turn={t} ref={i === turns.length - 1 ? lastRef : undefined} />)
         )}
       </div>
 
@@ -289,8 +276,8 @@ function Intro({ onAsk, grouped, workspace }: { onAsk: (q: string) => void; grou
     <div className="cp-intro">
       <p>
         Ask about the simulated plant: why output is below target, which stage constrains it, the OEE losses, rising defects, delayed vehicles, an incident, or
-        what to investigate first. Every answer separates confirmed facts from simulated and scenario-caused records, inferred explanations, unverified
-        hypotheses and recommended actions — and says when something cannot be established from the data.
+        what to investigate first. An AI agent answers from the simulated plant figures sent with each question — it can be wrong, so check the figures in the
+        workspaces.
       </p>
       {grouped ? (
         <>
@@ -304,139 +291,84 @@ function Intro({ onAsk, grouped, workspace }: { onAsk: (q: string) => void; grou
   );
 }
 
-function Turn({
-  turn,
-  onAsk,
-  onNavigate,
-  contextEventId,
-  ref,
-}: {
-  turn: CopilotTurn;
-  onAsk: (q: string) => void;
-  onNavigate?: () => void;
-  /** The incident in context now (a turn does not offer to investigate it again). */
-  contextEventId: string | null;
-  ref?: Ref<HTMLDivElement>;
-}) {
+function Turn({ turn, ref }: { turn: CopilotTurn; ref?: Ref<HTMLDivElement> }) {
   const a = turn.answer;
-  // "about EV-…" only when the answer really is about the event (plant-wide questions stay plant-wide in a context).
+  // "about EV-…" only when the question really is about the event (plant-wide questions stay plant-wide in a context).
   const about = a.intent.startsWith('event-') && a.intent !== 'event-missing' ? a.eventId : null;
-  // A plant-wide answer that points to one event offers to make it the context (unless it already is).
-  const pointsTo = !a.intent.startsWith('event-') && a.eventId && a.eventId !== turn.contextEventId && a.eventId !== contextEventId ? a.eventId : null;
   const scope = [a.periodLabel && a.periodLabel !== '—' ? a.periodLabel : null, turn.context?.equipmentId, turn.context?.stageId ? MONITORED_STAGE_BY_ID[turn.context.stageId]?.name : null].filter(Boolean);
   return (
     <div className="cp-turn" ref={ref}>
       <div className="cp-q">{turn.question}</div>
       <div className="cp-a">
-        <div className="cp-meta" title={`Computed from the simulated plant state at ${formatDay(turn.minute)} ${formatClock(turn.minute)} plant time`}>
-          <span>Answer at {formatClock(turn.minute)} plant time</span>
+        <div className="cp-meta" title={`Asked with the simulated plant state at ${formatDay(turn.minute)} ${formatClock(turn.minute)} plant time`}>
+          <span>Asked at {formatClock(turn.minute)} plant time</span>
           {scope.map((x) => (
             <span key={x as string}>· {x}</span>
           ))}
           {about && <span className="tag cp-about">about {about}</span>}
         </div>
-        <Sections sections={a.sections} />
-        {a.facts.length > 0 && <Facts facts={a.facts} />}
-        {(a.links.length > 0 || pointsTo) && (
-          <div className="cp-links">
-            {a.links.map((l, i) => (
-              <LinkButton key={`${l.kind}:${l.id}:${i}`} link={l} onFollow={onNavigate} />
-            ))}
-            {pointsTo && (
-              <button type="button" className="btn sm" onClick={() => setCopilotContext(pointsTo)} title={`Ask the next questions about ${pointsTo}`}>
-                <Crosshair size={12} aria-hidden />
-                Investigate {pointsTo}
-              </button>
-            )}
-          </div>
-        )}
-        {a.followUps.length > 0 && (
-          <div className="cp-follow">
-            <span className="cp-follow-h">Follow-up</span>
-            {a.followUps.map((q) => (
-              <Chip key={q} onClick={() => onAsk(q)}>
-                {q}
-              </Chip>
-            ))}
-          </div>
-        )}
+        <AgentAnswer agent={turn.agent ?? { status: 'error', error: 'No AI agent is configured on this server.' }} />
       </div>
     </div>
   );
 }
 
-function Sections({ sections }: { sections: CopilotSection[] }) {
+/** The agent's reply, plain text: paragraphs, "- " / "1. " lists and **bold** markers rendered as text. */
+function agentBlocks(text: string): ({ kind: 'p'; text: string } | { kind: 'ul' | 'ol'; items: string[] })[] {
+  const out: ({ kind: 'p'; text: string } | { kind: 'ul' | 'ol'; items: string[] })[] = [];
+  for (const raw of text.replace(/\r/g, '').split('\n')) {
+    const line = raw.replace(/\*\*(.+?)\*\*/g, '$1').replace(/^#{1,6}\s+/, '').trim();
+    if (!line) continue;
+    const ul = line.match(/^[-*•]\s+(.*)$/);
+    const ol = line.match(/^\d+[.)]\s+(.*)$/);
+    const kind = ul ? 'ul' : ol ? 'ol' : null;
+    const last = out.at(-1);
+    if (kind) {
+      if (last && last.kind === kind) last.items.push((ul ?? ol)![1]);
+      else out.push({ kind, items: [(ul ?? ol)![1]] });
+    } else out.push({ kind: 'p', text: line });
+  }
+  return out;
+}
+
+function AgentAnswer({ agent }: { agent: AgentTurn }) {
   return (
-    <div className="cp-secs">
-      {groupSections(sections).map((g, i) => {
-        const L = SECTION_LABEL[g.kind];
-        const Icon = SECTION_ICON[g.kind];
-        const none = g.lines.every((x) => EMPTY.has(x));
-        return (
-          <div key={`${g.kind}:${i}`} className={`cp-sec cp-sec-${g.kind} ${none ? 'none' : ''}`}>
-            <div className="cp-sec-h" title={L.hint}>
-              <Icon size={12} aria-hidden />
-              {L.label}
-              {L.note && <small>· {L.note}</small>}
-            </div>
-            <div className="cp-sec-b">
-              <Lines lines={g.lines} kind={g.kind} />
-            </div>
-          </div>
-        );
-      })}
+    <div className={`cp-agent ${agent.status}`}>
+      <div className="cp-agent-h" title="Answered by an AI agent (a language model) through the configured endpoint. It is given the simulated plant figures with each question; it can be wrong.">
+        <Sparkles size={12} aria-hidden />
+        AI agent
+        <small>· language model · simulated plant data · can be wrong</small>
+      </div>
+      {agent.status === 'loading' ? (
+        <p className="cp-agent-wait" role="status">
+          <LoaderCircle size={13} className="spin" aria-hidden /> Asking the AI agent…
+        </p>
+      ) : agent.status === 'error' ? (
+        <p className="cp-agent-err" role="status">
+          <TriangleAlert size={13} aria-hidden /> AI agent unavailable — {agent.error} No answer could be given; try again in a moment.
+        </p>
+      ) : (
+        <div className="cp-agent-b">
+          {agentBlocks(agent.text).map((b, i) =>
+            b.kind === 'p' ? (
+              <p key={i}>{b.text}</p>
+            ) : b.kind === 'ul' ? (
+              <ul key={i}>
+                {b.items.map((x, j) => (
+                  <li key={j}>{x}</li>
+                ))}
+              </ul>
+            ) : (
+              <ol key={i}>
+                {b.items.map((x, j) => (
+                  <li key={j}>{x}</li>
+                ))}
+              </ol>
+            ),
+          )}
+        </div>
+      )}
     </div>
   );
 }
 
-/** Lines of one section; consecutive "1. …" lines become an ordered list, confidences become word tags, actions a list. */
-function Lines({ lines, kind }: { lines: string[]; kind: SectionKind }) {
-  const blocks = lineBlocks(lines, kind);
-  if (kind === 'actions' && blocks.every((b) => b.kind === 'p') && !lines.every((x) => EMPTY.has(x)))
-    return (
-      <ul className="cp-actions">
-        {blocks.map((b, i) => (b.kind === 'p' ? <li key={i}>{b.text}</li> : null))}
-      </ul>
-    );
-  return (
-    <>
-      {blocks.map((b, i) =>
-        b.kind === 'ol' ? (
-          <ol key={i}>
-            {b.items.map((x, j) => (
-              <li key={j}>{x}</li>
-            ))}
-          </ol>
-        ) : b.confidence ? (
-          <p key={i}>
-            <span className={`cp-conf cp-conf-${b.confidence.toLowerCase()}`} title={CONFIDENCE_HINT[b.confidence]}>
-              {b.confidence}
-            </span>
-            {b.text}
-          </p>
-        ) : (
-          <p key={i} className={b.assumptions ? 'cp-assume' : EMPTY.has(b.text) ? 'cp-none-l' : undefined}>
-            {b.text}
-          </p>
-        ),
-      )}
-    </>
-  );
-}
-
-/** Label → value rows (the KPI cards' labels and formatting); long values drop below their label. */
-function Facts({ facts }: { facts: CopilotAnswer['facts'] }) {
-  return (
-    <details className="cp-facts">
-      <summary>Figures used ({facts.length})</summary>
-      <dl>
-        {facts.map((f, i) => (
-          <div key={`${f.label}:${i}`} className={`cp-fact ${f.value.length > 28 ? 'long' : ''}`}>
-            <dt>{f.label}</dt>
-            <dd>{f.value}</dd>
-          </div>
-        ))}
-      </dl>
-    </details>
-  );
-}

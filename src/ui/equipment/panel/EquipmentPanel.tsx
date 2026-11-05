@@ -226,7 +226,7 @@ export function panelActions(intel: EquipmentIntel, ui: { follow: boolean; camer
       key: 'ask',
       icon: MessageSquareText,
       label: 'Ask Copilot',
-      title: `Ask the Copilot: “${ask.prompt}” — rule-based answers on the current demo state, no language model`,
+      title: `Ask the Copilot: “${ask.prompt}” — answered from the simulated plant state`,
       run: () => {
         // The question is about this subject: its context chip is shown again if the user had removed it.
         if (!vehicle) useCopilot.setState((s) => ({ dismissed: s.dismissed.filter((k) => k !== `equipment:${id}`) }));

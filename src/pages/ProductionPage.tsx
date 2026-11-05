@@ -132,7 +132,7 @@ export function ProductionPage() {
                 <Box size={14} aria-hidden /> Show in 3D
               </button>
             )}
-            <button type="button" className="btn ghost" onClick={askCopilot} title="Ask the rule-based copilot (no language model) the same question for the same period">
+            <button type="button" className="btn ghost" onClick={askCopilot} title="Ask the copilot the same question for the same period">
               <MessageSquareText size={14} aria-hidden /> Ask Copilot
             </button>
           </>

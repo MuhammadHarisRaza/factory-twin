@@ -13,6 +13,10 @@
  *   - equipment: the item selected in the Factory Twin; vehicle: the vehicle selected there; stage: the
  *     stage open in Production.
  * A context the user removed stays removed for that record (until another record is selected).
+ *
+ * Answers: the question goes to the AI agent (/api/copilot, src/ui/copilot/agent.ts) with the
+ * rule-based analysis of the simulated plant (src/intel/copilot.ts) as the figures to answer from; only
+ * the agent's reply is shown. Without an agent, or when it fails, the turn says why.
  */
 import { create } from 'zustand';
 import { PERIOD_WORKSPACES, useApp, type WorkspaceId } from '../../app/store';
@@ -25,6 +29,7 @@ import { eventById } from '../../sim/events';
 import { resolvePeriod, type PeriodKey } from '../../sim/metrics';
 import { useSim, useSimValue } from '../../sim/store';
 import { useTwin } from '../../store';
+import { agentAvailable, agentContext, askAgent, newSessionId } from './agent';
 
 // ── Context ───────────────────────────────────────────────────────────────────
 
@@ -143,7 +148,11 @@ export type CopilotTurn = {
   contextEventId: string | null;
   /** The rest of the context it was asked in. */
   context: { periodLabel: string; equipmentId: string | null; stageId: MonitoredStageId | null };
+  /** The AI agent's reply (null when no agent is configured). */
+  agent?: AgentTurn | null;
 };
+
+export type AgentTurn = { status: 'loading' } | { status: 'ok'; text: string } | { status: 'error'; error: string };
 
 type CopilotState = {
   turns: CopilotTurn[];
@@ -153,6 +162,11 @@ type CopilotState = {
   focusTick: number;
   /** Context keys the user removed. */
   dismissed: string[];
+  /** Whether the server has an AI agent configured (null = not known yet / not reachable). */
+  agentConfigured: boolean | null;
+  /** The agent's session for this conversation (renewed by Clear and Reset Demo). */
+  sessionId: string;
+  conversationId: string | null;
   /** Asks a question in the current context; `eventId` overrides the event context for this one question. */
   ask: (question: string, opts?: { eventId?: string | null }) => void;
   clear: () => void;
@@ -200,17 +214,36 @@ export const useCopilot = create<CopilotState>((set, get) => ({
   docks: 0,
   focusTick: 0,
   dismissed: [],
+  agentConfigured: null,
+  sessionId: newSessionId(),
+  conversationId: null,
   ask: (question, opts) => {
     const q = question.trim();
     if (!q) return;
     const ctx = currentContext();
     const contextEventId = contextFor(opts?.eventId !== undefined ? opts.eventId : (ctx.event?.id ?? null));
     const a = answer(q, { eventId: contextEventId, period: ctx.period, equipmentId: ctx.equipmentId, stageId: ctx.stageId, vehicleId: ctx.vehicleId ?? null });
+    const configured = get().agentConfigured;
+    const inBrowser = typeof window !== 'undefined' && typeof location !== 'undefined' && location.protocol.startsWith('http');
+    const useAgent = inBrowser && configured !== false;
+    const id = ++seq;
     set({
-      turns: [...get().turns, { id: ++seq, question: q, contextEventId, context: { periodLabel: ctx.periodLabel, equipmentId: ctx.equipmentId, stageId: ctx.stageId }, ...a }].slice(-MAX_TURNS),
+      turns: [
+        ...get().turns,
+        { id, question: q, contextEventId, context: { periodLabel: ctx.periodLabel, equipmentId: ctx.equipmentId, stageId: ctx.stageId }, ...a, agent: useAgent ? ({ status: 'loading' } as AgentTurn) : null },
+      ].slice(-MAX_TURNS),
+    });
+    if (!useAgent) return;
+    const { sessionId, conversationId } = get();
+    const context = agentContext(useSim.getState().sim, a.answer, { ...ctx, eventId: contextEventId });
+    void askAgent({ question: q, context, sessionId, conversationId }).then((r) => {
+      // A Clear or Reset Demo meanwhile started a new session: this reply belongs to the old one.
+      if (get().sessionId !== sessionId) return;
+      const agent: AgentTurn = r.ok ? { status: 'ok', text: r.text } : { status: 'error', error: r.error };
+      set((st) => ({ turns: st.turns.map((t) => (t.id === id ? { ...t, agent } : t)), conversationId: r.ok ? (r.conversationId ?? st.conversationId) : st.conversationId }));
     });
   },
-  clear: () => set({ turns: [] }),
+  clear: () => set({ turns: [], sessionId: newSessionId(), conversationId: null }),
   dismiss: (key) => {
     const ctx = currentContext();
     const add: string[] = [];
@@ -239,7 +272,11 @@ export const setCopilotContext = (eventId: string | null) => {
 // Reset Demo replays the plant from the start: earlier answers and the event context no longer describe it.
 useSim.subscribe((s, prev) => {
   if (s.resets !== prev.resets) {
-    useCopilot.setState({ turns: [], dismissed: [] });
+    useCopilot.setState({ turns: [], dismissed: [], sessionId: newSessionId(), conversationId: null });
     setCopilotContext(null);
   }
 });
+
+// Ask the server once whether an AI agent is configured (browser only; tests and server rendering skip it).
+if (typeof window !== 'undefined' && typeof fetch === 'function' && typeof location !== 'undefined' && location.protocol.startsWith('http'))
+  void agentAvailable().then((configured) => useCopilot.setState({ agentConfigured: configured }));

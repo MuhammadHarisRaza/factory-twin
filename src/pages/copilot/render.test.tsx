@@ -56,14 +56,14 @@ describe('Copilot workspace and drawer', () => {
     useApp.setState({ copilotOpen: true, workspace: 'overview' });
     const html = render(<CopilotDrawer />);
     expect(html).toContain('role="dialog"');
-    expect(html).toContain('no language model, no external service');
+    expect(html).toContain('AI agent (language model)');
     for (const q of SUGGESTED_QUESTIONS) expect(html, q).toContain(esc(q));
     expect(html).toContain('Current shift');
     expect(html).toContain(esc(resolvePeriod('shift', useSim.getState().sim.minute).label));
     expect(html).not.toMatch(/energy/i);
   });
 
-  it('answers in labelled sections, in the context of the workspace it is opened from', () => {
+  it('shows only the AI agent reply (never the rule-based sections), asked in the context of the workspace it is opened from', () => {
     const s = useSim.getState().sim;
     activateScenario(s, { kind: 'conveyor-stop', equipmentId: 'CV-KIN', end: null, label: 'Kiln infeed conveyor stop' });
     advance(s, s.minute + 30);
@@ -80,9 +80,10 @@ describe('Copilot workspace and drawer', () => {
     expect(turn.answer.periodLabel).toBe('Last 7 days');
     expect(turn.context.stageId).toBe('GLAZE');
     html = render(<CopilotDrawer />);
-    for (const label of CORE_LABELS) expect(html, label).toContain(label);
-    expect(html).toContain('Figures used');
-    expect(html).toContain('Open Production');
+    for (const label of CORE_LABELS) expect(html, label).not.toContain(label);
+    expect(html).not.toContain('Figures used');
+    // No agent in the test environment: the turn says so instead of showing a rule-based answer.
+    expect(html).toContain('AI agent unavailable — No AI agent is configured on this server.');
 
     // Events & Reports with an event open: "this incident" is that event.
     const ev = attentionEvents(s)[0];
@@ -99,14 +100,14 @@ describe('Copilot workspace and drawer', () => {
     useCopilot.getState().ask('What happened during this incident?');
     expect(useCopilot.getState().turns.at(-1)!.answer.intent).toBe('event-missing');
     html = render(<CopilotDrawer />);
-    expect(html).toContain('Cannot be established');
+    expect(html).not.toContain('Cannot be established');
   });
 
   it('the workspace shows the conversation, the suggested questions, the incident picker and the shift summary', () => {
     useApp.setState({ copilotOpen: false, workspace: 'copilot', copilotEventId: null });
     const s = useSim.getState().sim;
     const html = render(<CopilotPage />);
-    for (const text of ['Copilot', 'Conversation', 'Suggested questions', 'Investigate an incident', 'no language model, no external service', 'Current shift'])
+    for (const text of ['Copilot', 'Conversation', 'Suggested questions', 'Investigate an incident', 'AI agent (language model)', 'Current shift'])
       expect(html, text).toContain(text);
     expect(html).toContain(esc(copilotSummary(s).sentence));
     for (const e of attentionEvents(s).slice(0, 3)) expect(html).toContain(e.id);

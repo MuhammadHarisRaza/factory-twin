@@ -43,7 +43,7 @@ const ICONS: Record<WorkspaceId, LucideIcon> = {
   copilot: Bot,
 };
 
-/** The Odin demo, a separate application: its sidebar entry leaves the twin and opens it. */
+/** The Odin demo, a separate application: its sidebar entry opens it in a new browser tab. */
 export const ODIN_URL = 'https://odin-ghani-demo.vercel.app';
 
 const SEV_RANK: Record<AlertSeverity, number> = { info: 0, warning: 1, serious: 2, critical: 3 };
@@ -109,7 +109,7 @@ export function Sidebar() {
             </button>
           );
         })}
-        <a className="nav-item" href={ODIN_URL} title={collapsed ? 'Odin — opens the Odin demo (a separate application)' : 'Opens the Odin demo (a separate application)'}>
+        <a className="nav-item" href={ODIN_URL} target="_blank" rel="noopener noreferrer" title={collapsed ? 'Odin — opens the Odin demo in a new tab' : 'Opens the Odin demo in a new tab'}>
           <Compass size={17} strokeWidth={1.9} />
           <span>Odin</span>
         </a>
